@@ -1,1 +1,8 @@
 streamlit
+streamlit_calendar
+utils
+streamlit-aggrid
+gspread
+google-auth
+pandas
+streamlit_extras
