@@ -5,6 +5,9 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 
+USER_PASSWORD = st.secrets["passwords"]["user"]
+ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
+
 # 페이지 설정
 st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪")
 
@@ -42,7 +45,7 @@ def get_gspread_client():
     return gspread.authorize(credentials)
 
 # 구글 시트 URL
-url = "https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?gid=0#gid=0"
+url = st.secrets["google_sheet"]["url"]
 gc = get_gspread_client()
 sheet = gc.open_by_url(url)
 
@@ -79,7 +82,7 @@ if not st.session_state["login_success"]:
 
     # 로그인 버튼 클릭 시 처리
     if st.button("확인"):
-        if password != "rkdskatpsxj":
+        if password != USER_PASSWORD:
             st.error("비밀번호를 다시 확인해주세요.")
         elif employee_id:
             try:
@@ -110,7 +113,7 @@ if st.session_state["login_success"]:
         st.write(" ")
         admin_password = st.text_input("관리자 페이지 접근을 위한 비밀번호를 입력해주세요.", type="password", key="admin_password")
         if st.button("관리자 인증"):
-            if admin_password == "rkdtmdwn":
+            if admin_password == ADMIN_PASSWORD:
                 st.session_state["is_admin_authenticated"] = True
                 st.session_state["is_admin"] = True
                 st.success("승인되었습니다. 관리자 페이지에 접속합니다.")

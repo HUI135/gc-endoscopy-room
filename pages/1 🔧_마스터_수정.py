@@ -47,7 +47,7 @@ if st.session_state.get("login_success", False):
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
         return gspread.authorize(credentials)
     
-    url = "https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?gid=0#gid=0"
+    url = st.secrets["google_sheet"]["url"]
     gc = get_gspread_client()
     sheet = gc.open_by_url(url)
     worksheet1 = sheet.worksheet("마스터")

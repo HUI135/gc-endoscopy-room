@@ -48,7 +48,7 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
     st.error("API 쿼터 초과로 업데이트 실패")
 
 # 초기 데이터 로드 및 세션 상태 설정
-url = "https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?gid=0#gid=0"
+url = st.secrets["google_sheet"]["url"]
 month_str = "2025년 04월"
 
 if "data_loaded" not in st.session_state:
