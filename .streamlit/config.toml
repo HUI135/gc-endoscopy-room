@@ -1,8 +1,0 @@
-[server]
-headless = true
-port = 8501
-enableCORS = false
-
-[general]
-# 앱 시작 파일 경로 설정
-target = "Home.py"
