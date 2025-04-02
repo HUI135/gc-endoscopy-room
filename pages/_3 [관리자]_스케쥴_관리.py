@@ -114,7 +114,11 @@ if st.session_state.get("is_admin_authenticated", False):
         st.session_state["df_all"] = df_master.copy()
 
     df_all = st.session_state["df_all"]
+    
+    # '사번' 열을 문자열로 변환
+    df_map["사번"] = df_map["사번"].astype(str).str.zfill(5)  # 5자리 숫자로 맞춰줍니다.
 
+    # 데이터프레임을 출력
     st.dataframe(df_map, height=200)
 
     # # AgGrid 구성 및 출력
