@@ -43,9 +43,8 @@ if st.session_state.get("login_success", False):
     gc = get_gspread_client()
     sheet = gc.open_by_url(url)
 
-    # ✅ 데이터 로드 함수 (캐싱 적용)
-    @st.cache_data
-    def refresh_data(sheet_name, _timestamp):
+    # ✅ 데이터 로드 함수 (캐싱 제거)
+    def refresh_data(sheet_name):
         try:
             worksheet = sheet.worksheet(sheet_name)
             data = worksheet.get_all_records()
@@ -56,25 +55,30 @@ if st.session_state.get("login_success", False):
             st.error(f"{sheet_name} 시트 로드 중 오류: {e}")
             return pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]) if sheet_name == "마스터" else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
 
-    # ✅ 초기 데이터 로드 (세션 상태 활용)
+    # ✅ 데이터 로드 및 동기화
     today = datetime.date.today()
     next_month = today.replace(day=1) + relativedelta(months=1)
     month_str = next_month.strftime("%Y년 %m월")
-    if "master_df" not in st.session_state or "request_df" not in st.session_state:
-        st.session_state["master_df"] = refresh_data("마스터", time.time())
-        request_sheet_name = f"{month_str} 요청"
-        st.session_state["request_df"] = refresh_data(request_sheet_name, time.time())
-        # "요청" 시트가 비어 있으면 초기화
-        if st.session_state["request_df"].empty:
-            worksheet2 = sheet.add_worksheet(title=request_sheet_name, rows="100", cols="20")
-            worksheet2.append_row(["이름", "분류", "날짜정보"])
-            names_in_master = st.session_state["master_df"]["이름"].unique()
-            new_rows = [[name, "요청 없음", ""] for name in names_in_master]
-            worksheet2.append_rows(new_rows)
-            st.session_state["request_df"] = refresh_data(request_sheet_name, time.time())
+    
+    # 항상 최신 데이터 가져오기
+    df_master = refresh_data("마스터")
+    request_sheet_name = f"{month_str} 요청"
+    df_request = refresh_data(request_sheet_name)
 
-    df_master = st.session_state["master_df"]
-    df_request = st.session_state["request_df"]
+    # 요청 시트가 비어 있으면 초기화
+    if df_request.empty:
+        worksheet2 = sheet.add_worksheet(title=request_sheet_name, rows="100", cols="20")
+        worksheet2.append_row(["이름", "분류", "날짜정보"])
+        names_in_master = df_master["이름"].unique()
+        new_rows = [[name, "요청 없음", ""] for name in names_in_master]
+        worksheet2.append_rows(new_rows)
+        df_request = refresh_data(request_sheet_name)
+
+    # 세션 상태 업데이트
+    st.session_state["master_df"] = df_master
+    st.session_state["request_df"] = df_request
+
+    # 사용자 데이터 필터링
     df_user_master = df_master[df_master["이름"] == name].copy()
     df_user_request = df_request[df_request["이름"] == name].copy()
 

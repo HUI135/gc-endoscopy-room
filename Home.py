@@ -96,7 +96,7 @@ def get_employee_name(employee_id):
 # 로그인 정보 입력
 if not st.session_state["login_success"]:
     password = st.text_input("비밀번호를 입력해주세요.", type="password")
-    employee_id = st.text_input("사번(5자리)을 입력해주세요")
+    employee_id = st.text_input("사번(5자리)을 입력해주세요.")
 
     if st.button("확인"):
         if password != USER_PASSWORD:
@@ -141,4 +141,4 @@ if st.session_state["login_success"]:
         st.switch_page("pages/3 [관리자]_스케쥴_관리.py")
     else:
         # 일반 사용자: 기본 페이지로 이동
-        st.switch_page("pages/0 🔍_내_스케쥴_보기.py")
+        st.switch_page("pages/1 📅_마스터_수정.py")
