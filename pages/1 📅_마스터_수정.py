@@ -147,6 +147,8 @@ if st.session_state.get("login_success", False):
     근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
     요일리스트 = ["월", "화", "수", "목", "금"]
     today = pd.Timestamp.today()
+    today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
+
     next_month = today.replace(day=1) + pd.DateOffset(months=1)
     _, last_day = calendar.monthrange(next_month.year, next_month.month)
     dates = pd.date_range(start=next_month, end=next_month.replace(day=last_day))

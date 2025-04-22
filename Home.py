@@ -134,11 +134,11 @@ if st.session_state["login_success"]:
                 st.session_state["is_admin_authenticated"] = True
                 st.success("승인되었습니다. 관리자 페이지에 접속합니다.")
                 time.sleep(2)
-                st.switch_page("pages/3 [관리자]_스케쥴_관리.py")
+                st.switch_page("pages/4 [관리자]_스케쥴_관리.py")
             else:
                 st.error("비밀번호가 틀렸습니다. 다시 시도해 주세요.")
     elif st.session_state["is_admin_authenticated"]:
-        st.switch_page("pages/3 [관리자]_스케쥴_관리.py")
+        st.switch_page("pages/4 [관리자]_스케쥴_관리.py")
     else:
         # 일반 사용자: 기본 페이지로 이동
         st.switch_page("pages/1 📅_마스터_수정.py")

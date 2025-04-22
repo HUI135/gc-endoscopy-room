@@ -53,7 +53,9 @@ if st.session_state.get("login_success", False):
 gc = get_gspread_client()
 url = st.secrets["google_sheet"]["url"]
 name = st.session_state["name"]
-today = datetime.date.today()
+# today = datetime.date.today()
+today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
+
 next_month = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month.strftime("%Y년 %m월")
 next_month_start = next_month
@@ -78,7 +80,7 @@ if df_user_request.empty or (df_user_request["분류"].nunique() == 1 and df_use
     st.info("☑️ 당월에 입력하신 요청사항이 없습니다.")
 else:
     status_colors_request = {
-        "휴가": "#48A6A7",
+        "휴가": "#FE7743",
         "학회": "#5F99AE",
         "보충 어려움(오전)": "#FFB347",
         "보충 어려움(오후)": "#FFA07A",
