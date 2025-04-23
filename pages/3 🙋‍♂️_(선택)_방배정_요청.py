@@ -98,7 +98,7 @@ def generate_master_events(df_user_master, year, month, week_labels):
                     "start": date_obj.strftime("%Y-%m-%d"),
                     "end": date_obj.strftime("%Y-%m-%d"),
                     "color": status_colors.get(status, "#E0E0E0"),
-                    "source": "master"  # 소스 추가
+                    "source": "master"
                 })
     return events
 
@@ -106,7 +106,6 @@ def generate_master_events(df_user_master, year, month, week_labels):
 def generate_request_events(df_user_request, next_month):
     status_colors_request = {
         "휴가": "#FE7743",
-        "학회": "#5F99AE",
         "보충 어려움(오전)": "#FFB347",
         "보충 어려움(오후)": "#FFA07A",
         "보충 불가(오전)": "#FFB347",
@@ -116,7 +115,6 @@ def generate_request_events(df_user_request, next_month):
     }
     label_map = {
         "휴가": "휴가",
-        "학회": "학회",
         "보충 어려움(오전)": "보충⚠️(오전)",
         "보충 어려움(오후)": "보충⚠️(오후)",
         "보충 불가(오전)": "보충🚫(오전)",
@@ -140,7 +138,7 @@ def generate_request_events(df_user_request, next_month):
                 "start": 시작.strftime("%Y-%m-%d"),
                 "end": (종료 + datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
                 "color": status_colors_request.get(분류, "#E0E0E0"),
-                "source": "request"  # 소스 추가
+                "source": "request"
             })
         else:
             for 날짜 in [d.strip() for d in 날짜정보.split(",")]:
@@ -151,7 +149,7 @@ def generate_request_events(df_user_request, next_month):
                         "start": dt.strftime("%Y-%m-%d"),
                         "end": dt.strftime("%Y-%m-%d"),
                         "color": status_colors_request.get(분류, "#E0E0E0"),
-                        "source": "request"  # 소스 추가
+                        "source": "request"
                     })
                 except:
                     continue
@@ -190,30 +188,21 @@ def generate_room_request_events(df_user_room_request, next_month):
         날짜정보 = row["날짜정보"]
         if not 날짜정보:
             continue
-        if "~" in 날짜정보:
-            시작_str, 종료_str = [x.strip() for x in 날짜정보.split("~")]
-            시작 = datetime.datetime.strptime(시작_str, "%Y-%m-%d").date()
-            종료 = datetime.datetime.strptime(종료_str, "%Y-%m-%d").date()
-            events.append({
-                "title": label_map.get(분류, 분류),
-                "start": 시작.strftime("%Y-%m-%d"),
-                "end": (종료 + datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
-                "color": "#273F4F",  # 빨간색 고정
-                "source": "room_request"  # 소스 추가
-            })
-        else:
-            for 날짜 in [d.strip() for d in 날짜정보.split(",")]:
-                try:
-                    dt = datetime.datetime.strptime(날짜, "%Y-%m-%d").date()
-                    events.append({
-                        "title": label_map.get(분류, 분류),
-                        "start": dt.strftime("%Y-%m-%d"),
-                        "end": dt.strftime("%Y-%m-%d"),
-                        "color": "#273F4F",  # 빨간색 고정
-                        "source": "room_request"  # 소스 추가
-                    })
-                except:
-                    continue
+        for 날짜 in [d.strip() for d in 날짜정보.split(",")]:
+            try:
+                # 날짜와 시간대 분리 (예: "2025-04-02(오전)")
+                date_str, time_slot = 날짜.split("(")
+                time_slot = time_slot.rstrip(")")
+                dt = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+                events.append({
+                    "title": label_map.get(분류, 분류),
+                    "start": dt.strftime("%Y-%m-%d"),
+                    "end": dt.strftime("%Y-%m-%d"),
+                    "color": "#273F4F",
+                    "source": "room_request"
+                })
+            except:
+                continue
     return events
 
 # 로그인 체크
@@ -253,7 +242,12 @@ if "df_user_master" not in st.session_state:
 if "df_user_request" not in st.session_state:
     st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
 if "df_user_room_request" not in st.session_state:
-    st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+    # Initialize df_user_room_request safely
+    if not st.session_state["df_room_request"].empty and "이름" in st.session_state["df_room_request"].columns:
+        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+    else:
+        # If df_room_request is empty or lacks "이름", initialize an empty DataFrame with correct columns
+        st.session_state["df_user_room_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
 
 # 항상 최신 세션 상태를 참조
 df_master = st.session_state["df_master"]
@@ -308,16 +302,19 @@ if not df_user_master.empty and not has_weekly:
         st.session_state["df_master"] = df_master
         st.session_state["df_user_master"] = df_user_master
 
-# 캘린더 이벤트 생성 및 통합
+# 초기 캘린더 이벤트 생성
 master_events = generate_master_events(df_user_master, next_month.year, next_month.month, week_labels)
 request_events = generate_request_events(df_user_request, next_month)
 room_request_events = generate_room_request_events(df_user_room_request, next_month)
-all_events = master_events + request_events + room_request_events
+if "all_events" not in st.session_state:
+    st.session_state["all_events"] = master_events + request_events + room_request_events
 
 # 캘린더 표시
-st.header(f"📅 {name} 님의 {month_str} 스케줄 및 요청사항", divider='rainbow')
-if not all_events:
+st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
+if not st.session_state["all_events"]:
     st.info("☑️ 표시할 스케줄 또는 요청사항이 없습니다.")
+elif df_room_request.empty or df_user_room_request.empty:
+    st.info("☑️ 표시할 방배정 요청사항이 없습니다.")
 else:
     calendar_options = {
         "initialView": "dayGridMonth",
@@ -331,95 +328,137 @@ else:
         "headerToolbar": {"left": "", "center": "", "right": ""},
         "showNonCurrentDates": False,
         "fixedWeekCount": False,
-        "eventOrder": "source"  # 소스 속성으로 이벤트 순서 정렬
+        "eventOrder": "source"
     }
-    st_calendar(events=all_events, options=calendar_options)
+    st_calendar(events=st.session_state["all_events"], options=calendar_options)
 
 st.divider()
+
+# 근무 가능 일자와 시간대 계산
+def get_user_available_dates(name, df_master, month_start, month_end):
+    user_master = df_master[df_master['이름'] == name]
+    available_dates = []
+    요일_index = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
+    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+    
+    for _, row in user_master.iterrows():
+        주차 = row['주차']
+        요일 = row['요일']
+        근무여부 = row['근무여부']
+        if 근무여부 == "근무없음":
+            continue
+
+        if 주차 == "매주":
+            weeks = range(5)
+        else:
+            week_num = int(주차[0]) - 1
+            weeks = [week_num]
+
+        for day in pd.date_range(month_start, month_end):
+            week_of_month = (day.day - 1) // 7
+            if week_of_month in weeks and day.weekday() == 요일_index.get(요일):
+                weekday_name = weekday_map[day.weekday()]
+                date_str = day.strftime("%m월 %d일").lstrip("0")
+                if 근무여부 == "오전 & 오후":
+                    available_dates.append((f"{date_str}({weekday_name}) 오전", day))
+                    available_dates.append((f"{date_str}({weekday_name}) 오후", day))
+                elif 근무여부 == "오전":
+                    available_dates.append((f"{date_str}({weekday_name}) 오전", day))
+                elif 근무여부 == "오후":
+                    available_dates.append((f"{date_str}({weekday_name}) 오후", day))
+
+    available_dates = sorted(available_dates, key=lambda x: x[0])
+    return available_dates
+
+# 사용자별 근무 가능 일자와 시간대
+available_dates = get_user_available_dates(name, df_master, next_month_start, next_month_end)
+date_options = [date_str for date_str, _ in available_dates]
+date_values = [date for _, date in available_dates]
+
+# 날짜정보를 요청사항 삭제 UI 형식으로 변환
+def format_date_for_display(date_info):
+    try:
+        formatted_dates = []
+        weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+        for date in date_info.split(","):
+            date = date.strip()
+            date_str, time_slot = date.split("(")
+            time_slot = time_slot.rstrip(")")
+            dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+            weekday_name = weekday_map[dt.weekday()]
+            formatted_date = f"{dt.strftime('%m월 %d일').lstrip('0')}({weekday_name}) {time_slot}"
+            formatted_dates.append(formatted_date)
+        return ", ".join(formatted_dates)
+    except:
+        return date_info
 
 # 방배정 요청사항 입력 UI
 st.write(" ")
 st.markdown(f"<h6 style='font-weight:bold;'>🟢 방배정 요청사항 입력</h6>", unsafe_allow_html=True)
-요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방", 
-           "당직 안됨", "오전 당직 안됨", "오후 당직 안됨", "당직 아닌 이른방", "8:30", "9:00", "9:30", "10:00", "이른방", 
-           "오전 당직", "오후 당직"]
-날짜선택방식 = ["일자 선택", "기간 선택", "주/요일 선택"]
+요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",  
+           "8:30", "9:00", "9:30", "10:00", "오후 당직", "오후 당직 안됨"]
+# "이른방", "당직 아닌 이른방"
 
-col1, col2, col3 = st.columns([1,1,2])
+col1, col2 = st.columns([2, 3])
 분류 = col1.multiselect("요청 분류", 요청분류, key="category_select")
-방식 = col2.selectbox("날짜 선택 방식", 날짜선택방식, key="method_select")
-
-# 날짜 입력 로직
-날짜정보 = ""
-if 방식 == "일자 선택":
-    날짜 = col3.multiselect("요청 일자", [next_month_start + datetime.timedelta(days=i) for i in range((next_month_end - next_month_start).days + 1)], format_func=lambda x: x.strftime("%Y-%m-%d"), key="date_multiselect")
-    날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜]) if 날짜 else ""
-elif 방식 == "기간 선택":
-    날짜범위 = col3.date_input("요청 기간", value=(next_month_start, next_month_start + datetime.timedelta(days=1)), min_value=next_month_start, max_value=next_month_end, key="date_range")
-    if isinstance(날짜범위, tuple) and len(날짜범위) == 2:
-        날짜정보 = f"{날짜범위[0].strftime('%Y-%m-%d')} ~ {날짜범위[1].strftime('%Y-%m-%d')}"
-elif 방식 == "주/요일 선택":
-    선택주차 = col3.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
-    선택요일 = col3.multiselect("요일 선택", ["월", "화", "수", "목", "금"], key="day_select")
-    주차_index = {"첫째주": 0, "둘째주": 1, "셋째주": 2, "넷째주": 3, "다섯째주": 4}
-    요일_index = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
-    날짜목록 = []
-
-    first_sunday = None
-    for i in range(1, last_day + 1):
-        date_obj = datetime.date(next_month.year, next_month.month, i)
-        if date_obj.weekday() == 6:
-            first_sunday = i
-            break
-
-    for i in range(1, last_day + 1):
-        날짜 = datetime.date(next_month.year, next_month.month, i)
-        weekday = 날짜.weekday()
-        if i < first_sunday:
-            week_of_month = 0
-        else:
-            week_of_month = (i - first_sunday) // 7 + 1
-        if weekday in 요일_index.values() and any(주차 == "매주" or 주차_index.get(주차) == week_of_month for 주차 in 선택주차):
-            if weekday in [요일_index[요일] for 요일 in 선택요일]:
-                날짜목록.append(날짜.strftime("%Y-%m-%d"))
-    날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
+날짜 = col2.multiselect("요청 일자", date_options, key="date_multiselect")
+날짜정보 = ", ".join([f"{date_values[date_options.index(d)].strftime('%Y-%m-%d')}({d.split()[-1]})" for d in 날짜]) if 날짜 else ""
 
 # 저장 로직
 if st.button("📅 추가"):
     sheet = gc.open_by_url(url)
-    # 시트가 없으면 생성
     try:
         worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
     except WorksheetNotFound:
         worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
         worksheet2.append_row(["이름", "분류", "날짜정보"])
     
-    if 날짜정보:
-        df_room_request = pd.concat([df_room_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": 날짜정보}])], ignore_index=True)
-    else:
-        st.warning("날짜 정보를 올바르게 입력해주세요.")
-        st.stop()
-    
-    df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-    worksheet2.clear()
-    worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
-    st.session_state["df_room_request"] = df_room_request
-    st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
-    st.success("✅ 요청사항이 저장되었습니다!")
-    st.cache_data.clear()
-    st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
-    st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
-    st.rerun()
+    if 날짜정보 and 분류:
+        # 새로운 요청사항 리스트 생성
+        new_requests = []
+        for date in 날짜정보.split(","):
+            date = date.strip()
+            for category in 분류:
+                # 동일 이름과 날짜정보가 있는지 확인
+                existing_request = df_room_request[(df_room_request['이름'] == name) & (df_room_request['날짜정보'] == date) & (df_room_request['분류'] == category)]
+                if existing_request.empty:
+                    new_requests.append({"이름": name, "분류": category, "날짜정보": date})
+                    st.write(f"새로운 요청사항 추가: {name}, {date}, {category}")
 
-# 삭제 UI
+        if new_requests:
+            # 기존 동일 날짜정보의 요청사항 삭제
+            existing_dates = set(date.strip() for date in 날짜정보.split(","))
+            df_room_request = df_room_request[~((df_room_request['이름'] == name) & (df_room_request['날짜정보'].isin(existing_dates)))]
+            # 새로운 요청사항 추가
+            new_request_df = pd.DataFrame(new_requests)
+            df_room_request = pd.concat([df_room_request, new_request_df], ignore_index=True)
+
+        df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+        worksheet2.clear()
+        worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
+        st.session_state["df_room_request"] = df_room_request
+        st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
+
+        room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
+        st.session_state["all_events"] = master_events + request_events + room_request_events
+
+        st.success("✅ 요청사항이 저장되었습니다!")
+        st.cache_data.clear()
+        st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
+        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+        st.rerun()
+
+    else:
+        st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.")
+
+# 삭제 UI (디버깅 로그 추가)
 st.write(" ")
 st.markdown(f"<h6 style='font-weight:bold;'>🔴 방배정 요청사항 삭제</h6>", unsafe_allow_html=True)
 if not df_user_room_request.empty:
-    options = [f"{row['분류']} - {row['날짜정보']}" for _, row in df_user_room_request.iterrows()]
+    options = [f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" for _, row in df_user_room_request.iterrows()]
     selected_items = st.multiselect("요청사항 선택", options, key="delete_select")
     if st.button("🗑️ 삭제") and selected_items:
         sheet = gc.open_by_url(url)
-        # 시트가 없으면 생성
         try:
             worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
         except WorksheetNotFound:
@@ -429,7 +468,7 @@ if not df_user_room_request.empty:
         selected_indices = []
         for item in selected_items:
             for idx, row in df_user_room_request.iterrows():
-                if f"{row['분류']} - {row['날짜정보']}" == item:
+                if f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" == item:
                     selected_indices.append(idx)
         df_room_request = df_room_request.drop(index=selected_indices)
         df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
@@ -437,6 +476,10 @@ if not df_user_room_request.empty:
         worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
         st.session_state["df_room_request"] = df_room_request
         st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
+
+        room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
+        st.session_state["all_events"] = master_events + request_events + room_request_events
+
         st.success("✅ 선택한 요청사항이 삭제되었습니다!")
         st.cache_data.clear()
         st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")

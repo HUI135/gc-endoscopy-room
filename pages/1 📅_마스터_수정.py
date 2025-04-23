@@ -146,7 +146,6 @@ if st.session_state.get("login_success", False):
     # ✅ 월 정보
     근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
     요일리스트 = ["월", "화", "수", "목", "금"]
-    today = pd.Timestamp.today()
     today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
 
     next_month = today.replace(day=1) + pd.DateOffset(months=1)
@@ -188,7 +187,6 @@ if st.session_state.get("login_success", False):
             worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
             st.session_state["df_master"] = df_master
 
-    today = datetime.date.today()
     next_month = today.replace(day=1) + relativedelta(months=1)
     year, month = next_month.year, next_month.month
 
