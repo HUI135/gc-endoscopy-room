@@ -311,10 +311,26 @@ if "all_events" not in st.session_state:
 
 # 캘린더 표시
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
+st.write("- 일자별 희망하는 내시경실(방) 및 시간대를 입력해 주세요.\n- 입력하신 내용은 우선적으로 고려되나, 전체 인원의 균형을 위해 반영되지 않을 수 있습니다.")
 if not st.session_state["all_events"]:
     st.info("☑️ 표시할 스케줄 또는 요청사항이 없습니다.")
 elif df_room_request.empty or df_user_room_request.empty:
     st.info("☑️ 표시할 방배정 요청사항이 없습니다.")
+    calendar_options = {
+        "initialView": "dayGridMonth",
+        "initialDate": next_month.strftime("%Y-%m-%d"),
+        "editable": False,
+        "selectable": False,
+        "eventDisplay": "block",
+        "dayHeaderFormat": {"weekday": "short"},
+        "themeSystem": "bootstrap",
+        "height": 500,
+        "headerToolbar": {"left": "", "center": "", "right": ""},
+        "showNonCurrentDates": False,
+        "fixedWeekCount": False,
+        "eventOrder": "source"
+    }
+    st_calendar(events=st.session_state["all_events"], options=calendar_options)
 else:
     calendar_options = {
         "initialView": "dayGridMonth",
@@ -392,72 +408,22 @@ def format_date_for_display(date_info):
     except:
         return date_info
 
-# 방배정 요청사항 입력 UI
+# 방배정 요청사항 입력 및 삭제 UI (단일 폼으로 처리)
 st.write(" ")
-st.markdown(f"<h6 style='font-weight:bold;'>🟢 방배정 요청사항 입력</h6>", unsafe_allow_html=True)
 요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",  
            "8:30", "9:00", "9:30", "10:00", "오후 당직", "오후 당직 안됨"]
-# "이른방", "당직 아닌 이른방"
 
-col1, col2 = st.columns([2, 3])
-분류 = col1.multiselect("요청 분류", 요청분류, key="category_select")
-날짜 = col2.multiselect("요청 일자", date_options, key="date_multiselect")
-날짜정보 = ", ".join([f"{date_values[date_options.index(d)].strftime('%Y-%m-%d')}({d.split()[-1]})" for d in 날짜]) if 날짜 else ""
+with st.form("fixed_form"):
+    # 방배정 요청사항 입력 섹션
+    st.markdown("**🟢 방배정 요청사항 입력**")
+    col1, col2 = st.columns([2, 3])
+    분류 = col1.multiselect("요청 분류", 요청분류, key="category_select")
+    날짜 = col2.multiselect("요청 일자", date_options, key="date_multiselect")
+    날짜정보 = ", ".join([f"{date_values[date_options.index(d)].strftime('%Y-%m-%d')}({d.split()[-1]})" for d in 날짜]) if 날짜 else ""
 
-# 저장 로직
-if st.button("📅 추가"):
-    sheet = gc.open_by_url(url)
-    try:
-        worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
-    except WorksheetNotFound:
-        worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
-        worksheet2.append_row(["이름", "분류", "날짜정보"])
-    
-    if 날짜정보 and 분류:
-        # 새로운 요청사항 리스트 생성
-        new_requests = []
-        for date in 날짜정보.split(","):
-            date = date.strip()
-            for category in 분류:
-                # 동일 이름과 날짜정보가 있는지 확인
-                existing_request = df_room_request[(df_room_request['이름'] == name) & (df_room_request['날짜정보'] == date) & (df_room_request['분류'] == category)]
-                if existing_request.empty:
-                    new_requests.append({"이름": name, "분류": category, "날짜정보": date})
-                    st.write(f"새로운 요청사항 추가: {name}, {date}, {category}")
-
-        if new_requests:
-            # 기존 동일 날짜정보의 요청사항 삭제
-            existing_dates = set(date.strip() for date in 날짜정보.split(","))
-            df_room_request = df_room_request[~((df_room_request['이름'] == name) & (df_room_request['날짜정보'].isin(existing_dates)))]
-            # 새로운 요청사항 추가
-            new_request_df = pd.DataFrame(new_requests)
-            df_room_request = pd.concat([df_room_request, new_request_df], ignore_index=True)
-
-        df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-        worksheet2.clear()
-        worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
-        st.session_state["df_room_request"] = df_room_request
-        st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
-
-        room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
-        st.session_state["all_events"] = master_events + request_events + room_request_events
-
-        st.success("✅ 요청사항이 저장되었습니다!")
-        st.cache_data.clear()
-        st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
-        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
-        st.rerun()
-
-    else:
-        st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.")
-
-# 삭제 UI (디버깅 로그 추가)
-st.write(" ")
-st.markdown(f"<h6 style='font-weight:bold;'>🔴 방배정 요청사항 삭제</h6>", unsafe_allow_html=True)
-if not df_user_room_request.empty:
-    options = [f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" for _, row in df_user_room_request.iterrows()]
-    selected_items = st.multiselect("요청사항 선택", options, key="delete_select")
-    if st.button("🗑️ 삭제") and selected_items:
+    # 저장 로직
+    submit_add = st.form_submit_button("📅 추가")
+    if submit_add:
         sheet = gc.open_by_url(url)
         try:
             worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
@@ -465,25 +431,77 @@ if not df_user_room_request.empty:
             worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
             worksheet2.append_row(["이름", "분류", "날짜정보"])
         
-        selected_indices = []
-        for item in selected_items:
-            for idx, row in df_user_room_request.iterrows():
-                if f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" == item:
-                    selected_indices.append(idx)
-        df_room_request = df_room_request.drop(index=selected_indices)
-        df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-        worksheet2.clear()
-        worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
-        st.session_state["df_room_request"] = df_room_request
-        st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
+        if 날짜정보 and 분류:
+            # 새로운 요청사항 리스트 생성
+            new_requests = []
+            for date in 날짜정보.split(","):
+                date = date.strip()
+                for category in 분류:
+                    # 동일 이름과 날짜정보가 있는지 확인
+                    existing_request = df_room_request[(df_room_request['이름'] == name) & (df_room_request['날짜정보'] == date) & (df_room_request['분류'] == category)]
+                    if existing_request.empty:
+                        new_requests.append({"이름": name, "분류": category, "날짜정보": date})
 
-        room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
-        st.session_state["all_events"] = master_events + request_events + room_request_events
+            if new_requests:
+                # 기존 동일 날짜정보의 요청사항 삭제
+                existing_dates = set(date.strip() for date in 날짜정보.split(","))
+                df_room_request = df_room_request[~((df_room_request['이름'] == name) & (df_room_request['날짜정보'].isin(existing_dates)))]
+                # 새로운 요청사항 추가
+                new_request_df = pd.DataFrame(new_requests)
+                df_room_request = pd.concat([df_room_request, new_request_df], ignore_index=True)
 
-        st.success("✅ 선택한 요청사항이 삭제되었습니다!")
-        st.cache_data.clear()
-        st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
-        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
-        st.rerun()
-else:
-    st.info("📍 요청사항 없음")
+            df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+            worksheet2.clear()
+            worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
+            st.session_state["df_room_request"] = df_room_request
+            st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
+
+            room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
+            st.session_state["all_events"] = master_events + request_events + room_request_events
+
+            st.success("✅ 요청사항이 저장되었습니다!")
+            st.cache_data.clear()
+            st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
+            st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+            st.rerun()
+        else:
+            st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.")
+
+    # 방배정 요청사항 삭제 섹션
+    st.write(" ")
+    st.markdown(f"<h6 style='font-weight:bold;'>🔴 방배정 요청사항 삭제</h6>", unsafe_allow_html=True)
+    if not df_user_room_request.empty:
+        options = [f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" for _, row in df_user_room_request.iterrows()]
+        selected_items = st.multiselect("요청사항 선택", options, key="delete_select")
+        
+        submit_delete = st.form_submit_button("📅 삭제")
+        if submit_delete and selected_items:
+            sheet = gc.open_by_url(url)
+            try:
+                worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
+            except WorksheetNotFound:
+                worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
+                worksheet2.append_row(["이름", "분류", "날짜정보"])
+            
+            selected_indices = []
+            for item in selected_items:
+                for idx, row in df_user_room_request.iterrows():
+                    if f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" == item:
+                        selected_indices.append(idx)
+            df_room_request = df_room_request.drop(index=selected_indices)
+            df_room_request = df_room_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+            worksheet2.clear()
+            worksheet2.update([df_room_request.columns.tolist()] + df_room_request.astype(str).values.tolist())
+            st.session_state["df_room_request"] = df_room_request
+            st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
+
+            room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
+            st.session_state["all_events"] = master_events + request_events + room_request_events
+
+            st.success("✅ 선택한 요청사항이 삭제되었습니다!")
+            st.cache_data.clear()
+            st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
+            st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+            st.rerun()
+    else:
+        st.info("📍 요청사항 없음")

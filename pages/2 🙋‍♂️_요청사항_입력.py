@@ -75,6 +75,7 @@ df_user_request = st.session_state["df_user_request"]
 # 캘린더 표시
 # st.markdown(f"<h6 style='font-weight:bold;'>🙋‍♂️ {name} 님의 {month_str} 요청사항</h6>", unsafe_allow_html=True)
 st.header(f"🙋‍♂️ {name} 님의 {month_str} 요청사항", divider='rainbow')
+st.write("- 휴가 / 보충 불가 / 꼭 근무 관련 요청사항이 있을 경우 반드시 기재해 주세요.\n- 요청사항은 매월 기재해 주셔야 하며, 별도 요청이 없을 경우에도 반드시 '요청 없음'을 입력해 주세요.")
 
 if df_user_request.empty or (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):
     st.info("☑️ 당월에 입력하신 요청사항이 없습니다.")
@@ -146,118 +147,121 @@ else:
 
 st.divider()
 
-# 요청사항 입력 UI
+# 요청사항 입력 및 삭제 UI (단일 폼으로 처리)
 st.write(" ")
-st.markdown(f"<h6 style='font-weight:bold;'>🟢 요청사항 입력</h6>", unsafe_allow_html=True)
 요청분류 = ["휴가", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
 날짜선택방식 = ["일자 선택", "기간 선택", "주/요일 선택"]
 
-# 세 개의 열로 변경
-col1, col2, col3 = st.columns([1,1,2])
-분류 = col1.selectbox("요청 분류", 요청분류, key="category_select")
-방식 = col2.selectbox("날짜 선택 방식", 날짜선택방식, key="method_select") if 분류 != "요청 없음" else ""
+with st.form("fixed_form"):
+    # 요청사항 입력 섹션
+    st.markdown("**🟢 요청사항 입력**")
+    col1, col2, col3 = st.columns([1, 1, 2])
+    분류 = col1.selectbox("요청 분류", 요청분류, key="category_select")
+    방식 = col2.selectbox("날짜 선택 방식", 날짜선택방식, key="method_select") if 분류 != "요청 없음" else ""
 
-# 날짜 입력 로직
-날짜정보 = ""
-if 분류 != "요청 없음":
-    if 방식 == "일자 선택":
-        날짜 = col3.multiselect("요청 일자", [next_month_start + datetime.timedelta(days=i) for i in range((next_month_end - next_month_start).days + 1)], format_func=lambda x: x.strftime("%Y-%m-%d"), key="date_multiselect")
-        날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜]) if 날짜 else ""
-    elif 방식 == "기간 선택":
-        날짜범위 = col3.date_input("요청 기간", value=(next_month_start, next_month_start + datetime.timedelta(days=1)), min_value=next_month_start, max_value=next_month_end, key="date_range")
-        if isinstance(날짜범위, tuple) and len(날짜범위) == 2:
-            날짜정보 = f"{날짜범위[0].strftime('%Y-%m-%d')} ~ {날짜범위[1].strftime('%Y-%m-%d')}"
-    elif 방식 == "주/요일 선택":
-        선택주차 = col3.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
-        선택요일 = col3.multiselect("요일 선택", ["월", "화", "수", "목", "금"], key="day_select")
-        주차_index = {"첫째주": 0, "둘째주": 1, "셋째주": 2, "넷째주": 3, "다섯째주": 4}
-        요일_index = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
-        날짜목록 = []
+    # 날짜 입력 로직
+    날짜정보 = ""
+    if 분류 != "요청 없음":
+        if 방식 == "일자 선택":
+            날짜 = col3.multiselect("요청 일자", [next_month_start + datetime.timedelta(days=i) for i in range((next_month_end - next_month_start).days + 1)], format_func=lambda x: x.strftime("%Y-%m-%d"), key="date_multiselect")
+            날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜]) if 날짜 else ""
+        elif 방식 == "기간 선택":
+            날짜범위 = col3.date_input("요청 기간", value=(next_month_start, next_month_start + datetime.timedelta(days=1)), min_value=next_month_start, max_value=next_month_end, key="date_range")
+            if isinstance(날짜범위, tuple) and len(날짜범위) == 2:
+                날짜정보 = f"{날짜범위[0].strftime('%Y-%m-%d')} ~ {날짜범위[1].strftime('%Y-%m-%d')}"
+        elif 방식 == "주/요일 선택":
+            선택주차 = col3.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
+            선택요일 = col3.multiselect("요일 선택", ["월", "화", "수", "목", "금"], key="day_select")
+            주차_index = {"첫째주": 0, "둘째주": 1, "셋째주": 2, "넷째주": 3, "다섯째주": 4}
+            요일_index = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
+            날짜목록 = []
 
-        # 첫 번째 일요일 찾기
-        first_sunday = None
-        for i in range(1, last_day + 1):
-            date_obj = datetime.date(next_month.year, next_month.month, i)
-            if date_obj.weekday() == 6:  # 일요일
-                first_sunday = i
-                break
+            # 첫 번째 일요일 찾기
+            first_sunday = None
+            for i in range(1, last_day + 1):
+                date_obj = datetime.date(next_month.year, next_month.month, i)
+                if date_obj.weekday() == 6:  # 일요일
+                    first_sunday = i
+                    break
 
-        for i in range(1, last_day + 1):
-            날짜 = datetime.date(next_month.year, next_month.month, i)
-            weekday = 날짜.weekday()
-            # 주차 계산: 첫 번째 일요일 기준
-            if i < first_sunday:
-                week_of_month = 0  # 첫 번째 일요일 이전은 1주차
-            else:
-                week_of_month = (i - first_sunday) // 7 + 1  # 첫 번째 일요일 이후 주차 계산
-            if weekday in 요일_index.values() and any(주차 == "매주" or 주차_index.get(주차) == week_of_month for 주차 in 선택주차):
-                if weekday in [요일_index[요일] for 요일 in 선택요일]:
-                    날짜목록.append(날짜.strftime("%Y-%m-%d"))
-        날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
+            for i in range(1, last_day + 1):
+                날짜 = datetime.date(next_month.year, next_month.month, i)
+                weekday = 날짜.weekday()
+                # 주차 계산: 첫 번째 일요일 기준
+                if i < first_sunday:
+                    week_of_month = 0  # 첫 번째 일요일 이전은 1주차
+                else:
+                    week_of_month = (i - first_sunday) // 7 + 1  # 첫 번째 일요일 이후 주차 계산
+                if weekday in 요일_index.values() and any(주차 == "매주" or 주차_index.get(주차) == week_of_month for 주차 in 선택주차):
+                    if weekday in [요일_index[요일] for 요일 in 선택요일]:
+                        날짜목록.append(날짜.strftime("%Y-%m-%d"))
+            날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
 
-if 분류 == "요청 없음":
-    st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
-
-# 저장 로직
-if st.button("📅 추가"):
-    sheet = gc.open_by_url(url)
-    worksheet2 = sheet.worksheet(f"{month_str} 요청")
     if 분류 == "요청 없음":
-        df_request = df_request[df_request["이름"] != name]
-        df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
-        df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-        worksheet2.clear()
-        worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-        st.session_state["df_request"] = df_request
-        st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
-        st.success("✅ 요청사항이 저장되었습니다!")
-        st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_request"] = load_request_data(gc, url, month_str)
-        st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-        st.rerun()  # 페이지 새로고침
-    elif 날짜정보:
-        df_request = df_request[~((df_request["이름"] == name) & (df_request["분류"] == "요청 없음"))]
-        df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": 날짜정보}])], ignore_index=True)
-        df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-        worksheet2.clear()
-        worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-        st.session_state["df_request"] = df_request
-        st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
-        st.success("✅ 요청사항이 저장되었습니다!")
-        st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_request"] = load_request_data(gc, url, month_str)
-        st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-        st.rerun()  # 페이지 새로고침
-    else:
-        st.warning("날짜 정보를 올바르게 입력해주세요.")
+        st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
 
-# 삭제 UI
-st.write(" ")
-st.markdown(f"<h6 style='font-weight:bold;'>🔴 요청사항 삭제</h6>", unsafe_allow_html=True)
-if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):
-    options = [f"{row['분류']} - {row['날짜정보']}" for _, row in df_user_request[df_user_request['분류'] != '요청 없음'].iterrows()]
-    selected_items = st.multiselect("요청사항 선택", options, key="delete_select")
-    if st.button("🗑️ 삭제") and selected_items:
+    # 저장 로직
+    submit_add = st.form_submit_button("📅 추가")
+    if submit_add:
         sheet = gc.open_by_url(url)
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
-        selected_indices = []
-        for item in selected_items:
-            for idx, row in df_user_request.iterrows():
-                if f"{row['분류']} - {row['날짜정보']}" == item:
-                    selected_indices.append(idx)
-        df_request = df_request.drop(index=selected_indices)
-        if df_request[df_request["이름"] == name].empty:
-            df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
-        df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-        worksheet2.clear()
-        worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-        st.session_state["df_request"] = df_request
-        st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
-        st.success("✅ 선택한 요청사항이 삭제되었습니다!")
-        st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_request"] = load_request_data(gc, url, month_str)
-        st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-        # st.success("데이터가 새로고침되었습니다!")
-        st.rerun()  # 페이지 새로고침
-else:
-    st.info("📍 요청사항 없음")
+        if 분류 == "요청 없음":
+            df_request = df_request[df_request["이름"] != name]
+            df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
+            df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+            worksheet2.clear()
+            worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
+            st.session_state["df_request"] = df_request
+            st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
+            st.success("✅ 요청사항이 저장되었습니다!")
+            st.cache_data.clear()  # 캐시 무효화
+            st.session_state["df_request"] = load_request_data(gc, url, month_str)
+            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+            st.rerun()  # 페이지 새로고침
+        elif 날짜정보:
+            df_request = df_request[~((df_request["이름"] == name) & (df_request["분류"] == "요청 없음"))]
+            df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": 날짜정보}])], ignore_index=True)
+            df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+            worksheet2.clear()
+            worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
+            st.session_state["df_request"] = df_request
+            st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
+            st.success("✅ 요청사항이 저장되었습니다!")
+            st.cache_data.clear()  # 캐시 무효화
+            st.session_state["df_request"] = load_request_data(gc, url, month_str)
+            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+            st.rerun()  # 페이지 새로고침
+        else:
+            st.warning("날짜 정보를 올바르게 입력해주세요.")
+
+    # 요청사항 삭제 섹션
+    st.write(" ")
+    st.markdown(f"<h6 style='font-weight:bold;'>🔴 요청사항 삭제</h6>", unsafe_allow_html=True)
+    if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):
+        options = [f"{row['분류']} - {row['날짜정보']}" for _, row in df_user_request[df_user_request['분류'] != '요청 없음'].iterrows()]
+        selected_items = st.multiselect("요청사항 선택", options, key="delete_select")
+        
+        submit_delete = st.form_submit_button("📅 삭제")
+        if submit_delete and selected_items:
+            sheet = gc.open_by_url(url)
+            worksheet2 = sheet.worksheet(f"{month_str} 요청")
+            selected_indices = []
+            for item in selected_items:
+                for idx, row in df_user_request.iterrows():
+                    if f"{row['분류']} - {row['날짜정보']}" == item:
+                        selected_indices.append(idx)
+            df_request = df_request.drop(index=selected_indices)
+            if df_request[df_request["이름"] == name].empty:
+                df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
+            df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+            worksheet2.clear()
+            worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
+            st.session_state["df_request"] = df_request
+            st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
+            st.success("✅ 선택한 요청사항이 삭제되었습니다!")
+            st.cache_data.clear()  # 캐시 무효화
+            st.session_state["df_request"] = load_request_data(gc, url, month_str)
+            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+            st.rerun()  # 페이지 새로고침
+    else:
+        st.info("📍 요청사항 없음")
