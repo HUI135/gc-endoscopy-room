@@ -35,6 +35,14 @@ if st.sidebar.button("로그아웃"):
 url = st.secrets["google_sheet"]["url"]
 month_str = "2025년 04월"
 
+# 새로고침 버튼 (맨 상단)
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.session_state["data_loaded"] = False  # 데이터 리로드 강제
+    load_data()  # load_data 호출로 모든 데이터 갱신
+    st.success("데이터가 새로고침되었습니다.")
+    st.rerun()
+
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -330,7 +338,37 @@ if st.session_state.get("is_admin_authenticated", False):
     if "output" not in st.session_state:
         st.session_state.output = None
 
+    # 휴관일 선택 UI 추가
+    st.write(" ")
+    st.markdown("**📅 센터 휴관일 추가**")
+
+    # month_str에 해당하는 평일 날짜 생성 (이미 정의된 weekdays 사용)
+    holiday_options = []
+    for date in weekdays:
+        date_str = date.strftime('%Y-%m-%d')
+        date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        day_name = day_map[date_obj.weekday()]
+        holiday_format = f"{date_obj.month}월 {date_obj.day}일({day_name})"
+        holiday_options.append((holiday_format, date_str))
+
+    # st.multiselect로 휴관일 선택
+    selected_holidays = st.multiselect(
+        label=f"{month_str} 평일 중 휴관일을 선택하세요",
+        options=[option[0] for option in holiday_options],
+        default=[],
+        help="선택한 날짜는 근무 배정에서 제외됩니다."
+    )
+
+    # 선택된 휴관일을 날짜 형식(YYYY-MM-DD)으로 변환
+    holiday_dates = []
+    for holiday in selected_holidays:
+        for option in holiday_options:
+            if option[0] == holiday:
+                holiday_dates.append(option[1])
+                break
+
     # 근무 배정 버튼
+    st.write(" ")
     if st.button("🚀 근무 배정 실행"):
         # 버튼 클릭 시 세션 상태 초기화
         st.session_state.assigned = False
@@ -343,8 +381,11 @@ if st.session_state.get("is_admin_authenticated", False):
             # 날짜별 오전 근무 제외 인원 추적용 딕셔너리 (모든 날짜에 대해 초기화)
             excluded_morning_workers = {date.strftime('%Y-%m-%d'): set() for date in weekdays}
 
-            # 1단계: 모든 날짜에 대해 오전 기본 배정 및 휴가자 처리
-            for date in weekdays:
+            # 휴관일을 제외한 평일 리스트 생성
+            active_weekdays = [date for date in weekdays if date.strftime('%Y-%m-%d') not in holiday_dates]
+
+            # 1단계: 모든 날짜에 대해 오전 기본 배정 및 휴가자 처리 (휴관일 제외)
+            for date in active_weekdays:
                 day_name = day_map[date.weekday()]
                 week_num = week_numbers[date]
                 date_str = date.strftime('%Y-%m-%d')
@@ -443,10 +484,10 @@ if st.session_state.get("is_admin_authenticated", False):
                     current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) + 1
                     df_final = update_worker_status(df_final, date_str, time_slot, worker, status, memo, color)
 
-            # 2단계: 모든 날짜에 대해 오전 보충/제외 수행
+            # 2단계: 모든 날짜에 대해 오전 보충/제외 수행 (휴관일 제외)
             time_slot = '오전'
             target_count = 12
-            for date in weekdays:
+            for date in active_weekdays:
                 date_str = date.strftime('%Y-%m-%d')
                 day_name = day_map[date.weekday()]
                 week_num = week_numbers[date]
@@ -468,7 +509,7 @@ if st.session_state.get("is_admin_authenticated", False):
                 moved_workers = set()
                 supplemented_workers = {}
                 excluded_workers = {}
-                for d in weekdays:
+                for d in active_weekdays:  # 휴관일 제외
                     d_str = d.strftime('%Y-%m-%d')
                     supplemented_workers[d_str] = []
                     excluded_workers[d_str] = []
@@ -478,7 +519,7 @@ if st.session_state.get("is_admin_authenticated", False):
                     iteration += 1
                     excess_dates = []
                     shortage_dates = []
-                    for d in weekdays:
+                    for d in active_weekdays:
                         d_str = d.strftime('%Y-%m-%d')
                         workers = df_final[
                             (df_final['날짜'] == d_str) &
@@ -498,7 +539,8 @@ if st.session_state.get("is_admin_authenticated", False):
                         if excess_date in processed_excess:
                             excess_dates.pop(0)
                             continue
-                        matched = False
+                        matchedCondividi
+
                         for i, (shortage_date, shortage_count) in enumerate(shortage_dates[:]):
                             if excess_count == 0 or shortage_count == 0:
                                 continue
@@ -562,7 +604,7 @@ if st.session_state.get("is_admin_authenticated", False):
 
                     excess_dates = []
                     shortage_dates = []
-                    for d in reversed(weekdays):
+                    for d in reversed(active_weekdays):
                         d_str = d.strftime('%Y-%m-%d')
                         workers = df_final[
                             (df_final['날짜'] == d_str) &
@@ -643,8 +685,8 @@ if st.session_state.get("is_admin_authenticated", False):
                     if not any_matched:
                         break
 
-            # 3단계: 모든 날짜에 대해 오후 기본 배정
-            for date in weekdays:
+            # 3단계: 모든 날짜에 대해 오후 기본 배정 (휴관일 제외)
+            for date in active_weekdays:
                 day_name = day_map[date.weekday()]
                 week_num = week_numbers[date]
                 date_str = date.strftime('%Y-%m-%d')
@@ -710,7 +752,7 @@ if st.session_state.get("is_admin_authenticated", False):
                     (df_final['시간대'] == '오전') &
                     (df_final['상태'].isin(['근무', '보충']))
                 ]['근무자'].tolist()
-                workers = [w for w in workers if w in morning_workers or w in must_work]
+                workers = [w for w in workers if (w in morning_workers or w in must_work) and w not in excluded_morning_workers[date_str]]
 
                 for worker in workers:
                     status = '근무'
@@ -722,10 +764,10 @@ if st.session_state.get("is_admin_authenticated", False):
                     current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) + 1
                     df_final = update_worker_status(df_final, date_str, time_slot, worker, status, memo, color)
 
-            # 4단계: 모든 날짜에 대해 오후 보충/제외 수행
+            # 4단계: 모든 날짜에 대해 오후 보충/제외 수행 (휴관일 제외)
             time_slot = '오후'
             target_count = 5
-            for date in weekdays:
+            for date in active_weekdays:
                 date_str = date.strftime('%Y-%m-%d')
                 day_name = day_map[date.weekday()]
                 week_num = week_numbers[date]
@@ -747,7 +789,7 @@ if st.session_state.get("is_admin_authenticated", False):
                 moved_workers = set()
                 supplemented_workers = {}
                 excluded_workers = {}
-                for d in weekdays:
+                for d in active_weekdays:
                     d_str = d.strftime('%Y-%m-%d')
                     supplemented_workers[d_str] = []
                     excluded_workers[d_str] = []
@@ -757,7 +799,7 @@ if st.session_state.get("is_admin_authenticated", False):
                     iteration += 1
                     excess_dates = []
                     shortage_dates = []
-                    for d in weekdays:
+                    for d in active_weekdays:
                         d_str = d.strftime('%Y-%m-%d')
                         workers = df_final[
                             (df_final['날짜'] == d_str) &
@@ -805,8 +847,8 @@ if st.session_state.get("is_admin_authenticated", False):
                                 (df_final['상태'].isin(['근무', '보충']))
                             ]['근무자'].tolist()
                             must_work_shortage = [row['이름'] for _, row in df_request.iterrows() if shortage_date in parse_date_range(row['날짜정보']) and row['분류'] == '꼭 근무(오후)']
-                            movable_workers = [w for w in movable_workers if w in morning_workers_shortage or w in must_work_shortage]
-                            movable_workers = [w for w in movable_workers if w in shortage_supplement and w not in shortage_initial and w not in excluded_morning_workers[shortage_date]]
+                            movable_workers = [w for w in movable_workers if (w in morning_workers_shortage or w in must_work_shortage) and w not in excluded_morning_workers[shortage_date]]
+                            movable_workers = [w for w in movable_workers if w in shortage_supplement and w not in shortage_initial]
 
                             moved = False
                             for _ in range(min(excess_count, shortage_count)):
@@ -847,7 +889,7 @@ if st.session_state.get("is_admin_authenticated", False):
 
                     excess_dates = []
                     shortage_dates = []
-                    for d in reversed(weekdays):
+                    for d in reversed(active_weekdays):
                         d_str = d.strftime('%Y-%m-%d')
                         workers = df_final[
                             (df_final['날짜'] == d_str) &
@@ -895,8 +937,8 @@ if st.session_state.get("is_admin_authenticated", False):
                                 (df_final['상태'].isin(['근무', '보충']))
                             ]['근무자'].tolist()
                             must_work_shortage = [row['이름'] for _, row in df_request.iterrows() if shortage_date in parse_date_range(row['날짜정보']) and row['분류'] == '꼭 근무(오후)']
-                            movable_workers = [w for w in movable_workers if w in morning_workers_shortage or w in must_work_shortage]
-                            movable_workers = [w for w in movable_workers if w in shortage_supplement and w not in shortage_initial and w not in excluded_morning_workers[shortage_date]]
+                            movable_workers = [w for w in movable_workers if (w in morning_workers_shortage or w in must_work_shortage) and w not in excluded_morning_workers[shortage_date]]
+                            movable_workers = [w for w in movable_workers if w in shortage_supplement and w not in shortage_initial]
 
                             moved = False
                             for _ in range(min(excess_count, shortage_count)):
@@ -934,144 +976,144 @@ if st.session_state.get("is_admin_authenticated", False):
                     if not any_matched:
                         break
 
-                # 5단계: 모든 날짜에 대해 추가 보충/제외 수행
-                for date in weekdays:
-                    date_str = date.strftime('%Y-%m-%d')
-                    day_name = day_map[date.weekday()]
-                    week_num = week_numbers[date]
-                    supplemented_morning_workers = df_final[
+            # 5단계: 모든 날짜에 대해 추가 보충/제외 수행 (휴관일 제외)
+            for date in active_weekdays:
+                date_str = date.strftime('%Y-%m-%d')
+                day_name = day_map[date.weekday()]
+                week_num = week_numbers[date]
+                supplemented_morning_workers = df_final[
+                    (df_final['날짜'] == date_str) &
+                    (df_final['시간대'] == '오전') &
+                    (df_final['상태'].isin(['근무', '보충']))
+                ]['근무자'].tolist()
+
+                for time_slot in ['오전', '오후']:
+                    target_count = 12 if time_slot == '오전' else 5
+
+                    # 기본 보충/제외 전 근무자 출력
+                    current_workers = df_final[
                         (df_final['날짜'] == date_str) &
-                        (df_final['시간대'] == '오전') &
+                        (df_final['시간대'] == time_slot) &
                         (df_final['상태'].isin(['근무', '보충']))
                     ]['근무자'].tolist()
 
-                    for time_slot in ['오전', '오후']:
-                        target_count = 12 if time_slot == '오전' else 5
+                    # 요청사항 재확인
+                    vacationers = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == '휴가']
+                    must_work = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == f'꼭 근무({time_slot})']
+                    no_supplement = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == f'보충 불가({time_slot})']
+                    hard_supplement = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == f'보충 어려움({time_slot})']
 
-                        # 기본 보충/제외 전 근무자 출력
-                        current_workers = df_final[
-                            (df_final['날짜'] == date_str) &
-                            (df_final['시간대'] == time_slot) &
-                            (df_final['상태'].isin(['근무', '보충']))
-                        ]['근무자'].tolist()
-
-                        # 요청사항 재확인
-                        vacationers = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == '휴가']
-                        must_work = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == f'꼭 근무({time_slot})']
-                        no_supplement = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == f'보충 불가({time_slot})']
-                        hard_supplement = [row['이름'] for _, row in df_request.iterrows() if date_str in parse_date_range(row['날짜정보']) and row['분류'] == f'보충 어려움({time_slot})']
-
-                        # df_shift_processed 초기 근무자
-                        shift_key = f'{day_name} {time_slot}'
-                        shift_row = df_shift_processed[df_shift_processed['시간대'] == shift_key]
-                        initial_workers = set()
-                        if not shift_row.empty:
-                            for col in [f'근무{i}' for i in range(1, 15)]:
-                                worker = shift_row[col].values[0] if col in shift_row.columns and pd.notna(shift_row[col].values[0]) else ''
-                                if worker:
-                                    if '(' in worker:
-                                        name, weeks = worker.split('(')
-                                        name = name.strip()
-                                        weeks = weeks.rstrip(')').split(',')
-                                        if f'{week_num}주' in weeks:
-                                            initial_workers.add(name)
-                                    else:
-                                        initial_workers.add(worker)
-
-                        # df_supplement_processed 보충 근무자
-                        supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == shift_key]
-                        supplement_workers = []
-                        if not supplement_row.empty:
-                            for col in [f'보충{i}' for i in range(1, 13)]:
-                                worker = supplement_row[col].values[0] if col in supplement_row.columns and pd.notna(supplement_row[col].values[0]) else ''
-                                if worker:
-                                    name = worker.replace('🔺', '')
-                                    priority = 'low' if '🔺' in worker else 'normal'
-                                    if name not in vacationers and name not in no_supplement:
-                                        supplement_workers.append((name, priority))
-                        if time_slot == '오후':
-                            for worker in supplemented_morning_workers:
-                                if worker not in [w for w, _ in supplement_workers] and worker not in vacationers and worker not in no_supplement:
-                                    supplement_workers.append((worker, 'normal'))
-                        supplement_workers = [(w, p) for w, p in supplement_workers if w not in vacationers and w not in no_supplement]
-
-                        # 오후 보충 제약
-                        morning_workers = df_final[
-                            (df_final['날짜'] == date_str) &
-                            (df_final['시간대'] == '오전') &
-                            (df_final['상태'].isin(['근무', '보충']))
-                        ]['근무자'].tolist() if time_slot == '오후' else None
-
-                        # 추가 보충
-                        added_supplement_workers = []
-                        added_exclude_workers = []
-                        if len(current_workers) < target_count:
-                            supplement_workers_with_cumulative = [
-                                (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0, p)
-                                for w, p in supplement_workers if w not in current_workers
-                            ]
-                            supplement_workers_with_cumulative.sort(key=lambda x: (x[1], x[2] == 'low'))
-                            while len(current_workers) < target_count and supplement_workers_with_cumulative:
-                                worker, _, _ = supplement_workers_with_cumulative.pop(0)
-                                if time_slot == '오후' and worker not in must_work:
-                                    if worker not in morning_workers or worker in excluded_morning_workers[date_str]:
-                                        continue
-                                current_workers.append(worker)
-                                added_supplement_workers.append(worker)
-                                current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) + 1
-                                if worker in df_cumulative_next[f'{month_str}'].values:
-                                    df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, f'{time_slot}누적'] += 1
+                    # df_shift_processed 초기 근무자
+                    shift_key = f'{day_name} {time_slot}'
+                    shift_row = df_shift_processed[df_shift_processed['시간대'] == shift_key]
+                    initial_workers = set()
+                    if not shift_row.empty:
+                        for col in [f'근무{i}' for i in range(1, 15)]:
+                            worker = shift_row[col].values[0] if col in shift_row.columns and pd.notna(shift_row[col].values[0]) else ''
+                            if worker:
+                                if '(' in worker:
+                                    name, weeks = worker.split('(')
+                                    name = name.strip()
+                                    weeks = weeks.rstrip(')').split(',')
+                                    if f'{week_num}주' in weeks:
+                                        initial_workers.add(name)
                                 else:
-                                    new_row = pd.DataFrame({
-                                        f'{month_str}': [worker],
-                                        f'{time_slot}누적': [1],
-                                        '오전당직 (온콜)': [0],
-                                        '오후당직': [0]
-                                    })
-                                    if time_slot == '오전':
-                                        new_row['오후누적'] = [0]
-                                    else:
-                                        new_row['오전누적'] = [0]
-                                    df_cumulative_next = pd.concat([df_cumulative_next, new_row], ignore_index=True)
-                                df_final = update_worker_status(df_final, date_str, time_slot, worker, '보충', '인원 부족으로 인한 추가 보충', '🟡 노란색')
+                                    initial_workers.add(worker)
 
-                        # 추가 제외
-                        if len(current_workers) > target_count:
+                    # df_supplement_processed 보충 근무자
+                    supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == shift_key]
+                    supplement_workers = []
+                    if not supplement_row.empty:
+                        for col in [f'보충{i}' for i in range(1, 13)]:
+                            worker = supplement_row[col].values[0] if col in supplement_row.columns and pd.notna(supplement_row[col].values[0]) else ''
+                            if worker:
+                                name = worker.replace('🔺', '')
+                                priority = 'low' if '🔺' in worker else 'normal'
+                                if name not in vacationers and name not in no_supplement:
+                                    supplement_workers.append((name, priority))
+                    if time_slot == '오후':
+                        for worker in supplemented_morning_workers:
+                            if worker not in [w for w, _ in supplement_workers] and worker not in vacationers and worker not in no_supplement:
+                                supplement_workers.append((worker, 'normal'))
+                    supplement_workers = [(w, p) for w, p in supplement_workers if w not in vacationers and w not in no_supplement]
+
+                    # 오후 보충 제약
+                    morning_workers = df_final[
+                        (df_final['날짜'] == date_str) &
+                        (df_final['시간대'] == '오전') &
+                        (df_final['상태'].isin(['근무', '보충']))
+                    ]['근무자'].tolist() if time_slot == '오후' else None
+
+                    # 추가 보충
+                    added_supplement_workers = []
+                    added_exclude_workers = []
+                    if len(current_workers) < target_count:
+                        supplement_workers_with_cumulative = [
+                            (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0, p)
+                            for w, p in supplement_workers if w not in current_workers
+                        ]
+                        supplement_workers_with_cumulative.sort(key=lambda x: (x[1], x[2] == 'low'))
+                        while len(current_workers) < target_count and supplement_workers_with_cumulative:
+                            worker, _, _ = supplement_workers_with_cumulative.pop(0)
+                            if time_slot == '오후' and worker not in must_work:
+                                if worker not in morning_workers or worker in excluded_morning_workers[date_str]:
+                                    continue
+                            current_workers.append(worker)
+                            added_supplement_workers.append(worker)
+                            current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) + 1
+                            if worker in df_cumulative_next[f'{month_str}'].values:
+                                df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, f'{time_slot}누적'] += 1
+                            else:
+                                new_row = pd.DataFrame({
+                                    f'{month_str}': [worker],
+                                    f'{time_slot}누적': [1],
+                                    '오전당직 (온콜)': [0],
+                                    '오후당직': [0]
+                                })
+                                if time_slot == '오전':
+                                    new_row['오후누적'] = [0]
+                                else:
+                                    new_row['오전누적'] = [0]
+                                df_cumulative_next = pd.concat([df_cumulative_next, new_row], ignore_index=True)
+                            df_final = update_worker_status(df_final, date_str, time_slot, worker, '보충', '인원 부족으로 인한 추가 보충', '🟡 노란색')
+
+                    # 추가 제외
+                    if len(current_workers) > target_count:
+                        removable_workers = [
+                            (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0)
+                            for w in current_workers if w not in must_work and w not in initial_workers
+                        ]
+                        if not removable_workers:
                             removable_workers = [
                                 (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0)
-                                for w in current_workers if w not in must_work and w not in initial_workers
+                                for w in current_workers if w not in must_work
                             ]
-                            if not removable_workers:
-                                removable_workers = [
-                                    (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0)
-                                    for w in current_workers if w not in must_work
-                                ]
-                            removable_workers.sort(key=lambda x: x[1], reverse=True)
-                            while len(current_workers) > target_count and removable_workers:
-                                worker, _ = removable_workers.pop(0)
-                                current_workers.remove(worker)
-                                added_exclude_workers.append(worker)
-                                current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) - 1
-                                if worker in df_cumulative_next[f'{month_str}'].values:
-                                    df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, f'{time_slot}누적'] -= 1
-                                df_final = update_worker_status(df_final, date_str, time_slot, worker, '제외', '인원 초과로 인한 추가 제외', '🟣 보라색')
-                                if time_slot == '오전':
-                                    if df_final[
-                                        (df_final['날짜'] == date_str) &
-                                        (df_final['시간대'] == '오후') &
-                                        (df_final['근무자'] == worker)
-                                    ].empty:
-                                        df_final = update_worker_status(df_final, date_str, '오후', worker, '제외', '오전 제외로 인한 오후 제외', '🟣 보라색')
-                                        current_cumulative['오후'][worker] = current_cumulative['오후'].get(worker, 0) - 1
-                                        if worker in df_cumulative_next[f'{month_str}'].values:
-                                            df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, '오후누적'] -= 1
+                        removable_workers.sort(key=lambda x: x[1], reverse=True)
+                        while len(current_workers) > target_count and removable_workers:
+                            worker, _ = removable_workers.pop(0)
+                            current_workers.remove(worker)
+                            added_exclude_workers.append(worker)
+                            current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) - 1
+                            if worker in df_cumulative_next[f'{month_str}'].values:
+                                df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, f'{time_slot}누적'] -= 1
+                            df_final = update_worker_status(df_final, date_str, time_slot, worker, '제외', '인원 초과로 인한 추가 제외', '🟣 보라색')
+                            if time_slot == '오전':
+                                if df_final[
+                                    (df_final['날짜'] == date_str) &
+                                    (df_final['시간대'] == '오후') &
+                                    (df_final['근무자'] == worker)
+                                ].empty:
+                                    df_final = update_worker_status(df_final, date_str, '오후', worker, '제외', '오전 제외로 인한 오후 제외', '🟣 보라색')
+                                    current_cumulative['오후'][worker] = current_cumulative['오후'].get(worker, 0) - 1
+                                    if worker in df_cumulative_next[f'{month_str}'].values:
+                                        df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, '오후누적'] -= 1
 
-                        # 최종 검증
-                        final_count = len(df_final[
-                            (df_final['날짜'] == date_str) &
-                            (df_final['시간대'] == time_slot) &
-                            (df_final['상태'].isin(['근무', '보충']))
-                        ]['근무자'].tolist())
+                    # 최종 검증
+                    final_count = len(df_final[
+                        (df_final['날짜'] == date_str) &
+                        (df_final['시간대'] == time_slot) &
+                        (df_final['상태'].isin(['근무', '보충']))
+                    ]['근무자'].tolist())
 
             # 2025년 4월 전체 평일 및 주말 생성
             _, last_day = calendar.monthrange(next_month.year, next_month.month)

@@ -173,11 +173,12 @@ def generate_room_request_events(df_user_room_request, next_month):
         "오전 당직 안됨": "오전당직🚫",
         "오후 당직 안됨": "오후당직🚫",
         "당직 아닌 이른방": "당직아닌이른방",
+        "이른방 제외": "이른방 제외",
+        "늦은방 제외": "늦은방 제외",
         "8:30": "8:30",
         "9:00": "9:00",
         "9:30": "9:30",
         "10:00": "10:00",
-        "이른방": "이른방",
         "오전 당직": "오전당직",
         "오후 당직": "오후당직",
     }
@@ -190,7 +191,6 @@ def generate_room_request_events(df_user_room_request, next_month):
             continue
         for 날짜 in [d.strip() for d in 날짜정보.split(",")]:
             try:
-                # 날짜와 시간대 분리 (예: "2025-04-02(오전)")
                 date_str, time_slot = 날짜.split("(")
                 time_slot = time_slot.rstrip(")")
                 dt = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -230,6 +230,32 @@ next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
 
+# 새로고침 버튼 (맨 상단)
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.session_state["df_master"] = load_master_data(gc, url)
+    st.session_state["df_request"] = load_request_data(gc, url, f"{month_str} 요청")
+    st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
+    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+    st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+    if not st.session_state["df_room_request"].empty and "이름" in st.session_state["df_room_request"].columns:
+        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+    else:
+        st.session_state["df_user_room_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+
+    # 주차 리스트
+    week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=next_month, end=next_month.replace(day=last_day))))
+    week_labels = [f"{i+1}주" for i in range(len(week_nums))]
+
+    master_events = generate_master_events(st.session_state["df_user_master"], next_month.year, next_month.month, week_labels)
+    request_events = generate_request_events(st.session_state["df_user_request"], next_month)
+    room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
+    st.session_state["all_events"] = master_events + request_events + room_request_events
+    
+    st.success("데이터가 새로고침되었습니다.")
+    time.sleep(1)
+    st.rerun()
+
 # 초기 데이터 로드 및 세션 상태 설정
 if "df_master" not in st.session_state:
     st.session_state["df_master"] = load_master_data(gc, url)
@@ -242,11 +268,9 @@ if "df_user_master" not in st.session_state:
 if "df_user_request" not in st.session_state:
     st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
 if "df_user_room_request" not in st.session_state:
-    # Initialize df_user_room_request safely
     if not st.session_state["df_room_request"].empty and "이름" in st.session_state["df_room_request"].columns:
         st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
     else:
-        # If df_room_request is empty or lacks "이름", initialize an empty DataFrame with correct columns
         st.session_state["df_user_room_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
 
 # 항상 최신 세션 상태를 참조
@@ -256,6 +280,8 @@ df_room_request = st.session_state["df_room_request"]
 df_user_master = st.session_state["df_user_master"]
 df_user_request = st.session_state["df_user_request"]
 df_user_room_request = st.session_state["df_user_room_request"]
+
+
 
 # 마스터 데이터 초기화
 if df_user_master.empty:
@@ -410,8 +436,8 @@ def format_date_for_display(date_info):
 
 # 방배정 요청사항 입력 및 삭제 UI (단일 폼으로 처리)
 st.write(" ")
-요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",  
-           "8:30", "9:00", "9:30", "10:00", "오후 당직", "오후 당직 안됨"]
+요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",
+           "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "8:30", "9:00", "9:30", "10:00", "오후 당직", "오후 당직 안됨"]
 
 with st.form("fixed_form"):
     # 방배정 요청사항 입력 섹션
@@ -432,21 +458,17 @@ with st.form("fixed_form"):
             worksheet2.append_row(["이름", "분류", "날짜정보"])
         
         if 날짜정보 and 분류:
-            # 새로운 요청사항 리스트 생성
             new_requests = []
             for date in 날짜정보.split(","):
                 date = date.strip()
                 for category in 분류:
-                    # 동일 이름과 날짜정보가 있는지 확인
                     existing_request = df_room_request[(df_room_request['이름'] == name) & (df_room_request['날짜정보'] == date) & (df_room_request['분류'] == category)]
                     if existing_request.empty:
                         new_requests.append({"이름": name, "분류": category, "날짜정보": date})
 
             if new_requests:
-                # 기존 동일 날짜정보의 요청사항 삭제
                 existing_dates = set(date.strip() for date in 날짜정보.split(","))
                 df_room_request = df_room_request[~((df_room_request['이름'] == name) & (df_room_request['날짜정보'].isin(existing_dates)))]
-                # 새로운 요청사항 추가
                 new_request_df = pd.DataFrame(new_requests)
                 df_room_request = pd.concat([df_room_request, new_request_df], ignore_index=True)
 

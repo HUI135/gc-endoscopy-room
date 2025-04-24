@@ -127,7 +127,7 @@ def save_to_gsheet(name, categories, dates, month_str, worksheet):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     worksheet = sheet.worksheet(f"{month_str} 방배정 요청")
-    df = pd.DataFrame(worksheet.get_all_records())
+    df = pd.Data.feedDataFrame(worksheet.get_all_records())
     if "우선순위" in df.columns:
         df = df.drop(columns=["우선순위"])
     
@@ -197,7 +197,7 @@ def parse_date_info(date_info):
     except ValueError:
         return None, False
 
-# random_assign 함수 (공란 문제 해결)
+# random_assign 함수
 def random_assign(personnel, slots, fixed_assignments, priority_assignments, time_groups, max_early, max_late, max_duty, max_room, total_stats, morning_personnel, afternoon_personnel):
     best_assignment = None
     best_stats = None
@@ -212,7 +212,7 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
     morning_slots_1000 = [s for s in slots if s.startswith('10:00')]
     afternoon_slots = [s for s in slots if s.startswith('13:30') and '_당직' not in s]
     
-    for attempt in range(100):  # 최대 100번 시도
+    for attempt in range(100):
         assignment = [None] * len(slots)
         assigned_counts = Counter()
         available_slots = list(range(len(slots)))
@@ -246,7 +246,6 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
         used_morning_personnel = set(fixed_personnel)
         used_afternoon_personnel = set(fixed_personnel)
         
-        # 인원 정렬 최적화: 배정 횟수가 적은 인원 우선
         morning_personnel_list.sort(key=lambda p: (
             daily_stats['early'][p],
             daily_stats['late'][p],
@@ -259,7 +258,6 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
         random.shuffle(morning_personnel_list)
         random.shuffle(afternoon_personnel_list)
         
-        # 우선 배치 적용
         priority_pairs = [(slot, person) for (slot, person), _ in priority_assignments.items() if slot in slots and person in personnel]
         for slot, person in priority_pairs:
             slot_idx = slots.index(slot)
@@ -284,7 +282,6 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
                     elif slot in duty_slots:
                         daily_stats['duty'][person] += 1
         
-        # 오전 슬롯 배정 (최대 한계 완화)
         morning_slots_all = morning_slots_830 + morning_slots_900 + morning_slots_930 + morning_slots_1000
         random.shuffle(morning_slots_all)
         morning_indices = [slots.index(slot) for slot in morning_slots_all if slots.index(slot) in available_slots]
@@ -298,7 +295,6 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
                     late_count = total_stats['late'][person] + daily_stats['late'][person]
                     room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
                     
-                    # 최대 한계 초과 시에도 배정 시도
                     if room_count < max_room or (not assigned and room_count >= max_room):
                         assignment[slot_idx] = person
                         assigned_counts[person] += 1
@@ -314,7 +310,6 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
             if not assigned:
                 st.warning(f"슬롯 {slot} 배정 실패: 적합한 오전 인원 없음")
         
-        # 오후 슬롯 배정 (최대 한계 완화)
         afternoon_indices = [i for i in available_slots if slots[i] in afternoon_slots]
         for slot_idx in afternoon_indices:
             slot = slots[slot_idx]
@@ -335,7 +330,6 @@ def random_assign(personnel, slots, fixed_assignments, priority_assignments, tim
             if not assigned:
                 st.warning(f"슬롯 {slot} 배정 실패: 적합한 오후 인원 없음")
         
-        # 당직 슬롯 배정 (최대 한계 완화)
         duty_indices = [i for i in available_slots if slots[i] in duty_slots]
         for slot_idx in duty_indices:
             slot = slots[slot_idx]
@@ -417,13 +411,8 @@ st.session_state["worksheet_request"] = worksheet_request
 if "df_schedule_md" not in st.session_state:
     st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
 
-# 근무자 명단
-st.subheader("📋 근무자 명단")
-st.dataframe(st.session_state["df_schedule_md"])
-
-# 새로고침 버튼
-if st.button("🔄 근무자 명단 새로고침"):
-    # 캐시 무효화 및 데이터 다시 로드
+# 새로고침 버튼 (맨 위로 이동)
+if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
     df_schedule, df_room_request, df_room_fix, worksheet_request, worksheet_fix = load_data_no_cache(month_str)
     st.session_state["df_schedule"] = df_schedule
@@ -431,26 +420,29 @@ if st.button("🔄 근무자 명단 새로고침"):
     st.session_state["df_room_fix"] = df_room_fix
     st.session_state["worksheet_request"] = worksheet_request
     st.session_state["worksheet_fix"] = worksheet_fix
-    
-    # df_schedule_md 재생성
     st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
-    
-    # 성공 메시지 및 페이지 리렌더링
-    st.success("근무자 명단이 새로고침되었습니다.")
+    st.success("데이터가 새로고침되었습니다.")
     st.rerun()
+
+# 근무자 명단
+st.subheader("📋 근무자 명단")
+st.dataframe(st.session_state["df_schedule_md"])
 
 # 방 설정 UI
 st.divider()
 st.subheader("📋 방 설정")
 room_options = [str(i) for i in range(1, 13)]
 
-# 방 설정 입력 필드 (폼 없이 독립적으로 처리)
+# 방 설정 UI
+st.divider()
+st.subheader("📋 방 설정")
+room_options = [str(i) for i in range(1, 13)]
+
 st.markdown("**🔷 8:30 시간대**")
 col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
     num_830 = st.number_input("방 개수", min_value=0, value=4, key="830_rooms")
 with col2:
-    # max_selections 초과 방지
     if len(st.session_state["room_settings"]["830_room_select"]) > num_830:
         st.session_state["room_settings"]["830_room_select"] = st.session_state["room_settings"]["830_room_select"][:num_830]
     rooms_830 = st.multiselect(
@@ -460,10 +452,13 @@ with col2:
         max_selections=num_830,
         key="830_room_select"
     )
+    if len(rooms_830) < num_830:
+        st.warning(f"방 개수({num_830})에 맞게 방 번호를 {num_830}개 선택해주세요. 현재 {len(rooms_830)}개 선택됨.")
     st.session_state["room_settings"]["830_room_select"] = rooms_830
 with col3:
     duty_830_options = rooms_830 if rooms_830 else room_options
     duty_830 = st.selectbox("당직방", duty_830_options, index=0, key="830_duty")
+    st.session_state["room_settings"]["830_duty"] = duty_830
 
 st.markdown("**🔷 9:00 시간대**")
 col1, col2 = st.columns([1, 3])
@@ -479,6 +474,8 @@ with col2:
         max_selections=num_900,
         key="900_room_select"
     )
+    if len(rooms_900) < num_900:
+        st.warning(f"방 개수({num_900})에 맞게 방 번호를 {num_900}개 선택해주세요. 현재 {len(rooms_900)}개 선택됨.")
     st.session_state["room_settings"]["900_room_select"] = rooms_900
 
 st.markdown("**🔷 9:30 시간대**")
@@ -495,6 +492,8 @@ with col2:
         max_selections=num_930,
         key="930_room_select"
     )
+    if len(rooms_930) < num_930:
+        st.warning(f"방 개수({num_930})에 맞게 방 번호를 {num_930}개 선택해주세요. 현재 {len(rooms_930)}개 선택됨.")
     st.session_state["room_settings"]["930_room_select"] = rooms_930
 
 st.markdown("**🔷 10:00 시간대**")
@@ -511,6 +510,8 @@ with col2:
         max_selections=num_1000,
         key="1000_room_select"
     )
+    if len(rooms_1000) < num_1000:
+        st.warning(f"방 개수({num_1000})에 맞게 방 번호를 {num_1000}개 선택해주세요. 현재 {len(rooms_1000)}개 선택됨.")
     st.session_state["room_settings"]["1000_room_select"] = rooms_1000
 
 st.markdown("**🔶 13:30 시간대**")
@@ -526,26 +527,39 @@ with col1:
         max_selections=num_1330,
         key="1330_room_select"
     )
+    if len(rooms_1330) < num_1330:
+        st.warning(f"방 개수({num_1330})에 맞게 방 번호를 {num_1330}개 선택해주세요. 현재 {len(rooms_1330)}개 선택됨.")
     st.session_state["room_settings"]["1330_room_select"] = rooms_1330
 with col2:
     duty_1330_options = rooms_1330 if rooms_1330 else room_options
     duty_1330 = st.selectbox("당직방", duty_1330_options, index=0, key="1330_duty")
+    st.session_state["room_settings"]["1330_duty"] = duty_1330
+
+# 중복 방 번호 검증
+all_selected_rooms = (
+    st.session_state["room_settings"]["830_room_select"] +
+    st.session_state["room_settings"]["900_room_select"] +
+    st.session_state["room_settings"]["930_room_select"] +
+    st.session_state["room_settings"]["1000_room_select"] +
+    st.session_state["room_settings"]["1330_room_select"]
+)
 
 # 고정 배치 입력 UI
 st.divider()
 st.subheader("📋 고정 배치 관리")
 st.write("- 고정 배치 기능은 관리자만 제어할 수 있습니다. (사용자가 개별 입력 불가)")
 요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",
-            "이른방", "당직 아닌 이른방", "8:30", "9:00", "9:30", "10:00"]
+           "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외"]
 with st.form("fixed_form"):
     st.markdown("**🟢 고정 배치 추가**")
     col1, col2, col3 = st.columns([2, 2, 3])
     with col1:
-        name = st.selectbox("근무자 (고정 배치)", df_schedule.iloc[:, 2:].stack().dropna().unique())
+        names = [str(name).strip() for name in df_schedule.iloc[:, 2:].stack().dropna().unique() if str(name).strip()]
+        name = st.selectbox("근무자", names)
     with col2:
-        categories = st.multiselect("요청 분류 (고정 배치)", 요청분류)
+        categories = st.multiselect("요청 분류", 요청분류)
     with col3:
-        dates = st.multiselect("요청 일자 (고정 배치)", get_user_available_dates(name, df_schedule, next_month_start, next_month_end))
+        dates = st.multiselect("요청 일자", get_user_available_dates(name, df_schedule, next_month_start, next_month_end))
     
     if st.form_submit_button("📅 추가"):
         if not categories or not dates:
@@ -618,17 +632,20 @@ with st.form("fixed_form"):
 # 우선 배치 입력 UI
 st.divider()
 st.subheader("📋 우선 배치 관리")
+st.write("- 모든 인원의 우선 배치 요청을 추가 및 수정할 수 있습니다.")
+
 요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",
             "이른방", "당직 아닌 이른방", "8:30", "9:00", "9:30", "10:00"]
 with st.form("priority_form"):
     st.markdown("**🟢 우선 배치 추가**")
     col1, col2, col3 = st.columns([2, 2, 3])
     with col1:
-        name = st.selectbox("근무자 (우선 배치)", df_schedule.iloc[:, 2:].stack().dropna().unique())
+        names = [str(name).strip() for name in df_schedule.iloc[:, 2:].stack().dropna().unique() if str(name).strip()]
+        name = st.selectbox("근무자", names)
     with col2:
-        categories = st.multiselect("요청 분류 (우선 배치)", 요청분류)
+        categories = st.multiselect("요청 분류", 요청분류)
     with col3:
-        dates = st.multiselect("요청 일자 (우선 배치)", get_user_available_dates(name, df_schedule, next_month_start, next_month_end))
+        dates = st.multiselect("요청 일자", get_user_available_dates(name, df_schedule, next_month_start, next_month_end))
     
     if st.form_submit_button("📅 추가"):
         if not categories or not dates:
@@ -740,8 +757,9 @@ if st.button("🚀 방배정 시작"):
         
         memo_rules = {
             **{f'{i}번방': [s for s in time_slots if f'({i})' in s] for i in range(1, 13)},
-            '이른방': [s for s in time_slots if s.startswith('8:30')],
             '당직 아닌 이른방': [s for s in time_slots if s.startswith('8:30') and '_당직' not in s],
+            '이른방 제외': [s for s in time_slots if s.startswith(('9:00', '9:30', '10:00'))],
+            '늦은방 제외': [s for s in time_slots if s.startswith(('8:30', '9:00', '9:30'))],
             '8:30': [s for s in time_slots if s.startswith('8:30')],
             '9:00': [s for s in time_slots if s.startswith('9:00')],
             '9:30': [s for s in time_slots if s.startswith('9:30')],

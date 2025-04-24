@@ -9,14 +9,14 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 
-# 🔒 로그인 체크
+# 로그인 체크
 if not st.session_state.get("login_success", False):
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
     st.stop()
 
+# 사이드바
 if st.session_state.get("login_success", False):
     st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session_state['employee_id']).zfill(5)})")
-
     if st.sidebar.button("로그아웃"):
         st.session_state["login_success"] = False
         st.session_state["is_admin"] = False
@@ -55,6 +55,15 @@ if st.session_state.get("login_success", False):
         except Exception as e:
             st.error(f"데이터 로드 중 오류 발생: {e}")
             return pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+
+    # 새로고침 버튼 (맨 상단)
+    if st.button("🔄 새로고침 (R)"):
+        st.cache_data.clear()
+        st.session_state["df_master"] = load_master_data(gc, url)
+        st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+        st.success("데이터가 새로고침되었습니다.")
+        time.sleep(1)
+        st.rerun()
 
     # ✅ 캘린더 이벤트 생성 함수
     def generate_calendar_events(df_user_master, year, month, week_labels):
@@ -154,7 +163,6 @@ if st.session_state.get("login_success", False):
     week_nums = sorted(set(d.isocalendar()[1] for d in dates))
     month_str = next_month.strftime("%Y년 %m월")
 
-    st.write(" ")
     st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
 
     # ✅ 주차 리스트
