@@ -11,17 +11,17 @@ from gspread.exceptions import WorksheetNotFound, APIError
 import time
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-# 특정 사용자(사번 65579) 접속 제한
-ALLOWED_EMPLOYEE_ID = 65579
+# # 특정 사용자(사번 65579) 접속 제한
+# ALLOWED_EMPLOYEE_ID = 65579
 
 # 로그인 및 사번 체크
 if "login_success" not in st.session_state or not st.session_state["login_success"]:
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
     st.stop()
 
-if st.session_state["employee_id"] != ALLOWED_EMPLOYEE_ID:
-    st.error("⚠️ 이 페이지에 접근할 권한이 없습니다.")
-    st.stop()
+# if st.session_state["employee_id"] != ALLOWED_EMPLOYEE_ID:
+#     st.error("⚠️ 이 페이지에 접근할 권한이 없습니다.")
+#     st.stop()
 
 # 사이드바
 st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session_state['employee_id']).zfill(5)})")
