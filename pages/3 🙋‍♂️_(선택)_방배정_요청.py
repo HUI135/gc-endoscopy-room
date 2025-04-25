@@ -20,12 +20,12 @@ def get_gspread_client():
     return gspread.authorize(credentials)
 
 # 데이터 로드 함수
-def load_master_data(_gc, url):
+def load_master_data_page3(_gc, url):
     sheet = _gc.open_by_url(url)
     worksheet_master = sheet.worksheet("마스터")
     return pd.DataFrame(worksheet_master.get_all_records())
 
-def load_request_data(_gc, url, sheet_name):
+def load_request_data_page3(_gc, url, sheet_name):
     sheet = _gc.open_by_url(url)
     try:
         worksheet = sheet.worksheet(sheet_name)
@@ -35,7 +35,7 @@ def load_request_data(_gc, url, sheet_name):
     data = worksheet.get_all_records()
     return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
 
-def load_room_request_data(_gc, url, sheet_name):
+def load_room_request_data_page3(_gc, url, sheet_name):
     sheet = _gc.open_by_url(url)
     try:
         worksheet = sheet.worksheet(sheet_name)
@@ -237,9 +237,9 @@ if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
     st.cache_resource.clear()
     gc = get_gspread_client()
-    st.session_state["df_master"] = load_master_data(gc, url)
-    st.session_state["df_request"] = load_request_data(gc, url, f"{month_str} 요청")
-    st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
+    st.session_state["df_master"] = load_master_data_page3(gc, url)
+    st.session_state["df_request"] = load_request_data_page3(gc, url, f"{month_str} 요청")
+    st.session_state["df_room_request"] = load_room_request_data_page3(gc, url, f"{month_str} 방배정 요청")
     st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
     st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
     if not st.session_state["df_room_request"].empty and "이름" in st.session_state["df_room_request"].columns:
@@ -260,11 +260,11 @@ if st.button("🔄 새로고침 (R)"):
 
 # 초기 데이터 로드 및 세션 상태 설정
 if "df_master" not in st.session_state:
-    st.session_state["df_master"] = load_master_data(gc, url)
+    st.session_state["df_master"] = load_master_data_page3(gc, url)
 if "df_request" not in st.session_state:
-    st.session_state["df_request"] = load_request_data(gc, url, f"{month_str} 요청")
+    st.session_state["df_request"] = load_request_data_page3(gc, url, f"{month_str} 요청")
 if "df_room_request" not in st.session_state:
-    st.session_state["df_room_request"] = load_room_request_data(gc, url, f"{month_str} 방배정 요청")
+    st.session_state["df_room_request"] = load_room_request_data_page3(gc, url, f"{month_str} 방배정 요청")
 if "df_user_master" not in st.session_state:
     st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
 if "df_user_request" not in st.session_state:

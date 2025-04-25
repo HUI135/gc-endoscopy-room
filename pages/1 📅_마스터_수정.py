@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -42,7 +43,7 @@ if st.session_state.get("login_success", False):
     worksheet1 = sheet.worksheet("마스터")
 
     # 데이터 로드 함수 (캐싱 적용, 필요 시 무효화)
-    def load_master_data(_gc, url):
+    def load_master_data_page1(_gc, url):
         sheet = _gc.open_by_url(url)
         worksheet_master = sheet.worksheet("마스터")
         return pd.DataFrame(worksheet_master.get_all_records())
@@ -59,7 +60,7 @@ if st.session_state.get("login_success", False):
     # 새로고침 버튼 (맨 상단)
     if st.button("🔄 새로고침 (R)"):
         st.cache_data.clear()
-        st.session_state["df_master"] = load_master_data(gc, url)
+        st.session_state["df_master"] = load_master_data_page1(gc, url)
         st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
         st.success("데이터가 새로고침되었습니다.")
         time.sleep(1)
@@ -254,7 +255,7 @@ if st.session_state.get("login_success", False):
             df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
             st.success("편집하신 내용을 저장하였습니다 ✅")
             st.cache_data.clear()  # 캐시 무효화
-            st.session_state["df_master"] = load_master_data(gc, url)
+            st.session_state["df_master"] = load_master_data_page1(gc, url)
             st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
             st.rerun()  # 페이지 새로고침
 
@@ -298,6 +299,6 @@ if st.session_state.get("login_success", False):
             st.session_state["df_master"] = df_result
             df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
             st.success("편집하신 내용을 저장하였습니다 ✅")
-            st.session_state["df_master"] = load_master_data(gc, url)
+            st.session_state["df_master"] = load_master_data_page1(gc, url)
             st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
             st.rerun()  # 페이지 새로고침

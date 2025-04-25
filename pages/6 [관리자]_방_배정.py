@@ -50,13 +50,23 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
                 time.sleep(delay)
     st.error("Google Sheets 업데이트 실패: 재시도 횟수 초과")
 
-# 데이터 로드 (캐싱 사용)
-@st.cache_data
-def load_data(month_str):
-    return load_data_no_cache(month_str)
+# 데이터 로드 (캐싱 사용) - 캐시 문제 방지
+def load_data_page6(month_str):
+    # 캐시 강제 갱신
+    st.cache_data.clear()
+    
+    # load_data_page6_no_cache 호출
+    result = load_data_page6_no_cache(month_str)
+    
+    # 반환값 디버깅
+    if len(result) != 3:
+        st.error(f"Expected 3 return values, but got {len(result)}. Returned: {result}")
+        st.stop()
+    
+    return result
 
 # 데이터 로드 (캐싱 미사용)
-def load_data_no_cache(month_str):
+def load_data_page6_no_cache(month_str):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     
@@ -97,7 +107,9 @@ def load_data_no_cache(month_str):
     st.session_state["df_cumulative"] = df_cumulative  # 누적 데이터 저장
     st.session_state["data_loaded"] = True
     
-    return df_schedule, df_room_request, worksheet_room_request
+    # 정확히 3개 값만 반환
+    result = (df_schedule, df_room_request, worksheet_room_request)
+    return result
 
 # 근무 가능 일자 계산
 @st.cache_data
@@ -235,7 +247,7 @@ MAX_LATE = st.sidebar.number_input("최대 늦은방 합계", min_value=1, value
 MAX_ROOM = st.sidebar.number_input("최대 방별 합계", min_value=1, value=3, step=1)
 
 # 데이터 로드 호출
-df_schedule, df_room_request, worksheet_room_request = load_data(month_str)
+df_schedule, df_room_request, worksheet_room_request = load_data_page6(month_str)
 st.session_state["df_room_request"] = df_room_request
 st.session_state["worksheet_room_request"] = worksheet_room_request
 
@@ -246,7 +258,7 @@ if "df_schedule_md" not in st.session_state:
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
-    df_schedule, df_room_request, worksheet_room_request = load_data_no_cache(month_str)
+    df_schedule, df_room_request, worksheet_room_request = load_data_page6_no_cache(month_str)
     st.session_state["df_schedule"] = df_schedule
     st.session_state["df_room_request"] = df_room_request
     st.session_state["worksheet_room_request"] = worksheet_room_request

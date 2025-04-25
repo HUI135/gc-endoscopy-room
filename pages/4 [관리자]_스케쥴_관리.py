@@ -53,7 +53,7 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
     return False
 
 # 요청사항 데이터 로드 함수
-def load_request_data():
+def load_request_data_page4():
     try:
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
@@ -95,7 +95,7 @@ if "data_loaded" not in st.session_state:
             worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
             worksheet2.append_row(["이름", "분류", "날짜정보"])
         st.session_state["worksheet2"] = worksheet2
-        load_request_data()
+        load_request_data_page4()
 
         # Constraint Enforcement
         missing_in_master = set(df_map["이름"]) - set(df_master["이름"])
@@ -149,7 +149,7 @@ names_in_master = df_master["이름"].unique() if not df_master.empty else []
 
 # 새로고침 버튼
 if st.button("🔄 새로고침(R)"):
-    load_request_data()
+    load_request_data_page4()
     st.rerun()
 
 # 익월 범위 지정
@@ -457,7 +457,7 @@ if st.session_state.get("is_admin_authenticated", False):
             df_request = df_request.sort_values(by=["이름", "날짜정보"])
             if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
                 time.sleep(1)
-                load_request_data()
+                load_request_data_page4()
                 st.session_state["df_request"] = df_request
                 st.session_state["worksheet2"] = worksheet2
                 st.cache_data.clear()
@@ -513,7 +513,7 @@ if st.session_state.get("is_admin_authenticated", False):
             
             if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
                 time.sleep(1)
-                load_request_data()
+                load_request_data_page4()
                 st.session_state["df_request"] = df_request
                 st.session_state["worksheet2"] = worksheet2
                 st.cache_data.clear()

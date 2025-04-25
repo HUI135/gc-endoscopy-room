@@ -20,12 +20,12 @@ def get_gspread_client():
     return gspread.authorize(credentials)
 
 # 데이터 로드 함수 (캐싱 적용, 필요 시 무효화)
-def load_master_data(_gc, url):
+def load_master_data_page2(_gc, url):
     sheet = _gc.open_by_url(url)
     worksheet_master = sheet.worksheet("마스터")
     return pd.DataFrame(worksheet_master.get_all_records())
 
-def load_request_data(_gc, url, month_str):
+def load_request_data_page2(_gc, url, month_str):
     sheet = _gc.open_by_url(url)
     try:
         worksheet = sheet.worksheet(f"{month_str} 요청")
@@ -64,7 +64,7 @@ next_month_end = next_month.replace(day=last_day)
 # 새로고침 버튼 (맨 상단)
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
-    st.session_state["df_request"] = load_request_data(gc, url, month_str)
+    st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
     st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
     st.success("데이터가 새로고침되었습니다.")
     time.sleep(1)
@@ -72,7 +72,7 @@ if st.button("🔄 새로고침 (R)"):
 
 # 초기 데이터 로드 및 세션 상태 설정
 if "df_request" not in st.session_state:
-    st.session_state["df_request"] = load_request_data(gc, url, month_str)
+    st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
 if "df_user_request" not in st.session_state:
     st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
 
@@ -260,7 +260,7 @@ if st.button("📅 추가"):
         st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
         st.success("✅ 요청사항이 저장되었습니다!")
         st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_request"] = load_request_data(gc, url, month_str)
+        st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
         st.rerun()  # 페이지 새로고침
     elif 날짜정보:
@@ -273,7 +273,7 @@ if st.button("📅 추가"):
         st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
         st.success("✅ 요청사항이 저장되었습니다!")
         st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_request"] = load_request_data(gc, url, month_str)
+        st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
         st.rerun()  # 페이지 새로고침
     else:
@@ -303,7 +303,7 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
         st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
         st.success("✅ 선택한 요청사항이 삭제되었습니다!")
         st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_request"] = load_request_data(gc, url, month_str)
+        st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
         # st.success("데이터가 새로고침되었습니다!")
         st.rerun()  # 페이지 새로고침

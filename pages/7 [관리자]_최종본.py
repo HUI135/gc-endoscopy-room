@@ -44,11 +44,11 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 
 # 데이터 로드 (캐싱 사용)
 @st.cache_data
-def load_data(month_str):
-    return load_data_no_cache(month_str)
+def load_data_page7(month_str):
+    return load_data_page7_no_cache(month_str)
 
 # 데이터 로드 (캐싱 미사용)
-def load_data_no_cache(month_str):
+def load_data_page7_no_cache(month_str):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     
@@ -89,7 +89,7 @@ if st.sidebar.button("로그아웃"):
 # 새로고침 버튼 (맨 위로 이동)
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
-    df_room = load_data_no_cache(month_str)
+    df_room = load_data_page7_no_cache(month_str)
     st.session_state["df_room"] = df_room
     st.success("데이터가 새로고침되었습니다.")
     st.rerun()
@@ -98,7 +98,7 @@ if st.button("🔄 새로고침 (R)"):
 st.subheader(f"✨ {month_str} 방 배정 확인")
 
 # Google Sheets에서 방배정 데이터 로드
-df_room = load_data(month_str)
+df_room = load_data_page7(month_str)
 st.dataframe(df_room)
 
 # 수정된 방배정 파일 업로드

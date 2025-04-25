@@ -36,7 +36,7 @@ url = st.secrets["google_sheet"]["url"]
 month_str = "2025년 04월"
 
 # 데이터 로드 함수 (세션 상태 활용으로 쿼터 절약)
-def load_data():
+def load_data_page5():
     required_keys = ["df_master", "df_request", "df_cumulative", "df_shift", "df_supplement"]
     if "data_loaded" not in st.session_state or not st.session_state["data_loaded"] or not all(key in st.session_state for key in required_keys):
         url = st.secrets["google_sheet"]["url"]
@@ -96,7 +96,7 @@ def get_gspread_client():
     return gspread.authorize(credentials)
 
 # 데이터 로드 함수 (세션 상태 활용으로 쿼터 절약)
-def load_data():
+def load_data_page5():
     required_keys = ["df_master", "df_request", "df_cumulative"]
     if "data_loaded" not in st.session_state or not st.session_state["data_loaded"] or not all(key in st.session_state for key in required_keys):
         url = st.secrets["google_sheet"]["url"]
@@ -237,13 +237,13 @@ def split_column_to_multiple(df, column_name, prefix):
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
     st.session_state["data_loaded"] = False  # 데이터 리로드 강제
-    load_data()  # load_data 호출로 모든 데이터 갱신
+    load_data_page5()  # load_data_page5 호출로 모든 데이터 갱신
     st.success("데이터가 새로고침되었습니다.")
     st.rerun()
 
 # 메인 로직
 if st.session_state.get("is_admin_authenticated", False):
-    load_data()
+    load_data_page5()
     # Use .get() with fallback to avoid KeyError
     df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))
     df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
