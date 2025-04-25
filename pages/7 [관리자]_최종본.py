@@ -102,7 +102,7 @@ df_room = load_data_page7(month_str)
 st.dataframe(df_room)
 
 # 수정된 방배정 파일 업로드
-st.write(" ")
+st.divider()
 st.subheader(f"✨ {month_str} 방 배정 수정 파일 업로드")
 st.write("- 모든 인원의 근무 횟수가 원본과 동일한지, 누락 및 추가 인원이 있는지 확인합니다.")
 st.write("- 날짜별 오전(8:30, 9:00, 9:30, 10:00) 및 오후(13:30) 시간대에 동일 인물이 중복 배정되지 않았는지 확인합니다.")

@@ -692,7 +692,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 
 # df_room 생성 로직 - 누적 시트 데이터 처리 수정
 st.divider()
-st.subheader(f"✨ {month_str} 내시경실 배정 확인")
+st.subheader(f"✨ {month_str} 방배정 수행")
 
 if st.button("🚀 방배정 시작"):
     # 방 설정 입력값 검증 및 처리
@@ -1014,7 +1014,7 @@ if st.button("🚀 방배정 시작"):
     st.download_button(
         label="📥 최종 방배정 다운로드",
         data=output,
-        file_name=f"{datetime.today().strftime('%Y-%m-%d')}_내시경실배정.xlsx",
+        file_name=f"{month_str} 방배정.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
     )

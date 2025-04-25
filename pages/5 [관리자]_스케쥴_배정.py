@@ -318,7 +318,7 @@ if st.session_state.get("is_admin_authenticated", False):
 
     # 데이터프레임 로드 확인 (Streamlit UI로 변경)
     st.divider()
-    st.subheader(f"✨ {month_str} 스케쥴 배정 확인")
+    st.subheader(f"✨ {month_str} 스케쥴 배정 수행")
     # st.write("df_shift_processed 확인:", df_shift_processed.head())
     # st.write("df_supplement_processed 확인:", df_supplement_processed.head())
     # st.write("df_request 확인:", df_request.head())
