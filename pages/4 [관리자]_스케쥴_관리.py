@@ -52,19 +52,35 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
     st.error("Google Sheets 업데이트 실패: 재시도 횟수 초과")
     return False
 
-# 요청사항 데이터 로드 함수
 def load_request_data_page4():
     try:
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
+        
+        # 요청사항 시트 로드
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
         request_data = worksheet2.get_all_records()
         df_request = pd.DataFrame(request_data) if request_data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
         st.session_state["df_request"] = df_request
         st.session_state["worksheet2"] = worksheet2
+        
+        # 마스터 시트 로드
+        worksheet1 = sheet.worksheet("마스터")
+        master_data = worksheet1.get_all_records()
+        df_master = pd.DataFrame(master_data) if master_data else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+        st.session_state["df_master"] = df_master
+        st.session_state["worksheet1"] = worksheet1
+        
+        # 매핑 시트 로드
+        mapping = sheet.worksheet("매핑")
+        mapping_data = mapping.get_all_records()
+        df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["df_map"] = df_map
+        st.session_state["mapping"] = mapping
+        
     except Exception as e:
-        st.error(f"요청사항 데이터를 불러오는 데 실패했습니다: {e}")
-
+        st.error(f"데이터를 불러오는 데 실패했습니다: {e}")
+        
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
 month_str = "2025년 04월"
@@ -287,7 +303,7 @@ if st.session_state.get("is_admin_authenticated", False):
     # 마스터 관리 탭
     st.divider()
     st.subheader("📋 마스터 관리")
-    st.write("- 셀을 클릭하면 해당 인원의 조회 및 수정할 수 있습니다.")
+    st.write("- 셀을 클릭하면 해당 인원의 마스터를 조회 및 수정할 수 있습니다.")
     sorted_names = sorted(df_master["이름"].unique()) if not df_master.empty else []
     selected_employee_name = st.selectbox("이름 선택", sorted_names, key="master_employee_select")
     df_employee = df_master[df_master["이름"] == selected_employee_name]
