@@ -261,7 +261,7 @@ if st.session_state.get("login_success", False):
 
     # 📅 주 단위로 설정
     with st.expander("📅 주 단위로 설정"):
-        st.markdown("**요일별로 근무 여부를 선택해주세요.**")
+        st.markdown("**주 단위로 근무 여부가 다른 경우 아래 내용들을 입력해주세요.**")
         week_labels = [f"{i+1}주" for i in range(len(week_nums))]
         
         master_data = {}
