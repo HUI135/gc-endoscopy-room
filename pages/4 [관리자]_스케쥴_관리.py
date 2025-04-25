@@ -10,6 +10,7 @@ import gspread
 from gspread.exceptions import WorksheetNotFound, APIError
 import time
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+import uuid
 
 # 로그인 및 사번 체크
 if "login_success" not in st.session_state or not st.session_state["login_success"]:
@@ -21,7 +22,7 @@ st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session
 if st.sidebar.button("로그아웃"):
     st.session_state.clear()
     st.success("로그아웃되었습니다. 🏠 Home 페이지로 돌아가 주세요.")
-    time.sleep(5)
+    time.sleep(2)
     st.rerun()
 
 # Google Sheets 클라이언트 초기화
@@ -33,14 +34,12 @@ def get_gspread_client():
     return gspread.authorize(credentials)
 
 # Google Sheets 업데이트 함수
-def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
+def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
     for attempt in range(retries):
         try:
-            worksheet.batch_update([
-                {"range": "A1:D", "values": [[]]},  # Clear range
-                {"range": "A1", "values": data}
-            ])
-            return
+            worksheet.clear()  # 시트를 완전히 비우고 새 데이터로 덮어씌움
+            worksheet.update(data, "A1")
+            return True
         except APIError as e:
             if "Quota exceeded" in str(e):
                 st.warning(f"API 쿼터 초과, {delay}초 후 재시도 ({attempt+1}/{retries})")
@@ -51,6 +50,7 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
             st.warning(f"업데이트 실패, {delay}초 후 재시도 ({attempt+1}/{retries}): {str(e)}")
             time.sleep(delay)
     st.error("Google Sheets 업데이트 실패: 재시도 횟수 초과")
+    return False
 
 # 요청사항 데이터 로드 함수
 def load_request_data():
@@ -95,7 +95,7 @@ if "data_loaded" not in st.session_state:
             worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
             worksheet2.append_row(["이름", "분류", "날짜정보"])
         st.session_state["worksheet2"] = worksheet2
-        load_request_data()  # 요청사항 데이터 로드
+        load_request_data()
 
         # Constraint Enforcement
         missing_in_master = set(df_map["이름"]) - set(df_master["이름"])
@@ -133,7 +133,6 @@ if "data_loaded" not in st.session_state:
         
     except Exception as e:
         st.error(f"시트를 불러오는 데 문제가 발생했습니다: {e}")
-        st.write(f"Error details: {type(e).__name__}, {str(e)}")
         st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
         st.session_state["df_master"] = pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
         st.session_state["df_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
@@ -149,7 +148,7 @@ df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", 
 names_in_master = df_master["이름"].unique() if not df_master.empty else []
 
 # 새로고침 버튼
-if st.button("🔄  새로고침(R)"):
+if st.button("🔄 새로고침(R)"):
     load_request_data()
     st.rerun()
 
@@ -168,7 +167,7 @@ if st.session_state.get("is_admin_authenticated", False):
     # 명단 관리 탭
     st.divider()
     st.subheader("📋 명단 관리")
-    st.write(" - 매핑 시트, 마스터 시트, 요청사항 시트에 인원을 추가/삭제합니다.\n- 아래 명단에 존재하는 인원만 시스템 로그인이 가능합니다.")
+    st.write(" - 매핑 시트, 마스터 시트, 요청사항 시트 모두에서 인원을 추가/삭제합니다.\n- 아래 명단에 존재하는 인원만 해당 사번으로 시스템 로그인이 가능합니다.")
 
     if "df_master" not in st.session_state or st.session_state["df_master"].empty:
         st.session_state["df_master"] = df_master.copy() if not df_master.empty else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
@@ -179,6 +178,10 @@ if st.session_state.get("is_admin_authenticated", False):
         df_map["사번"] = df_map["사번"].astype(str).str.zfill(5)
 
     st.dataframe(df_map.reset_index(drop=True), height=200)
+
+    # 고유 트랜잭션 ID로 중복 추가 방지
+    if "add_transaction_id" not in st.session_state:
+        st.session_state["add_transaction_id"] = None
 
     with st.form("fixed_form_namelist"):
         col_add, col_delete = st.columns([1.8, 1.2])
@@ -193,18 +196,26 @@ if st.session_state.get("is_admin_authenticated", False):
             
             submit_add = st.form_submit_button("✔️ 추가")
             if submit_add:
-                if not new_employee_name:
+                transaction_id = str(uuid.uuid4())  # 고유 트랜잭션 ID 생성
+                if st.session_state["add_transaction_id"] == transaction_id:
+                    st.warning("이미 처리된 추가 요청입니다. 새로고침 후 다시 시도하세요.")
+                elif not new_employee_name:
                     st.error("이름을 입력하세요.")
                 elif new_employee_name in df_map["이름"].values:
                     st.error(f"이미 존재하는 이름입니다: {new_employee_name}님은 이미 목록에 있습니다.")
                 else:
+                    st.session_state["add_transaction_id"] = transaction_id  # 트랜잭션 ID 저장
                     gc = get_gspread_client()
                     sheet = gc.open_by_url(url)
                     
+                    # 매핑 시트 업데이트
                     new_mapping_row = pd.DataFrame([[new_employee_name, int(new_employee_id)]], columns=df_map.columns)
                     df_map = pd.concat([df_map, new_mapping_row], ignore_index=True).sort_values(by="이름")
-                    update_sheet_with_retry(mapping, [df_map.columns.values.tolist()] + df_map.values.tolist())
+                    if not update_sheet_with_retry(mapping, [df_map.columns.values.tolist()] + df_map.values.tolist()):
+                        st.error("매핑 시트 업데이트 실패")
+                        st.stop()
 
+                    # 마스터 시트 업데이트
                     new_row = pd.DataFrame({
                         "이름": [new_employee_name] * 5,
                         "주차": ["매주"] * 5,
@@ -214,12 +225,18 @@ if st.session_state.get("is_admin_authenticated", False):
                     df_master = pd.concat([df_master, new_row], ignore_index=True)
                     df_master["요일"] = pd.Categorical(df_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
                     df_master = df_master.sort_values(by=["이름", "주차", "요일"])
-                    update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist())
+                    if not update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist()):
+                        st.error("마스터 시트 업데이트 실패")
+                        st.stop()
 
+                    # 요청사항 시트 업데이트
                     new_worksheet2_row = pd.DataFrame([[new_employee_name, "요청 없음", ""]], columns=df_request.columns)
                     df_request = pd.concat([df_request, new_worksheet2_row], ignore_index=True)
-                    update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist())
+                    if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                        st.error("요청사항 시트 업데이트 실패")
+                        st.stop()
 
+                    # 세션 상태 갱신
                     st.session_state["df_map"] = df_map
                     st.session_state["df_master"] = df_master
                     st.session_state["df_request"] = df_request
@@ -231,21 +248,33 @@ if st.session_state.get("is_admin_authenticated", False):
 
         with col_delete:
             st.markdown("**🔴 명단 삭제**")
-            selected_employee_name = st.selectbox("이름 선택", df_map["이름"].unique() if not df_map.empty else [])
+            sorted_names = sorted(df_map["이름"].unique()) if not df_map.empty else []
+            selected_employee_name = st.selectbox("이름 선택", sorted_names, key="delete_employee_select")
             
             submit_delete = st.form_submit_button("🗑️ 삭제")
             if submit_delete:
-                df_map = df_map[df_map["이름"] != selected_employee_name]
-                df_master = df_master[df_master["이름"] != selected_employee_name]
-                df_request = df_request[df_request["이름"] != selected_employee_name]
-
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(url)
                 
-                update_sheet_with_retry(mapping, [df_map.columns.values.tolist()] + df_map.values.tolist())
-                update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist())
-                update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist())
+                # 매핑 시트에서 삭제
+                df_map = df_map[df_map["이름"] != selected_employee_name]
+                if not update_sheet_with_retry(mapping, [df_map.columns.values.tolist()] + df_map.values.tolist()):
+                    st.error("매핑 시트 업데이트 실패")
+                    st.stop()
 
+                # 마스터 시트에서 삭제
+                df_master = df_master[df_master["이름"] != selected_employee_name]
+                if not update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist()):
+                    st.error("마스터 시트 업데이트 실패")
+                    st.stop()
+
+                # 요청사항 시트에서 삭제
+                df_request = df_request[df_request["이름"] != selected_employee_name]
+                if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                    st.error("요청사항 시트 업데이트 실패")
+                    st.stop()
+
+                # 세션 상태 갱신
                 st.session_state["df_map"] = df_map
                 st.session_state["df_master"] = df_master
                 st.session_state["df_request"] = df_request
@@ -259,7 +288,8 @@ if st.session_state.get("is_admin_authenticated", False):
     st.divider()
     st.subheader("📋 마스터 관리")
     st.write("- 셀을 클릭하면 해당 인원의 조회 및 수정할 수 있습니다.")
-    selected_employee_name = st.selectbox("이름 선택", df_master["이름"].unique() if not df_master.empty else [])
+    sorted_names = sorted(df_master["이름"].unique()) if not df_master.empty else []
+    selected_employee_name = st.selectbox("이름 선택", sorted_names, key="master_employee_select")
     df_employee = df_master[df_master["이름"] == selected_employee_name]
 
     근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
@@ -283,19 +313,20 @@ if st.session_state.get("is_admin_authenticated", False):
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
         worksheet1 = sheet.worksheet("마스터")
-        update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist())
-        st.session_state["df_master"] = df_result
-        st.session_state["worksheet1"] = worksheet1
-        st.cache_data.clear()
+        if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
+            st.session_state["df_master"] = df_result
+            st.session_state["worksheet1"] = worksheet1
+            st.cache_data.clear()
+            st.success("✅ 수정사항이 저장되었습니다!")
+            time.sleep(2)
+            st.rerun()
+        else:
+            st.error("마스터 시트 저장 실패")
 
-        st.success("✅ 수정사항이 저장되었습니다!")
-        time.sleep(2)
-        st.rerun()
-
-    # 요청사항 관리 탭
+    # 요청사항 관리 탭 (기존 로직 유지, 필요 시 추가 수정)
     st.divider()
     st.subheader("📋 요청사항 관리")
-    st.write("- 명단 및 마스터에 등록되지 않은 인원은 관리자가 요청사항을 추가해야 하며, 이름을 수기로 입력해 주세요.\n- '꼭 근무'로 요청된 사항은 해당 인원이 마스터에서 모두 '근무없음' 상태더라도 반드시 배정됩니다.")
+    st.write("- 명단 및 마스터에 등록되지 않은 인원 중 스케줄 배정이 필요한 경우, 관리자가 이름을 수기로 입력하여 요청사항을 추가해야 합니다.\n- '꼭 근무'로 요청된 사항은 해당 인원이 마스터가 없거나 모두 '근무없음' 상태더라도 반드시 배정됩니다.")
 
     if df_request["분류"].nunique() == 1 and df_request["분류"].iloc[0] == '요청 없음':
         st.warning(f"⚠️ 아직까지 {month_str}에 작성된 요청사항이 없습니다.")
@@ -312,7 +343,8 @@ if st.session_state.get("is_admin_authenticated", False):
 
     with col1:
         if 입력_모드 == "이름 선택":
-            이름 = st.selectbox("이름 선택", df_request["이름"].unique() if not df_request.empty else [], key="add_employee_select")
+            sorted_names = sorted(df_request["이름"].unique()) if not df_request.empty else []
+            이름 = st.selectbox("이름 선택", sorted_names, key="add_employee_select")
             이름_수기 = ""
         else:
             이름_수기 = st.text_input("이름 입력", help="명단에 없는 새로운 인원에 대한 요청을 추가하려면 입력", key="new_employee_input")
@@ -423,9 +455,8 @@ if st.session_state.get("is_admin_authenticated", False):
                 df_request = pd.concat([df_request, new_row], ignore_index=True)
             
             df_request = df_request.sort_values(by=["이름", "날짜정보"])
-            try:
-                update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-                time.sleep(3)
+            if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                time.sleep(1)
                 load_request_data()
                 st.session_state["df_request"] = df_request
                 st.session_state["worksheet2"] = worksheet2
@@ -437,8 +468,8 @@ if st.session_state.get("is_admin_authenticated", False):
                 st.success("✅ 요청사항이 저장되었습니다!")
                 time.sleep(1)
                 st.rerun()
-            except Exception:
-                st.warning("동기화의 지연이 있습니다. 새로고침 해주세요.")
+            else:
+                st.warning("요청사항 저장 실패. 새로고침 후 다시 시도하세요.")
         else:
             st.warning("이름을 선택하거나 입력한 후 요청사항을 입력해주세요.")
 
@@ -448,7 +479,8 @@ if st.session_state.get("is_admin_authenticated", False):
     if not df_request.empty:
         col0, col1 = st.columns([1, 2])
         with col0:
-            selected_employee_id2 = st.selectbox("이름 선택", df_request["이름"].unique() if not df_request.empty else [], key="delete_employee_select")
+            sorted_names = sorted(df_request["이름"].unique()) if not df_request.empty else []
+            selected_employee_id2 = st.selectbox("이름 선택", sorted_names, key="delete_request_employee_select")
         with col1:
             df_employee2 = df_request[df_request["이름"] == selected_employee_id2]
             df_employee2_filtered = df_employee2[df_employee2["분류"] != "요청 없음"]
@@ -479,9 +511,8 @@ if st.session_state.get("is_admin_authenticated", False):
                 df_request = pd.concat([df_request, new_row], ignore_index=True)
             df_request = df_request.sort_values(by=["이름", "날짜정보"])
             
-            try:
-                update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-                time.sleep(3)
+            if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                time.sleep(1)
                 load_request_data()
                 st.session_state["df_request"] = df_request
                 st.session_state["worksheet2"] = worksheet2
@@ -489,8 +520,8 @@ if st.session_state.get("is_admin_authenticated", False):
                 st.success("선택한 요청사항이 삭제되었습니다!")
                 time.sleep(1)
                 st.rerun()
-            except Exception:
-                st.warning("동기화의 지연이 있습니다. 새로고침 해주세요.")
+            else:
+                st.warning("요청사항 삭제 실패. 새로고침 후 다시 시도하세요.")
         else:
             st.warning("삭제할 요청사항을 선택해주세요.")
 
