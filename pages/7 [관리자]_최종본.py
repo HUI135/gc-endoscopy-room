@@ -105,6 +105,7 @@ st.dataframe(df_room)
 st.write(" ")
 st.subheader(f"✨ {month_str} 방 배정 수정 파일 업로드")
 st.write("- 모든 인원의 근무 횟수가 원본과 동일한지, 누락 및 추가 인원이 있는지 확인합니다.")
+st.write("- 날짜별 오전(8:30, 9:00, 9:30, 10:00) 및 오후(13:30) 시간대에 동일 인물이 중복 배정되지 않았는지 확인합니다.")
 uploaded_file = st.file_uploader("방배정 수정 파일", type=["xlsx", "csv"])
 
 if uploaded_file:
@@ -123,14 +124,35 @@ if uploaded_file:
             st.error("업로드된 파일의 컬럼이 원본 데이터와 일치하지 않습니다.")
             st.stop()
 
-        # 각 인원의 근무 횟수 계산 (df_room)
+        # 날짜별 오전/오후 중복 배정 확인
+        morning_slots = [col for col in df_room_md.columns if col.startswith(('8:30', '9:00', '9:30', '10:00')) and col != '온콜']
+        afternoon_slots = [col for col in df_room_md.columns if col.startswith('13:30')]
+        duplicate_errors = []
+
+        for idx, row in df_room_md.iterrows():
+            date_str = row['날짜']
+            # 오전 슬롯 중복 확인
+            morning_assignments = [row[col] for col in morning_slots if pd.notna(row[col]) and row[col].strip()]
+            morning_counts = Counter(morning_assignments)
+            for person, count in morning_counts.items():
+                if person and count > 1:
+                    duplicate_errors.append(f"{date_str}: {person}이(가) 오전 시간대에 {count}번 중복 배정되었습니다.")
+
+            # 오후 슬롯 중복 확인
+            afternoon_assignments = [row[col] for col in afternoon_slots if pd.notna(row[col]) and row[col].strip()]
+            afternoon_counts = Counter(afternoon_assignments)
+            for person, count in afternoon_counts.items():
+                if person and count > 1:
+                    duplicate_errors.append(f"{date_str}: {person}이(가) 오후 시간대에 {count}번 중복 배정되었습니다.")
+
+        # 각 인원의 전체 근무 횟수 계산 (df_room)
         count_room = Counter()
         for _, row in df_room.drop(columns=["날짜", "요일"]).iterrows():
             for value in row:
                 if pd.notna(value) and value.strip():
                     count_room[value] += 1
 
-        # 각 인원의 근무 횟수 계산 (df_room_md)
+        # 각 인원의 전체 근무 횟수 계산 (df_room_md)
         count_room_md = Counter()
         for _, row in df_room_md.drop(columns=["날짜", "요일"]).iterrows():
             for value in row:
@@ -139,22 +161,26 @@ if uploaded_file:
 
         # 근무 횟수 비교
         all_names = set(count_room.keys()).union(set(count_room_md.keys()))
-        discrepancies = []
+        count_discrepancies = []
         for name in all_names:
             orig_count = count_room.get(name, 0)
             mod_count = count_room_md.get(name, 0)
             if orig_count != mod_count:
                 if mod_count < orig_count:
-                    discrepancies.append(f"{name}이(가) 기존 파일보다 근무가 {orig_count - mod_count}회 적습니다.")
+                    count_discrepancies.append(f"{name}이(가) 기존 파일보다 근무가 {orig_count - mod_count}회 적습니다.")
                 elif mod_count > orig_count:
-                    discrepancies.append(f"{name}이(가) 기존 파일보다 근무가 {mod_count - orig_count}회 많습니다.")
+                    count_discrepancies.append(f"{name}이(가) 기존 파일보다 근무가 {mod_count - orig_count}회 많습니다.")
 
         # 결과 출력
-        if not discrepancies:
-            st.success("모든 인원의 근무 횟수가 원본과 동일합니다!")
+        if duplicate_errors or count_discrepancies:
+            if duplicate_errors:
+                for error in duplicate_errors:
+                    st.warning(error)
+            if count_discrepancies:
+                for warning in count_discrepancies:
+                    st.warning(warning)
         else:
-            for warning in discrepancies:
-                st.warning(warning)
+            st.success("모든 인원의 근무 횟수가 원본과 동일하며, 중복 배정 오류가 없습니다!")
 
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {str(e)}")

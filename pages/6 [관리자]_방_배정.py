@@ -77,9 +77,24 @@ def load_data_no_cache(month_str):
         worksheet_room_request.append_row(["이름", "분류", "날짜정보"])
         df_room_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
     
+    # 누적 시트 로드 - 첫 번째 열을 이름으로 처리
+    try:
+        worksheet_cumulative = sheet.worksheet(f"{month_str} 누적")
+        df_cumulative = pd.DataFrame(worksheet_cumulative.get_all_records())
+        if df_cumulative.empty:
+            st.warning(f"{month_str} 누적 시트가 비어 있습니다. 빈 DataFrame으로 초기화합니다.")
+            df_cumulative = pd.DataFrame(columns=[f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+        else:
+            # 첫 번째 열 이름을 "이름"으로 변경
+            df_cumulative.rename(columns={f"{month_str}": "이름"}, inplace=True)
+    except:
+        st.warning(f"{month_str} 누적 시트가 없습니다. 빈 DataFrame으로 초기화합니다.")
+        df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+    
     st.session_state["df_schedule"] = df_schedule
     st.session_state["df_room_request"] = df_room_request
     st.session_state["worksheet_room_request"] = worksheet_room_request
+    st.session_state["df_cumulative"] = df_cumulative  # 누적 데이터 저장
     st.session_state["data_loaded"] = True
     
     return df_schedule, df_room_request, worksheet_room_request
@@ -454,10 +469,11 @@ def parse_date_info(date_info):
         st.warning(f"Failed to parse date_info: {date_info}, error: {str(e)}")
         return None, False
 
-# random_assign 함수
-def random_assign(personnel, slots, request_assignments, time_groups, total_stats, morning_personnel, afternoon_personnel):
+# random_assign 함수 - 중복 배정 방지 로직 추가
+def random_assign(personnel, slots, request_assignments, time_groups, total_stats, morning_personnel, afternoon_personnel, afternoon_duty_counts):
     assignment = [None] * len(slots)
-    assigned_personnel = set()
+    assigned_personnel_morning = set()  # 오전 시간대 배정된 인원 추적
+    assigned_personnel_afternoon = set()  # 오후 시간대 배정된 인원 추적
     daily_stats = {
         'early': Counter(),
         'late': Counter(),
@@ -468,17 +484,29 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     # 슬롯 분류
     morning_slots = [s for s in slots if s.startswith(('8:30', '9:00', '9:30', '10:00')) and '_당직' not in s]
     afternoon_slots = [s for s in slots if s.startswith('13:30')]
+    afternoon_duty_slot = '13:30(2)_당직'  # 오후당직 슬롯
 
-    # 배정 요청 적용 (중복 배정 방지)
+    # 1. 배정 요청 먼저 처리 (중복 배정 방지)
     for slot, person in request_assignments.items():
-        if person in personnel and slot in slots and person not in assigned_personnel:
+        if person in personnel and slot in slots:
             slot_idx = slots.index(slot)
             if assignment[slot_idx] is None:
                 # 시간대 제약 확인
                 if (slot in morning_slots and person in morning_personnel) or \
                    (slot in afternoon_slots and person in afternoon_personnel):
+                    # 오전/오후 중복 체크
+                    if slot in morning_slots and person in assigned_personnel_morning:
+                        st.warning(f"중복 배정 방지: {person}은 이미 오전 시간대({slot})에 배정됨")
+                        continue
+                    if slot in afternoon_slots and person in assigned_personnel_afternoon:
+                        st.warning(f"중복 배정 방지: {person}은 이미 오후 시간대({slot})에 배정됨")
+                        continue
+
                     assignment[slot_idx] = person
-                    assigned_personnel.add(person)
+                    if slot in morning_slots:
+                        assigned_personnel_morning.add(person)
+                    else:
+                        assigned_personnel_afternoon.add(person)
                     room_num = slot.split('(')[1].split(')')[0]
                     daily_stats['rooms'][room_num][person] += 1
                     if slot.startswith('8:30') and '_당직' not in slot:
@@ -492,9 +520,37 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             else:
                 st.warning(f"배정 요청 충돌: {person}을 {slot}에 배정할 수 없음. 이미 배정됨: {assignment[slot_idx]}")
 
-    # 남은 인원 배정 (오전/오후 구분, 공란 방지)
-    morning_remaining = [p for p in morning_personnel if p not in assigned_personnel]
-    afternoon_remaining = [p for p in afternoon_personnel if p not in assigned_personnel]
+    # 2. 오후당직 우선 배정 (누적 시트 기반)
+    afternoon_duty_slot_idx = slots.index(afternoon_duty_slot) if afternoon_duty_slot in slots else None
+    if afternoon_duty_slot_idx is not None and assignment[afternoon_duty_slot_idx] is None:
+        # 오후당직 배정 가능한 인원: afternoon_personnel 중 아직 오후에 배정되지 않은 인원
+        available_personnel = [p for p in afternoon_personnel if p not in assigned_personnel_afternoon]
+        # 오후당직 횟수가 있는 인원만 대상으로
+        candidates = [p for p in available_personnel if p in afternoon_duty_counts and afternoon_duty_counts[p] > 0]
+        if candidates:
+            # 오후당직 횟수가 가장 많은 인원 선택
+            best_person = None
+            max_duty_count = -1
+            for person in candidates:
+                duty_count = afternoon_duty_counts[person]
+                if duty_count > max_duty_count:
+                    max_duty_count = duty_count
+                    best_person = person
+            if best_person:
+                assignment[afternoon_duty_slot_idx] = best_person
+                assigned_personnel_afternoon.add(best_person)
+                room_num = afternoon_duty_slot.split('(')[1].split(')')[0]
+                daily_stats['rooms'][room_num][best_person] += 1
+                daily_stats['duty'][best_person] += 1
+                st.write(f"오후당직 배정: {best_person} → {afternoon_duty_slot} (오후당직 횟수: {max_duty_count})")
+                # 오후당직 횟수 감소
+                afternoon_duty_counts[best_person] -= 1
+                if afternoon_duty_counts[best_person] <= 0:
+                    del afternoon_duty_counts[best_person]
+
+    # 3. 남은 인원 배정 (오전/오후 구분, 공란 방지)
+    morning_remaining = [p for p in morning_personnel if p not in assigned_personnel_morning]
+    afternoon_remaining = [p for p in afternoon_personnel if p not in assigned_personnel_afternoon]
     remaining_slots = [i for i, a in enumerate(assignment) if a is None]
     
     # 오전 슬롯 배정
@@ -503,7 +559,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     for person in morning_remaining:
         if not morning_slot_indices:
             # 빈 슬롯 재검토
-            morning_slot_indices = [i for i in range(len(slots)) if slots[i] in morning_slots]
+            morning_slot_indices = [i for i in range(len(slots)) if slots[i] in morning_slots and assignment[i] is None]
             if not morning_slot_indices:
                 st.error(f"오전 인원 {person} 배정 불가: 오전 슬롯 완전 소진")
                 continue
@@ -530,7 +586,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
         
         slot = slots[best_slot_idx]
         assignment[best_slot_idx] = person
-        assigned_personnel.add(person)
+        assigned_personnel_morning.add(person)
         if best_slot_idx in morning_slot_indices:
             morning_slot_indices.remove(best_slot_idx)
         if best_slot_idx in remaining_slots:
@@ -548,7 +604,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     for person in afternoon_remaining:
         if not afternoon_slot_indices:
             # 빈 슬롯 재검토
-            afternoon_slot_indices = [i for i in range(len(slots)) if slots[i] in afternoon_slots]
+            afternoon_slot_indices = [i for i in range(len(slots)) if slots[i] in afternoon_slots and assignment[i] is None]
             if not afternoon_slot_indices:
                 st.error(f"오후 인원 {person} 배정 불가: 오후 슬롯 완전 소진")
                 continue
@@ -575,7 +631,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
         
         slot = slots[best_slot_idx]
         assignment[best_slot_idx] = person
-        assigned_personnel.add(person)
+        assigned_personnel_afternoon.add(person)
         if best_slot_idx in afternoon_slot_indices:
             afternoon_slot_indices.remove(best_slot_idx)
         room_num = slot.split('(')[1].split(')')[0]
@@ -589,7 +645,8 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             slot = slots[slot_idx]
             # 오전/오후 인원 중 가능한 인원 선택
             available_personnel = morning_personnel if slot in morning_slots else afternoon_personnel
-            available_personnel = [p for p in available_personnel if p not in assigned_personnel]
+            assigned_set = assigned_personnel_morning if slot in morning_slots else assigned_personnel_afternoon
+            available_personnel = [p for p in available_personnel if p not in assigned_set]
             if not available_personnel:
                 # 이미 배정된 인원 중에서 선택
                 available_personnel = morning_personnel if slot in morning_slots else afternoon_personnel
@@ -598,7 +655,10 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
                 st.warning(f"슬롯 {slot} 공란 방지: 이미 배정된 {person} 재배정")
             else:
                 person = available_personnel[0]
-                assigned_personnel.add(person)
+                if slot in morning_slots:
+                    assigned_personnel_morning.add(person)
+                else:
+                    assigned_personnel_afternoon.add(person)
                 st.warning(f"슬롯 {slot} 공란 방지: {person} 배정")
             assignment[slot_idx] = person
             room_num = slot.split('(')[1].split(')')[0]
@@ -618,7 +678,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 
     return assignment, daily_stats
 
-# df_room 생성 로직
+# df_room 생성 로직 - 누적 시트 데이터 처리 수정
 st.divider()
 st.subheader(f"✨ {month_str} 내시경실 배정 확인")
 
@@ -700,6 +760,21 @@ if st.button("🚀 방배정 시작"):
         'duty': Counter(),
         'rooms': {str(i): Counter() for i in range(1, 13)}
     }
+    
+    # 누적 시트 데이터에서 오후당직 횟수 추출
+    df_cumulative = st.session_state["df_cumulative"]
+    afternoon_duty_counts = {}
+    if not df_cumulative.empty:
+        for _, row in df_cumulative.iterrows():
+            name = row['이름']  # 첫 번째 열이 이름으로 변경됨
+            try:
+                duty_count = int(row['오후당직'])
+                if duty_count > 0:
+                    afternoon_duty_counts[name] = duty_count
+            except (ValueError, KeyError):
+                st.warning(f"누적 시트에서 {name}의 오후당직 횟수 파싱 실패")
+                continue
+    st.write("오후당직 횟수:", afternoon_duty_counts)
     
     assignments = {}
     slots = list(st.session_state["time_slots"].keys())
@@ -804,7 +879,7 @@ if st.button("🚀 방배정 시작"):
         st.write(f"Afternoon personnel for {date_str}: {afternoon_personnel}")
         assignment, daily_stats = random_assign(
             personnel, assignable_slots, request_assignments, st.session_state["time_groups"],
-            total_stats, morning_personnel, afternoon_personnel
+            total_stats, morning_personnel, afternoon_personnel, afternoon_duty_counts
         )
         assignments[formatted_date] = assignment
         
