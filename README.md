@@ -3,6 +3,24 @@
 Google Sheet와 연동하여 매월 근무 요청사항 및 휴가를 수합하고, 자동으로 스케쥴과 방 배정을 수행하는 시스템입니다.  
 Streamlit을 통해 실시간으로 각 사용자 및 관리자가 접근할 수 있으며, 최종 결과는 Excel로 다운로드 가능합니다.
 
+[👉 Streamlit 앱 바로가기](https://gc-endoscopy.streamlit.app)
+
+---
+
+## 🖼️ 예시 화면
+
+### 🔐 로그인 / 사번 인증 화면
+<img src="assets/login.png" width="700">
+
+### 📅 마스터 수정 화면
+<img src="assets/master.png" width="700">
+
+### 🙋‍♂️ 요청사항 입력 화면
+<img src="assets/request.png" width="700">
+
+### 🙋‍♂️ (선택) 방배정 요청 화면
+<img src="assets/room_request.png" width="700">
+
 ---
 
 ## 🚀 주요 기능
