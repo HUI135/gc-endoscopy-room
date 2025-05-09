@@ -22,7 +22,7 @@ contact_info_html = """
 
 col1, col2 = st.columns([1, 4])
 with col1:
-    st.image(image_url, width=200)
+    st.image(image_url, width=100)
 with col2:
     st.markdown(title_html, unsafe_allow_html=True)
     st.markdown(contact_info_html, unsafe_allow_html=True)
