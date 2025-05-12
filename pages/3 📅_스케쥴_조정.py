@@ -22,6 +22,8 @@ if "event_processed" not in st.session_state:
     st.session_state["event_processed"] = False
 if "processed_moves" not in st.session_state:
     st.session_state["processed_moves"] = set()
+if "original_workers_by_date" not in st.session_state:
+    st.session_state["original_workers_by_date"] = None
 
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
@@ -33,13 +35,11 @@ def get_gspread_client():
 
 # Google Sheets 업데이트 함수
 def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
-    st.write(f"Google Sheets 업로드 시도: {worksheet.title}, 데이터 크기: {len(data)}행, {len(data[0])}열")
     for attempt in range(retries):
         try:
             worksheet.clear()
             worksheet.update('A1', data, value_input_option='RAW')
             worksheet.resize(rows=len(data), cols=len(data[0]))
-            st.write(f"업로드 성공: 시도 {attempt+1}/{retries}")
             return True
         except Exception as e:
             error_msg = str(e)
@@ -58,9 +58,6 @@ def save_to_google_sheets(df, month_str):
         st.error("데이터프레임이 비어 있습니다. 저장할 데이터가 없습니다.")
         return False
     
-    st.write(f"저장 시작: {month_str} 스케쥴, 데이터프레임 크기: {df.shape}")
-    st.write("데이터프레임 미리보기:", df.head())
-    
     gc = get_gspread_client()
     try:
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
@@ -71,9 +68,7 @@ def save_to_google_sheets(df, month_str):
     try:
         try:
             worksheet = sheet.worksheet(f"{month_str} 스케쥴")
-            st.write(f"기존 시트 발견: {month_str} 스케쥴")
         except gspread.exceptions.WorksheetNotFound:
-            st.write(f"새 시트 생성: {month_str} 스케쥴")
             worksheet = sheet.add_worksheet(title=f"{month_str} 스케쥴", rows=max(100, df.shape[0] + 10), cols=max(50, df.shape[1] + 10))
         
         expected_cols = ['날짜', '요일'] + [str(i) for i in range(1, 18)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 11)]
@@ -82,8 +77,6 @@ def save_to_google_sheets(df, month_str):
         data = [df_ordered.columns.tolist()] + df_ordered.values.tolist()
         
         success = update_sheet_with_retry(worksheet, data)
-        if success:
-            st.write(f"Google Sheets 업로드 완료: {month_str} 스케쥴")
         return success
     except Exception as e:
         st.error(f"Google Sheets 저장 실패: {str(e)}")
@@ -102,9 +95,7 @@ def load_data_page3plus_no_cache(month_str):
     try:
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
         df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
-        st.write(f"데이터 로드 성공: {month_str} 스케쥴, 크기: {df_schedule.shape}")
     except gspread.exceptions.WorksheetNotFound:
-        st.write(f"시트 없음: {month_str} 스케쥴, 빈 데이터프레임 생성")
         df_schedule = pd.DataFrame(columns=['날짜', '요일'] + [str(i) for i in range(1, 13)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 6)])
     except Exception as e:
         st.error(f"스케줄 시트를 불러오는 데 실패: {e}")
@@ -112,6 +103,19 @@ def load_data_page3plus_no_cache(month_str):
     
     st.session_state["df_schedule"] = df_schedule
     st.session_state["data_loaded"] = True
+    
+    # 원본 근무자 상태 저장
+    morning_cols = [str(i) for i in range(1, 18)]
+    original_workers_by_date = {}
+    for _, row in df_schedule.iterrows():
+        date_str = row['날짜']
+        try:
+            d = datetime.strptime(date_str, '%m월 %d일').replace(year=2025).date() if "월" in date_str else datetime.strptime(date_str, '%Y-%m-%d').date()
+        except Exception:
+            continue
+        original_workers_by_date[d] = set([row.get(col, '') for col in morning_cols if row.get(col, '')])
+    st.session_state["original_workers_by_date"] = original_workers_by_date
+    
     return df_schedule
 
 # df_schedule_md 생성
@@ -146,7 +150,6 @@ def create_df_schedule_md(df_schedule):
         for i, col in enumerate(afternoon_cols):
             df_schedule_md.at[idx, col] = afternoon_workers[i]
     
-    st.write(f"df_schedule_md 생성 완료: 크기 {df_schedule_md.shape}")
     return df_schedule_md
 
 # df_schedule을 캘린더 이벤트로 변환
@@ -185,7 +188,6 @@ def df_schedule_to_events(df_schedule, shift_type="morning"):
                 "editable": True
             })
     
-    st.write(f"캘린더 이벤트 생성: {len(events)}개 이벤트")
     return events
 
 # 이벤트로부터 df_schedule 업데이트
@@ -194,11 +196,8 @@ def update_schedule_from_events(events, df_schedule, shift_type):
         st.warning("업데이트할 이벤트가 없습니다. 원본 스케쥴을 유지합니다.")
         return df_schedule
 
-    # 이벤트 해시 생성
-    events_key = hashlib.sha256(str(sorted([(e['title'], e['start'], e['end']) for e in events if isinstance(e, dict)])).encode()).hexdigest()
-    if st.session_state.get("last_events_hash") == events_key and st.session_state.get("event_processed"):
-        st.warning("동일한 이벤트가 이미 처리되었습니다. 스케쥴을 유지합니다.")
-        return df_schedule
+    # 이벤트 해시 생성 (고유성 보장)
+    events_key = hashlib.sha256(str(sorted([(e['title'], e['start'], e['end'], e.get('color', ''), e.get('backgroundColor', '')) for e in events if isinstance(e, dict)])).encode()).hexdigest()
     st.session_state["last_events_hash"] = events_key
     st.session_state["event_processed"] = True
 
@@ -209,24 +208,23 @@ def update_schedule_from_events(events, df_schedule, shift_type):
     max_workers = 12 if shift_type == "morning" else 5
     shift_name = "오전" if shift_type == "morning" else "오후"
 
-    # 원본 스케쥴에서 날짜별 근무자 매핑
+    # 원본 스케쥴에서 날짜별 근무자 매핑 (이동 전 상태)
     date_workers = {}
     for idx, row in df_schedule_updated.iterrows():
         date_str = row['날짜']
         try:
             date_obj = datetime.strptime(date_str, '%m월 %d일').replace(year=2025).date() if "월" in date_str else datetime.strptime(date_str, '%Y-%m-%d').date()
-            workers = [row.get(col, '') for col in target_cols if col in row and row.get(col, '')]
+            workers = [row.get(col, '') for col in target_cols if col in row]
             date_workers[date_obj] = workers
         except ValueError:
             continue
 
     swap_log = set()
-    processed_moves = st.session_state["processed_moves"]
+    processed_moves = set()  # 새로운 세션, 이전 이동 기록 초기화
 
     for col in target_cols[max_workers:]:
         if col not in df_schedule_updated.columns:
             df_schedule_updated[col] = ''
-            st.write(f"추가 열 생성: {col}")
 
     event_groups = {}
     for event in events:
@@ -246,17 +244,13 @@ def update_schedule_from_events(events, df_schedule, shift_type):
             event_groups[date_obj] = set()
         event_groups[date_obj].add(worker)
 
-    st.write(f"탐지된 이벤트 그룹: {event_groups}")
+    # 이동 전 근무자 상태 (세션 상태에서 가져옴)
+    original_workers_by_date = st.session_state.get("original_workers_by_date", {})
+    if not original_workers_by_date:
+        st.warning("원본 근무자 상태가 없습니다. 이동 탐지 불가.")
+        return df_schedule_updated
 
-    original_workers_by_date = {}
-    for _, row in df_schedule_updated.iterrows():
-        date_str = row['날짜']
-        try:
-            d = datetime.strptime(date_str, '%m월 %d일').replace(year=2025).date() if "월" in date_str else datetime.strptime(date_str, '%Y-%m-%d').date()
-        except Exception:
-            continue
-        original_workers_by_date[d] = set([row.get(col, '') for col in target_cols if row.get(col, '')])
-
+    # 새로운 근무자 상태 (이동 후 상태)
     new_workers_by_date = {}
     for event in events:
         if not isinstance(event, dict):
@@ -279,45 +273,32 @@ def update_schedule_from_events(events, df_schedule, shift_type):
         added[d] = new - orig
         removed[d] = orig - new
 
-    st.write("날짜별 added:", added)
-    st.write("날짜별 removed:", removed)
-
     swap_pairs = []
-    single_moves = []
+    to_remove = []  # 제거할 항목 저장
 
-    # 교환 쌍 탐지 및 처리
+    # 교환 쌍 탐지 (세트 크기 변경 방지)
     for d1 in list(added.keys()):
-        for worker in list(added[d1]):
+        for worker in list(added[d1]):  # 복사본 사용
             for d2 in list(removed.keys()):
                 if d1 == d2:
                     continue
                 if worker in removed[d2]:
-                    for w2 in list(added.get(d2, set())):
-                        if w2 in removed.get(d1, set()) and (worker, d1, d2) not in processed_moves and (w2, d2, d1) not in processed_moves:
+                    for w2 in list(added.get(d2, set())):  # 복사본 사용
+                        if w2 in removed.get(d1, set()):
                             swap_pairs.append((worker, d1, w2, d2))
-                            added[d1].discard(worker)
-                            removed[d2].discard(worker)
-                            added[d2].discard(w2)
-                            removed[d1].discard(w2)
-                            processed_moves.add((worker, d1, d2))
-                            processed_moves.add((w2, d2, d1))
+                            to_remove.append((worker, d1, w2, d2))
+                            if swap_pairs:  # 첫 번째 교환 쌍만 출력
+                                st.write(f"교환 쌍 추가: {worker} ({d1}) <-> {w2} ({d2})")
                             break
 
-    # 단일 이동 탐지
-    for d in list(added.keys()):
-        for worker in list(added[d]):
-            for d2 in list(removed.keys()):
-                if d == d2:
-                    continue
-                if worker in removed[d2] and (worker, d, d2) not in processed_moves:
-                    single_moves.append((worker, d, d2))
-                    added[d].discard(worker)
-                    removed[d2].discard(worker)
-                    processed_moves.add((worker, d, d2))
-                    break
-
-    st.write("탐지된 교환 쌍:", swap_pairs)
-    st.write("탐지된 단일 이동:", single_moves)
+    # 제거 처리 (순회 후)
+    for worker, d1, w2, d2 in to_remove:
+        added[d1].discard(worker)
+        removed[d2].discard(worker)
+        added[d2].discard(w2)
+        removed[d1].discard(w2)
+        processed_moves.add((worker, d1, d2))
+        processed_moves.add((w2, d2, d1))
 
     # 교환 처리
     for worker, new_date, swap_worker, orig_date in swap_pairs:
@@ -328,75 +309,42 @@ def update_schedule_from_events(events, df_schedule, shift_type):
             lambda x: datetime.strptime(x, '%m월 %d일').replace(year=2025).date() if "월" in x else datetime.strptime(x, '%Y-%m-%d').date()
         ) == orig_date].index
         if row_idx_new.empty or row_idx_orig.empty:
-            st.write(f"날짜 {new_date} 또는 {orig_date}에 해당하는 행이 없습니다.")
             continue
         row_idx_new = row_idx_new[0]
         row_idx_orig = row_idx_orig[0]
         current_workers_new = df_schedule_updated.loc[row_idx_new, target_cols].tolist()
         current_workers_orig = df_schedule_updated.loc[row_idx_orig, target_cols].tolist()
-        if swap_worker in current_workers_new:
-            current_workers_new[current_workers_new.index(swap_worker)] = worker
+        
+        # 열 인덱스 찾기
+        new_worker_index = current_workers_new.index(swap_worker) if swap_worker in current_workers_new else None
+        orig_worker_index = current_workers_orig.index(worker) if worker in current_workers_orig else None
+        
+        if new_worker_index is not None and orig_worker_index is not None:
+            # 열 위치 교환
+            current_workers_new[new_worker_index] = worker
+            current_workers_orig[orig_worker_index] = swap_worker
             for i, w in enumerate(current_workers_new):
                 if i < len(target_cols):
                     df_schedule_updated.at[row_idx_new, target_cols[i]] = w
-            swap_log.add((worker, new_date.strftime('%m월 %d일')))
-        if worker in current_workers_orig:
-            current_workers_orig[current_workers_orig.index(worker)] = swap_worker
             for i, w in enumerate(current_workers_orig):
                 if i < len(target_cols):
                     df_schedule_updated.at[row_idx_orig, target_cols[i]] = w
+            swap_log.add((worker, new_date.strftime('%m월 %d일')))
             swap_log.add((swap_worker, orig_date.strftime('%m월 %d일')))
-        
-        # 상태 갱신
-        if not row_idx_new.empty:
-            original_workers_by_date[new_date] = set(df_schedule_updated.loc[row_idx_new, target_cols].tolist())
-        if not row_idx_orig.empty:
-            original_workers_by_date[orig_date] = set(df_schedule_updated.loc[row_idx_orig, target_cols].tolist())
-
-    # 단일 이동 처리
-    for worker, new_date, orig_date in single_moves:
-        if (worker, orig_date, new_date) in processed_moves:
-            continue
-
-        row_idx_new = df_schedule_updated[df_schedule_updated['날짜'].apply(
-            lambda x: datetime.strptime(x, '%m월 %d일').replace(year=2025).date() if "월" in x else datetime.strptime(x, '%Y-%m-%d').date()
-        ) == new_date].index
-        row_idx_orig = df_schedule_updated[df_schedule_updated['날짜'].apply(
-            lambda x: datetime.strptime(x, '%m월 %d일').replace(year=2025).date() if "월" in x else datetime.strptime(x, '%Y-%m-%d').date()
-        ) == orig_date].index
-        if row_idx_new.empty or row_idx_orig.empty:
-            st.write(f"날짜 {new_date} 또는 {orig_date}에 해당하는 행이 없습니다.")
-            continue
-        row_idx_new = row_idx_new[0]
-        row_idx_orig = row_idx_orig[0]
-        current_workers_new = df_schedule_updated.loc[row_idx_new, target_cols].tolist()
-        current_workers_orig = df_schedule_updated.loc[row_idx_orig, target_cols].tolist()
-        if worker not in current_workers_new:
-            try:
-                empty_index = current_workers_new.index('')
-                current_workers_new[empty_index] = worker
-            except ValueError:
-                if len([w for w in current_workers_new if w]) < max_workers:
-                    current_workers_new.append(worker)
-        if worker in current_workers_orig:
-            current_workers_orig[current_workers_orig.index(worker)] = ''
-        for i, w in enumerate(current_workers_new):
-            if i < len(target_cols):
-                df_schedule_updated.at[row_idx_new, target_cols[i]] = w
-        for i, w in enumerate(current_workers_orig):
-            if i < len(target_cols):
-                df_schedule_updated.at[row_idx_orig, target_cols[i]] = w
-        swap_log.add((worker, new_date.strftime('%m월 %d일')))
         
         # 상태 갱신
         original_workers_by_date[new_date] = set(df_schedule_updated.loc[row_idx_new, target_cols].tolist())
         original_workers_by_date[orig_date] = set(df_schedule_updated.loc[row_idx_orig, target_cols].tolist())
-        processed_moves.add((worker, orig_date, new_date))
 
     for date_obj, workers in date_workers.items():
         num_workers = len([w for w in workers if w])
-        if num_workers != max_workers and num_workers != 0:
-            st.warning(f"{date_obj.strftime('%m월 %d일')} {shift_name} 근무자가 총 {num_workers}명입니다. 배정을 마쳐주세요.")
+        # 토요일(weekday == 5)은 10명 근무 정상, 그 외는 12명
+        if date_obj.weekday() == 5:
+            if num_workers != 10 and num_workers != 0:
+                st.warning(f"{date_obj.strftime('%m월 %d일')} {shift_name} 근무자가 총 {num_workers}명입니다. 배정을 마쳐주세요.")
+        else:
+            if num_workers != max_workers and num_workers != 0:
+                st.warning(f"{date_obj.strftime('%m월 %d일')} {shift_name} 근무자가 총 {num_workers}명입니다. 배정을 마쳐주세요.")
 
     cols_to_drop = [col for col in target_cols[max_workers:] if col in df_schedule_updated.columns and all(df_schedule_updated[col] == '')]
     if cols_to_drop:
@@ -406,8 +354,7 @@ def update_schedule_from_events(events, df_schedule, shift_type):
         st.info(f"{date}에 {worker} 근무가 수정되었습니다.")
 
     st.session_state["processed_moves"] = processed_moves
-    st.write(f"df_schedule_md 업데이트 완료: 크기 {df_schedule_updated.shape}")
-    st.write("업데이트된 df_schedule_md 미리보기:", df_schedule_updated.head())
+    st.session_state["original_workers_by_date"] = original_workers_by_date
     return df_schedule_updated
 
 # 메인
@@ -444,7 +391,9 @@ if st.button("🔄 새로고침 (R)"):
     st.session_state["last_events_hash"] = None
     st.session_state["event_processed"] = False
     st.session_state["processed_moves"] = set()
+    st.session_state["original_workers_by_date"] = None
     st.success("데이터가 새로고침되었습니다.")
+    time.sleep(1)
     st.rerun()
 
 # 메인 앱 로직
@@ -501,11 +450,9 @@ if state.get("eventsSet"):
     
     if isinstance(events_list, list) and (not events_list or isinstance(events_list[0], dict)):
         if events_list:
-            st.write(f"캘린더 이벤트 처리 시작: {len(events_list)}개 이벤트")
-            st.write("전체 이벤트:", events_list)
             st.session_state["df_schedule_md"] = update_schedule_from_events(events_list, st.session_state["df_schedule_md"], shift_type)
             st.session_state["df_schedule"] = st.session_state["df_schedule_md"].copy()  # 동기화
-            st.write("캘린더 조정 완료, 저장 버튼을 눌러 Google Sheets에 반영하세요.")
+            st.info("캘린더 조정 완료, 저장 버튼을 눌러 Google Sheets에 반영하세요.")
         else:
             st.warning("빈 이벤트 리스트입니다. 스케쥴을 업데이트하지 않습니다.")
     else:
@@ -513,10 +460,16 @@ if state.get("eventsSet"):
 
 # 저장 버튼
 if st.button("💾 저장"):
-    st.session_state["df_schedule"] = st.session_state["df_schedule_md"].copy()  # 동기화
-    success = save_to_google_sheets(st.session_state["df_schedule"], month_str)
-    if success:
-        st.success("스케쥴이 성공적으로 저장되었습니다.")
-        st.session_state["event_processed"] = False  # 저장 후 이벤트 처리 플래그 리셋
+    if st.session_state["df_schedule_md"] is None or st.session_state["df_schedule_md"].empty:
+        st.error("스케쥴 데이터가 없습니다. 새로고침 후 다시 시도해주세요.")
     else:
-        st.error("스케쥴 저장에 실패했습니다. 다시 시도해주세요.")
+        st.session_state["event_processed"] = False  # 이벤트 처리 플래그 초기화
+        st.session_state["df_schedule"] = st.session_state["df_schedule_md"].copy()  # 동기화
+        success = save_to_google_sheets(st.session_state["df_schedule"], month_str)
+        if success:
+            st.success("스케쥴이 성공적으로 저장되었습니다.")
+            st.session_state["last_events_hash"] = None  # 해시 초기화
+            st.dataframe(st.session_state["df_schedule_md"])  # 데이터프레임 표시
+        else:
+            st.error("스케쥴 저장에 실패했습니다. 데이터프레임 확인:")
+            st.dataframe(st.session_state["df_schedule_md"])  # 실패 시에도 데이터프레임 표시
