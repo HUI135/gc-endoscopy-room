@@ -71,8 +71,9 @@ def save_to_google_sheets(df, month_str):
         except gspread.exceptions.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title=f"{month_str} 스케쥴", rows=max(100, df.shape[0] + 10), cols=max(50, df.shape[1] + 10))
         
-        expected_cols = ['날짜', '요일'] + [str(i) for i in range(1, 18)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 11)]
-        df_ordered = df.reindex(columns=[col for col in expected_cols if col in df.columns or col in expected_cols], fill_value='')
+        # 필요한 열만 포함 (13~17, 오후6~10 제외)
+        expected_cols = ['날짜', '요일'] + [str(i) for i in range(1, 13)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 6)]
+        df_ordered = df.reindex(columns=[col for col in expected_cols if col in df.columns], fill_value='')
         
         data = [df_ordered.columns.tolist()] + df_ordered.values.tolist()
         
@@ -104,8 +105,9 @@ def load_data_page3plus_no_cache(month_str):
     st.session_state["df_schedule"] = df_schedule
     st.session_state["data_loaded"] = True
     
-    # 원본 근무자 상태 저장
-    morning_cols = [str(i) for i in range(1, 18)]
+    # 원본 근무자 상태 저장 (오전/오후 구분)
+    morning_cols = [str(i) for i in range(1, 13)]  # 13~17 제외
+    afternoon_cols = [f'오후{i}' for i in range(1, 6)]  # 오후6~10 제외
     original_workers_by_date = {}
     for _, row in df_schedule.iterrows():
         date_str = row['날짜']
@@ -113,7 +115,10 @@ def load_data_page3plus_no_cache(month_str):
             d = datetime.strptime(date_str, '%m월 %d일').replace(year=2025).date() if "월" in date_str else datetime.strptime(date_str, '%Y-%m-%d').date()
         except Exception:
             continue
-        original_workers_by_date[d] = set([row.get(col, '') for col in morning_cols if row.get(col, '')])
+        original_workers_by_date[d] = {
+            "morning": set([row.get(col, '') for col in morning_cols if row.get(col, '')]),
+            "afternoon": set([row.get(col, '') for col in afternoon_cols if row.get(col, '')])
+        }
     st.session_state["original_workers_by_date"] = original_workers_by_date
     
     return df_schedule
@@ -122,7 +127,7 @@ def load_data_page3plus_no_cache(month_str):
 def create_df_schedule_md(df_schedule):
     df_schedule_md = df_schedule.copy().fillna('')
     morning_cols = [str(i) for i in range(1, 13)]  # 1~12
-    afternoon_cols = ['오후1', '오후2', '오후3', '오후4', '오후5']
+    afternoon_cols = ['오후1', '오후2', '오후3', '오후4', '오후5']  # 오후6~10 제외
     
     for idx, row in df_schedule_md.iterrows():
         date_str = row['날짜']
@@ -155,8 +160,8 @@ def create_df_schedule_md(df_schedule):
 # df_schedule을 캘린더 이벤트로 변환
 def df_schedule_to_events(df_schedule, shift_type="morning"):
     events = []
-    morning_cols = [str(i) for i in range(1, 18)]  # 최대 17열
-    afternoon_cols = [f'오후{i}' for i in range(1, 11)]  # 최대 10열
+    morning_cols = [str(i) for i in range(1, 13)]  # 13~17 제외
+    afternoon_cols = [f'오후{i}' for i in range(1, 6)]  # 오후6~10 제외
     
     for idx, row in df_schedule.iterrows():
         date_str = row['날짜']
@@ -202,11 +207,11 @@ def update_schedule_from_events(events, df_schedule, shift_type):
     st.session_state["event_processed"] = True
 
     df_schedule_updated = df_schedule.fillna('').copy()
-    morning_cols = [str(i) for i in range(1, 18)]
-    afternoon_cols = [f'오후{i}' for i in range(1, 11)]
+    morning_cols = [str(i) for i in range(1, 13)]  # 13~17 제외
+    afternoon_cols = [f'오후{i}' for i in range(1, 6)]  # 오후6~10 제외
     target_cols = morning_cols if shift_type == "morning" else afternoon_cols
     max_workers = 12 if shift_type == "morning" else 5
-    shift_name = "오전" if shift_type == "morning" else "오후"
+    shift_name = "✅ 오전" if shift_type == "morning" else "☑️ 오후"
 
     # 원본 스케쥴에서 날짜별 근무자 매핑 (이동 전 상태)
     date_workers = {}
@@ -221,10 +226,6 @@ def update_schedule_from_events(events, df_schedule, shift_type):
 
     swap_log = set()
     processed_moves = set()  # 새로운 세션, 이전 이동 기록 초기화
-
-    for col in target_cols[max_workers:]:
-        if col not in df_schedule_updated.columns:
-            df_schedule_updated[col] = ''
 
     event_groups = {}
     for event in events:
@@ -268,7 +269,7 @@ def update_schedule_from_events(events, df_schedule, shift_type):
     added = {}
     removed = {}
     for d in set(list(original_workers_by_date.keys()) + list(new_workers_by_date.keys())):
-        orig = original_workers_by_date.get(d, set())
+        orig = original_workers_by_date.get(d, {}).get(shift_type, set())
         new = new_workers_by_date.get(d, set())
         added[d] = new - orig
         removed[d] = orig - new
@@ -276,7 +277,7 @@ def update_schedule_from_events(events, df_schedule, shift_type):
     swap_pairs = []
     to_remove = []  # 제거할 항목 저장
 
-    # 교환 쌍 탐지 (세트 크기 변경 방지)
+    # 교환 쌍 탐지 (조건 단순화)
     for d1 in list(added.keys()):
         for worker in list(added[d1]):  # 복사본 사용
             for d2 in list(removed.keys()):
@@ -287,8 +288,7 @@ def update_schedule_from_events(events, df_schedule, shift_type):
                         if w2 in removed.get(d1, set()):
                             swap_pairs.append((worker, d1, w2, d2))
                             to_remove.append((worker, d1, w2, d2))
-                            if swap_pairs:  # 첫 번째 교환 쌍만 출력
-                                st.write(f"교환 쌍 추가: {worker} ({d1}) <-> {w2} ({d2})")
+                            st.write(f"교환 쌍 추가: {worker} ({d1}) <-> {w2} ({d2})")  # 각 교환 쌍 출력
                             break
 
     # 제거 처리 (순회 후)
@@ -333,25 +333,24 @@ def update_schedule_from_events(events, df_schedule, shift_type):
             swap_log.add((swap_worker, orig_date.strftime('%m월 %d일')))
         
         # 상태 갱신
-        original_workers_by_date[new_date] = set(df_schedule_updated.loc[row_idx_new, target_cols].tolist())
-        original_workers_by_date[orig_date] = set(df_schedule_updated.loc[row_idx_orig, target_cols].tolist())
+        original_workers_by_date[new_date] = {
+            "morning": set([df_schedule_updated.loc[row_idx_new, col] for col in morning_cols if df_schedule_updated.loc[row_idx_new, col]]),
+            "afternoon": set([df_schedule_updated.loc[row_idx_new, col] for col in afternoon_cols if df_schedule_updated.loc[row_idx_new, col]])
+        }
+        original_workers_by_date[orig_date] = {
+            "morning": set([df_schedule_updated.loc[row_idx_orig, col] for col in morning_cols if df_schedule_updated.loc[row_idx_orig, col]]),
+            "afternoon": set([df_schedule_updated.loc[row_idx_orig, col] for col in afternoon_cols if df_schedule_updated.loc[row_idx_orig, col]])
+        }
 
     for date_obj, workers in date_workers.items():
         num_workers = len([w for w in workers if w])
-        # 토요일(weekday == 5)은 10명 근무 정상, 그 외는 12명
-        if date_obj.weekday() == 5:
+        # 토요일(weekday == 5)은 10명 근무 정상, 그 외는 max_workers
+        if date_obj.weekday() == 5 and shift_type == "morning":
             if num_workers != 10 and num_workers != 0:
                 st.warning(f"{date_obj.strftime('%m월 %d일')} {shift_name} 근무자가 총 {num_workers}명입니다. 배정을 마쳐주세요.")
         else:
             if num_workers != max_workers and num_workers != 0:
                 st.warning(f"{date_obj.strftime('%m월 %d일')} {shift_name} 근무자가 총 {num_workers}명입니다. 배정을 마쳐주세요.")
-
-    cols_to_drop = [col for col in target_cols[max_workers:] if col in df_schedule_updated.columns and all(df_schedule_updated[col] == '')]
-    if cols_to_drop:
-        df_schedule_updated.drop(columns=cols_to_drop, inplace=True)
-
-    for worker, date in swap_log:
-        st.info(f"{date}에 {worker} 근무가 수정되었습니다.")
 
     st.session_state["processed_moves"] = processed_moves
     st.session_state["original_workers_by_date"] = original_workers_by_date
@@ -393,15 +392,17 @@ if st.button("🔄 새로고침 (R)"):
     st.session_state["processed_moves"] = set()
     st.session_state["original_workers_by_date"] = None
     st.success("데이터가 새로고침되었습니다.")
-    time.sleep(1)
     st.rerun()
 
 # 메인 앱 로직
 st.header(f"📅 {month_str} 스케쥴표", divider='rainbow')
+
+# 안내 문구
+st.write("- 두 날짜에서 한 명씩 인원을 선택하여 드래그 다운으로 일정을 교환한 후, 저장 버튼을 눌러주세요.")
 st.write(" ")
 
 # 시간대 선택
-shift_type = st.selectbox("시간대 선택", ["morning", "afternoon"], format_func=lambda x: "오전" if x == "morning" else "오후")
+shift_type = st.selectbox("시간대 선택", ["morning", "afternoon"], format_func=lambda x: "✅ 오전" if x == "morning" else "☑️ 오후")
 
 # 캘린더 이벤트 생성
 events = df_schedule_to_events(st.session_state["df_schedule_md"], shift_type)
@@ -469,7 +470,7 @@ if st.button("💾 저장"):
         if success:
             st.success("스케쥴이 성공적으로 저장되었습니다.")
             st.session_state["last_events_hash"] = None  # 해시 초기화
-            st.dataframe(st.session_state["df_schedule_md"])  # 데이터프레임 표시
+            st.rerun()  # 페이지 갱신
         else:
-            st.error("스케쥴 저장에 실패했습니다. 데이터프레임 확인:")
-            st.dataframe(st.session_state["df_schedule_md"])  # 실패 시에도 데이터프레임 표시
+            st.error("스케쥴 저장에 실패했습니다. 다시 시도해주세요.")
+            st.rerun()  # 실패 시에도 페이지 갱신

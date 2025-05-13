@@ -270,7 +270,8 @@ def main():
         st.rerun()
     
     # 메인 UI
-    st.subheader(f"✨ {MONTH_STR} 방 배정 수정")
+    st.subheader(f"✨ {MONTH_STR} 방 배정 조정정")
+    st.write("- 직접 이름을 수정하여 방 배정을 조정할 수 있습니다.")
     df_room = load_data_page7(MONTH_STR)
     edited_df = st.data_editor(
         df_room,
@@ -321,7 +322,7 @@ def main():
                 st.download_button(
                     label="📥 최종 방배정 다운로드",
                     data=excel_file,
-                    file_name=f"{MONTH_STR} 방배정.xlsx",
+                    file_name=f"{MONTH_STR} 방배정 최종.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
                 )
@@ -330,13 +331,13 @@ def main():
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
                 try:
-                    worksheet_result = sheet.worksheet(f"{MONTH_STR} 방배정")
+                    worksheet_result = sheet.worksheet(f"{MONTH_STR} 방배정 최종")
                 except:
-                    worksheet_result = sheet.add_worksheet(f"{MONTH_STR} 방배정", rows=100, cols=len(df_room.columns))
+                    worksheet_result = sheet.add_worksheet(f"{MONTH_STR} 방배정 최종", rows=100, cols=len(df_room.columns))
                     worksheet_result.append_row(df_room.columns.tolist())
                 
                 update_sheet_with_retry(worksheet_result, [df_room.columns.tolist()] + df_room_md.values.tolist())
-                st.success(f"✅ {MONTH_STR} 방배정 테이블이 Google Sheets에 저장되었습니다.")
+                st.success(f"✅ {MONTH_STR} 방배정 최종 테이블이 Google Sheets에 저장되었습니다.")
         
         except Exception as e:
             st.error(f"데이터 처리 중 오류 발생: {str(e)}")
