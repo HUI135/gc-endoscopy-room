@@ -270,7 +270,7 @@ def main():
         st.rerun()
     
     # 메인 UI
-    st.subheader(f"✨ {MONTH_STR} 방 배정 조정정")
+    st.subheader(f"✨ {MONTH_STR} 방 배정 조정")
     st.write("- 직접 이름을 수정하여 방 배정을 조정할 수 있습니다.")
     df_room = load_data_page7(MONTH_STR)
     edited_df = st.data_editor(
@@ -307,9 +307,9 @@ def main():
                     st.warning(warning)
             else:
                 st.success("모든 인원의 근무 횟수가 원본과 동일하며, 중복 배정 오류가 없습니다!")
-                st.write(" ")
-                st.markdown("**✅ 통합 배치 결과**")
-                st.dataframe(df_room_md)
+                # st.write(" ")
+                # st.markdown("**✅ 통합 배치 결과**")
+                # st.dataframe(df_room_md)
                 
                 stats_df = calculate_stats(df_room_md)
                 st.write(" ")

@@ -137,7 +137,7 @@ def load_data_page5():
             new_rows = [[name, "", "", "", ""] for name in names_in_master]
             for row in new_rows:
                 worksheet4.append_row(row)
-        st.session_state["df_cumulative"] = pd.DataFrame(worksheet4.get_all_records()) if worksheet4.get_all_records() else pd.DataFrame(columns=[f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+        st.session_state["df_cumulative"] = pd.DataFrame(worksheet4.get_all_records()) if worksheet4.get_all_records() else pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
         st.session_state["worksheet4"] = worksheet4
 
         # df_shift와 df_supplement 생성 및 세션 상태에 저장
@@ -247,7 +247,7 @@ if st.session_state.get("is_admin_authenticated", False):
     # Use .get() with fallback to avoid KeyError
     df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))
     df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
-    df_cumulative = st.session_state.get("df_cumulative", pd.DataFrame(columns=[f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]))
+    df_cumulative = st.session_state.get("df_cumulative", pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]))
     df_shift = st.session_state.get("df_shift", pd.DataFrame())  # 세션 상태에서 가져오기
     df_supplement = st.session_state.get("df_supplement", pd.DataFrame())  # 세션 상태에서 가져오기
 
@@ -319,6 +319,7 @@ if st.session_state.get("is_admin_authenticated", False):
     # 데이터프레임 로드 확인 (Streamlit UI로 변경)
     st.divider()
     st.subheader(f"✨ {month_str} 스케쥴 배정 수행")
+    st.write("- 근무 배정 실행 시, 입력되어있는 '스케쥴 조정사항'이 초기화되므로 주의 부탁드립니다.")
     # st.write("df_shift_processed 확인:", df_shift_processed.head())
     # st.write("df_supplement_processed 확인:", df_supplement_processed.head())
     # st.write("df_request 확인:", df_request.head())
@@ -409,7 +410,7 @@ if st.session_state.get("is_admin_authenticated", False):
 
     # st.multiselect로 휴관일 선택
     selected_holidays = st.multiselect(
-        label=f"{month_str} 평일 중 휴관일을 선택하세요",
+        label=f"{month_str} 평일 중 휴관일을 선택",
         options=[option[0] for option in holiday_options],
         default=[],
         key="holiday_select",
@@ -476,6 +477,8 @@ if st.session_state.get("is_admin_authenticated", False):
     # 근무 배정 버튼
     st.write(" ")
     if st.button("🚀 근무 배정 실행"):
+        st.write(" ")
+        st.subheader(f"💡 {month_str} 스케쥴 배정 결과", divider='rainbow')
         # 버튼 클릭 시 세션 상태 초기화
         st.session_state.assigned = False
         st.session_state.output = None
@@ -1154,7 +1157,7 @@ if st.session_state.get("is_admin_authenticated", False):
                     added_exclude_workers = []
                     if len(current_workers) < target_count:
                         supplement_workers_with_cumulative = [
-                            (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0, p)
+                            (w, df_cumulative_next[df_cumulative_next['이름'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next['이름'].values else 0, p)
                             for w, p in supplement_workers if w not in current_workers
                         ]
                         supplement_workers_with_cumulative.sort(key=lambda x: (x[1], x[2] == 'low'))
@@ -1166,11 +1169,11 @@ if st.session_state.get("is_admin_authenticated", False):
                             current_workers.append(worker)
                             added_supplement_workers.append(worker)
                             current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) + 1
-                            if worker in df_cumulative_next[f'{month_str}'].values:
-                                df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, f'{time_slot}누적'] += 1
+                            if worker in df_cumulative_next['이름'].values:
+                                df_cumulative_next.loc[df_cumulative_next['이름'] == worker, f'{time_slot}누적'] += 1
                             else:
                                 new_row = pd.DataFrame({
-                                    f'{month_str}': [worker],
+                                    '이름': [worker],
                                     f'{time_slot}누적': [1],
                                     '오전당직 (온콜)': [0],
                                     '오후당직': [0]
@@ -1185,12 +1188,12 @@ if st.session_state.get("is_admin_authenticated", False):
                     # 추가 제외
                     if len(current_workers) > target_count:
                         removable_workers = [
-                            (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0)
+                            (w, df_cumulative_next[df_cumulative_next['이름'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next['이름'].values else 0)
                             for w in current_workers if w not in must_work and w not in initial_workers
                         ]
                         if not removable_workers:
                             removable_workers = [
-                                (w, df_cumulative_next[df_cumulative_next[f'{month_str}'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next[f'{month_str}'].values else 0)
+                                (w, df_cumulative_next[df_cumulative_next['이름'] == w][f'{time_slot}누적'].iloc[0] if w in df_cumulative_next['이름'].values else 0)
                                 for w in current_workers if w not in must_work
                             ]
                         removable_workers.sort(key=lambda x: x[1], reverse=True)
@@ -1199,8 +1202,8 @@ if st.session_state.get("is_admin_authenticated", False):
                             current_workers.remove(worker)
                             added_exclude_workers.append(worker)
                             current_cumulative[time_slot][worker] = current_cumulative[time_slot].get(worker, 0) - 1
-                            if worker in df_cumulative_next[f'{month_str}'].values:
-                                df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, f'{time_slot}누적'] -= 1
+                            if worker in df_cumulative_next['이름'].values:
+                                df_cumulative_next.loc[df_cumulative_next['이름'] == worker, f'{time_slot}누적'] -= 1
                             df_final = update_worker_status(df_final, date_str, time_slot, worker, '제외', '인원 초과로 인한 추가 제외', '🟣 보라색')
                             if time_slot == '오전':
                                 if df_final[
@@ -1210,8 +1213,8 @@ if st.session_state.get("is_admin_authenticated", False):
                                 ].empty:
                                     df_final = update_worker_status(df_final, date_str, '오후', worker, '제외', '오전 제외로 인한 오후 제외', '🟣 보라색')
                                     current_cumulative['오후'][worker] = current_cumulative['오후'].get(worker, 0) - 1
-                                    if worker in df_cumulative_next[f'{month_str}'].values:
-                                        df_cumulative_next.loc[df_cumulative_next[f'{month_str}'] == worker, '오후누적'] -= 1
+                                    if worker in df_cumulative_next['이름'].values:
+                                        df_cumulative_next.loc[df_cumulative_next['이름'] == worker, '오후누적'] -= 1
 
                     # 최종 검증
                     final_count = len(df_final[
@@ -1312,7 +1315,7 @@ if st.session_state.get("is_admin_authenticated", False):
                                 df_excel.at[idx, str(i)] = workers_padded[i-1]
 
             # 오전당직(온콜) 배정
-            oncall_counts = df_cumulative.set_index(f'{month_str}')['오전당직 (온콜)'].to_dict()
+            oncall_counts = df_cumulative.set_index('이름')['오전당직 (온콜)'].to_dict()
             oncall_assignments = {worker: int(count) if count else 0 for worker, count in oncall_counts.items()}
             oncall = {}  # 날짜별 오전당직(온콜) 배정 저장
 
@@ -1574,6 +1577,25 @@ if st.session_state.get("is_admin_authenticated", False):
                     st.error(f"⚠️ Google Sheets 연결 중 오류 발생: {str(e)}")
                     st.stop()
 
+                # month_str 스케쥴 조정사항 시트 초기화
+                try:
+                    # 시트 존재 여부 확인
+                    try:
+                        worksheet_adjustments = sheet.worksheet(f"{month_str} 스케쥴 조정사항")
+                        # 시트 데이터 초기화 (기존 데이터 삭제)
+                        worksheet_adjustments.clear()
+                        # 초기 헤더 추가 (필요 시)
+                        worksheet_adjustments.update('A1', [['Timestamp', '조정사항']], value_input_option='RAW')
+                    except WorksheetNotFound:
+                        # 시트가 없으면 새로 생성
+                        worksheet_adjustments = sheet.add_worksheet(title=f"{month_str} 스케쥴 조정사항", rows=100, cols=10)
+                        # 초기 헤더 추가
+                        worksheet_adjustments.update('A1', [['Timestamp', '조정사항']], value_input_option='RAW')
+                    st.success(f"✅ {month_str} 스케쥴 조정사항 시트가 초기화되었습니다.")
+                except Exception as e:
+                    st.error(f"⚠️ {month_str} 스케쥴 조정사항 시트 초기화 중 오류 발생: {str(e)}")
+                    st.stop()
+
                 # df_final_unique와 df_excel을 기반으로 스케줄 데이터 변환
                 df_schedule = transform_schedule_data(df_final_unique, df_excel, next_month_start, next_month_end)
 
@@ -1593,9 +1615,6 @@ if st.session_state.get("is_admin_authenticated", False):
                     st.error(f"⚠️ {month_str} 스케쥴 테이블 저장 중 오류 발생: {str(e)}")
                     st.write(f"디버깅 정보: {type(e).__name__}, {str(e)}")
                     st.stop()
-
-                # df_cumulative_next 처리
-                df_cumulative_next.rename(columns={month_str: next_month_str}, inplace=True)
 
                 # 다음 달 누적 시트 저장
                 try:

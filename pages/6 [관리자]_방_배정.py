@@ -754,7 +754,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 # df_room 생성 로직 - 8:30 당직 통계 반영 추가
 if st.button("🚀 방배정 수행"):
     st.write(" ")
-    st.subheader(f"✨ {month_str} 방배정 결과", divider='rainbow')
+    st.subheader(f"💡 {month_str} 방배정 결과", divider='rainbow')
     # 방 설정 입력값 검증 및 처리
     time_slots = {}
     time_groups = {}
@@ -1040,13 +1040,23 @@ if st.button("🚀 방배정 수행"):
                 if (formatted_date, slot) in request_cells and value == request_cells[(formatted_date, slot)]['이름']:
                     cell.comment = Comment(f"배정 요청: {request_cells[(formatted_date, slot)]['분류']}", "System")
     
+    # 엑셀 파일 생성 부분 수정
     stats_sheet = wb.create_sheet("Stats")
     stats_columns = stats_df.columns.tolist()
+
+    # 열 너비를 모두 10으로 설정
+    for col_idx in range(1, len(stats_columns) + 1):
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
+        stats_sheet.column_dimensions[col_letter].width = 10
+
+    # 헤더 생성 및 스타일 적용
     for col_idx, header in enumerate(stats_columns, 1):
         cell = stats_sheet.cell(1, col_idx, header)
         cell.font = Font(bold=True, name="맑은 고딕", size=9)
         cell.alignment = Alignment(horizontal='center', vertical='center')
         cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        
+        # 기본 색상 설정
         if header == '인원':
             cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
         elif header == '이른방 합계':
@@ -1057,14 +1067,19 @@ if st.button("🚀 방배정 수행"):
             cell.fill = PatternFill(start_color="FF00FF", end_color="FF00FF", fill_type="solid")
         elif header == '오후 당직 합계':
             cell.fill = PatternFill(start_color="FF00FF", end_color="FF00FF", fill_type="solid")
-    
+        
+        # 방 합계 열 헤더 색상을 #F2F2F2로 설정
+        if "번방 합계" in header:
+            cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
+    # 데이터 채우기
     for row_idx, row in enumerate(stats_df.values, 2):
         for col_idx, value in enumerate(row, 1):
             cell = stats_sheet.cell(row_idx, col_idx, value)
             cell.font = Font(name="맑은 고딕", size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-    
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
