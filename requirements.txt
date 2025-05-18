@@ -7,3 +7,4 @@ streamlit_extras==0.4.7
 xlsxwriter==3.2.0
 openpyxl==3.1.5
 streamlit-calendar
+google-api-python-client

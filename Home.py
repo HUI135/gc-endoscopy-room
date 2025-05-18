@@ -1,3 +1,4 @@
+from googleapiclient.discovery import build  # import도 필요!
 import streamlit as st
 import time
 import pandas as pd
@@ -22,7 +23,7 @@ contact_info_html = """
 
 col1, col2 = st.columns([1, 4])
 with col1:
-    st.image(image_url, width=150)
+    st.image(image_url, width=100)
 with col2:
     st.markdown(title_html, unsafe_allow_html=True)
     st.markdown(contact_info_html, unsafe_allow_html=True)
@@ -51,6 +52,13 @@ def get_gspread_client():
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
         st.session_state["gspread_client"] = gspread.authorize(credentials)
     return st.session_state["gspread_client"]
+
+def extract_spreadsheet_id(url):
+    try:
+        return url.split("/d/")[1].split("/")[0]
+    except Exception:
+        st.error("❌ 구글 시트 URL에서 ID 추출 실패. URL 형식을 확인하세요.")
+        return None
 
 # ✅ 구글 시트 열기 (캐싱)
 def get_sheet():

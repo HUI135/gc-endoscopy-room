@@ -23,6 +23,11 @@ if "login_success" not in st.session_state or not st.session_state["login_succes
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
     st.stop()
 
+# 관리자 권한 체크
+if not st.session_state.get("is_admin_authenticated", False):
+    st.warning("⚠️ 관리자 권한이 없습니다.")
+    st.stop()
+
 # 사이드바
 st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session_state['employee_id']).zfill(5)})")
 if st.sidebar.button("로그아웃"):
