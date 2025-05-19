@@ -6,13 +6,12 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 
+st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
+
 USER_PASSWORD = st.secrets["passwords"]["user"]
 ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
 ADMINISTRATOR1 = st.secrets["passwords"]["administrator1"]
 ADMINISTRATOR2 = st.secrets["passwords"]["administrator2"]
-
-# 페이지 설정
-st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪")
 
 # 상단 정보 표시
 image_url = 'http://www.snuh.org/upload/about/hi/15e707df55274846b596e0d9095d2b0e.png'
