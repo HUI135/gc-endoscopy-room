@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 
-st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪")
 
 USER_PASSWORD = st.secrets["passwords"]["user"]
 ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
@@ -22,7 +22,7 @@ contact_info_html = """
 
 col1, col2 = st.columns([1, 4])
 with col1:
-    st.image(image_url, width=100)
+    st.image(image_url, width=130)
 with col2:
     st.markdown(title_html, unsafe_allow_html=True)
     st.markdown(contact_info_html, unsafe_allow_html=True)
@@ -39,8 +39,8 @@ if "gspread_client" not in st.session_state:
     st.session_state["gspread_client"] = None
 if "sheet" not in st.session_state:
     st.session_state["sheet"] = None
-if "mapping_df" not in st.session_state:
-    st.session_state["mapping_df"] = None
+if "df_map" not in st.session_state:
+    st.session_state["df_map"] = None
 
 # ✅ 구글 시트 클라이언트 생성 함수
 def get_gspread_client():
@@ -69,29 +69,29 @@ def get_sheet():
 
 # ✅ 매핑 데이터 불러오기 (캐싱)
 def load_mapping_data():
-    if st.session_state["mapping_df"] is None:
+    if st.session_state["df_map"] is None:
         try:
             sheet = get_sheet()
             mapping_worksheet = sheet.worksheet("매핑")
             mapping_data = mapping_worksheet.get_all_records()
-            st.session_state["mapping_df"] = pd.DataFrame(mapping_data)
+            st.session_state["df_map"] = pd.DataFrame(mapping_data)
         except WorksheetNotFound:
             st.error("매핑 시트를 찾을 수 없습니다. 확인해 주세요.")
             return None
         except Exception as e:
             st.error(f"매핑 시트에서 데이터를 불러오는 데 문제가 발생했습니다: {e}")
             return None
-    return st.session_state["mapping_df"]
+    return st.session_state["df_map"]
 
 # 사번으로 이름 찾기
 def get_employee_name(employee_id):
-    mapping_df = load_mapping_data()
-    if mapping_df is None:
+    df_map = load_mapping_data()
+    if df_map is None:
         return None
     try:
         employee_id_int = int(employee_id)
         employee_id_str = str(employee_id_int).zfill(5)
-        employee_row = mapping_df[mapping_df["사번"] == employee_id_int]
+        employee_row = df_map[df_map["사번"] == employee_id_int]
         if not employee_row.empty:
             return employee_row.iloc[0]["이름"]
         else:

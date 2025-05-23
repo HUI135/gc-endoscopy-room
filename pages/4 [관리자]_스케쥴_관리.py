@@ -12,6 +12,7 @@ import time
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import uuid
 
+
 # 로그인 및 사번 체크
 if "login_success" not in st.session_state or not st.session_state["login_success"]:
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
@@ -199,7 +200,7 @@ if st.session_state.get("is_admin_authenticated", False):
     if not df_map.empty:
         df_map["사번"] = df_map["사번"].astype(str).str.zfill(5)
 
-    st.dataframe(df_map.reset_index(drop=True), height=200, use_container_width=True)
+    st.dataframe(df_map.reset_index(drop=True), height=200, width=500, use_container_width=True)
 
     # 고유 트랜잭션 ID로 중복 추가 방지
     if "add_transaction_id" not in st.session_state:
@@ -354,7 +355,7 @@ if st.session_state.get("is_admin_authenticated", False):
         st.warning(f"⚠️ 아직까지 {month_str}에 작성된 요청사항이 없습니다.")
 
     요청분류 = ["휴가", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
-    st.dataframe(df_request.reset_index(drop=True), height=200, use_container_width=True)
+    st.dataframe(df_request.reset_index(drop=True), use_container_width=True, height=300)
 
     # 요청사항 추가 섹션
     st.write(" ")

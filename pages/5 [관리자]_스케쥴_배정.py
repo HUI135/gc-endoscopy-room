@@ -277,19 +277,19 @@ if st.session_state.get("is_admin_authenticated", False):
     # 근무 테이블
     st.write(" ")
     st.markdown("**✅ 근무 테이블**")
-    st.dataframe(df_shift)
+    st.dataframe(df_shift, use_container_width=True)
 
     # 보충 테이블 (중복된 df_master 표시 제거, df_supplement 표시)
     st.markdown("**☑️ 보충 테이블**")
-    st.dataframe(df_supplement)
+    st.dataframe(df_supplement, use_container_width=True)
 
     # 요청사항 테이블
     st.markdown("**🙋‍♂️ 요청사항 테이블**")
-    st.dataframe(df_request)
+    st.dataframe(df_request, use_container_width=True)
 
     # 누적 테이블
     st.markdown("**➕ 누적 테이블**")
-    st.dataframe(df_cumulative)
+    st.dataframe(df_cumulative, use_container_width=True)
 
     # 다운로드 버튼 추가
     excel_data = excel_download(
