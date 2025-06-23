@@ -261,7 +261,7 @@ if st.button("🔄 새로고침 (R)"):
 
 # 근무자 명단
 st.subheader("📋 근무자 명단")
-st.dataframe(st.session_state["df_schedule_md"])
+st.dataframe(st.session_state["df_schedule_md"], use_container_width=True)
 
 # 방 설정 UI
 st.divider()

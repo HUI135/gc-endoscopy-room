@@ -11,6 +11,8 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 
+st.set_page_config(page_title="마스터 수정", layout="wide", page_icon="📅")
+
 # 로그인 체크
 if not st.session_state.get("login_success", False):
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
