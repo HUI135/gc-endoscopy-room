@@ -10,6 +10,9 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
+import menu
+
+menu.menu()
 
 # 상수 정의
 MONTH_STR = "2025년 04월"
@@ -249,17 +252,6 @@ def main():
     if "login_success" not in st.session_state or not st.session_state["login_success"]:
         st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
         st.stop()
-    
-    if not st.session_state.get("is_admin_authenticated", False):
-        st.warning("⚠️ 관리자 권한이 없습니다.")
-        st.stop()
-    
-    # 사이드바
-    st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session_state['employee_id']).zfill(5)})")
-    if st.sidebar.button("로그아웃"):
-        st.session_state.clear()
-        st.success("로그아웃되었습니다.")
-        st.rerun()
     
     # 새로고침 버튼
     if st.button("🔄 새로고침 (R)"):

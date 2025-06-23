@@ -7,14 +7,14 @@ from datetime import datetime, date
 import re
 import uuid
 from zoneinfo import ZoneInfo
+import menu
+
+menu.menu()
 
 # --- 상수 정의 ---
 MONTH_STR = "2025년 04월"
 YEAR_STR = MONTH_STR.split('년')[0] # "2025"
 REQUEST_SHEET_NAME = f"{MONTH_STR} 방 변경요청"
-
-# set_page_config()를 스크립트 최상단으로 이동
-st.set_page_config(page_title="(선택) 방 변경 요청", layout="wide", page_icon="💡")
 
 # --- 세션 상태 초기화 (이 페이지에서는 사용하지 않지만, 다른 페이지와의 호환성을 위해 유지) ---
 if "change_requests" not in st.session_state:
@@ -200,13 +200,6 @@ def main():
     )
 
     st.header(f"📅 {user_name} 님의 {MONTH_STR} 방 변경 요청", divider='rainbow')
-    
-    st.sidebar.write(f"현재 사용자: {user_name} ({str(employee_id).zfill(5)})")
-    if st.sidebar.button("로그아웃"):
-        st.session_state.clear()
-        st.success("로그아웃되었습니다. 🏠 Home 페이지로 돌아가 주세요.")
-        time.sleep(2)
-        st.rerun()
 
     df_room = load_room_data(MONTH_STR)
     if df_room.empty:

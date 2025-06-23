@@ -6,6 +6,9 @@ import time
 from datetime import datetime, date
 import uuid
 from zoneinfo import ZoneInfo # (수정) 한국 시간(KST)을 적용하기 위해 추가
+import menu
+
+menu.menu()
 
 # --- 상수 정의 ---
 MONTH_STR = "2025년 04월"
@@ -13,9 +16,6 @@ YEAR_STR = MONTH_STR.split('년')[0] # "2025"
 AM_COLS = [str(i) for i in range(1, 13)] + ['온콜']
 PM_COLS = [f'오후{i}' for i in range(1, 6)]
 REQUEST_SHEET_NAME = f"{MONTH_STR} 스케쥴 교환요청"
-
-# set_page_config()를 스크립트 최상단으로 이동
-st.set_page_config(page_title="(선택) 스케쥴 변경 요청", layout="wide", page_icon="💡")
 
 # --- 세션 상태 초기화 ---
 if "pending_swap" not in st.session_state:
@@ -178,13 +178,6 @@ def main():
 
     st.header(f"📅 {user_name} 님의 {MONTH_STR} 스케쥴 변경 요청", divider='rainbow')
     
-    st.sidebar.write(f"현재 사용자: {user_name} ({str(employee_id).zfill(5)})")
-    if st.sidebar.button("로그아웃"):
-        st.session_state.clear()
-        st.success("로그아웃되었습니다. 🏠 Home 페이지로 돌아가 주세요.")
-        time.sleep(2)
-        st.rerun()
-
     df_schedule = load_schedule_data(MONTH_STR)
 
     if df_schedule.empty:

@@ -11,6 +11,9 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
+import menu
+
+menu.menu()
 
 # 세션 상태 초기화
 if "data_loaded" not in st.session_state:
@@ -226,18 +229,6 @@ next_month_end = date(2025, 4, 30)
 if "login_success" not in st.session_state or not st.session_state["login_success"]:
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
     st.stop()
-
-# 관리자 권한 체크
-if not st.session_state.get("is_admin_authenticated", False):
-    st.warning("⚠️ 관리자 권한이 없습니다.")
-    st.stop()
-
-# 사이드바
-st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session_state['employee_id']).zfill(5)})")
-if st.sidebar.button("로그아웃"):
-    st.session_state.clear()
-    st.success("로그아웃되었습니다.")
-    st.rerun()
 
 # 데이터 로드 호출
 df_schedule, df_room_request, worksheet_room_request = load_data_page6(month_str)

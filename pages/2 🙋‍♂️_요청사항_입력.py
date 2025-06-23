@@ -9,9 +9,9 @@ from streamlit_calendar import calendar as st_calendar
 from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
+import menu
 
-# set_page_config()를 스크립트 최상단으로 이동
-st.set_page_config(page_title="요청사항 입력", layout="wide", page_icon="🙋‍♂️")
+menu.menu()
 
 # 전역 변수로 gspread 클라이언트 초기화
 @st.cache_resource
@@ -42,15 +42,6 @@ def load_request_data_page2(_gc, url, month_str):
 if not st.session_state.get("login_success", False):
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
     st.stop()
-
-# 사이드바
-if st.session_state.get("login_success", False):
-    st.sidebar.write(f"현재 사용자: {st.session_state['name']} ({str(st.session_state['employee_id']).zfill(5)})")
-    if st.sidebar.button("로그아웃"):
-        st.session_state.clear()
-        st.success("로그아웃되었습니다. 🏠 Home 페이지로 돌아가 주세요.")
-        time.sleep(2)
-        st.rerun()
 
 # 기본 설정
 gc = get_gspread_client()
@@ -119,17 +110,27 @@ st.markdown(f"<h6 style='font-weight:bold;'>🟢 요청사항 입력</h6>", unsa
 요청분류 = ["휴가", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
 날짜선택방식 = ["일자 선택", "기간 선택", "주/요일 선택"]
 
-# --- [수정] 4개의 열로 변경하여 '추가' 버튼을 같은 행에 배치 ---
 col1, col2, col3, col4 = st.columns([2, 2, 4, 1])
+
 with col1:
     분류 = st.selectbox("요청 분류", 요청분류, key="category_select")
+
 with col2:
-    방식 = st.selectbox("날짜 선택 방식", 날짜선택방식, key="method_select") if 분류 != "요청 없음" else ""
+    # [수정] 위젯을 항상 렌더링하되, 비활성화(disabled)하여 상태 관리 오류를 방지합니다.
+    is_disabled = (분류 == "요청 없음")
+    방식 = st.selectbox(
+        "날짜 선택 방식",
+        날짜선택방식,
+        key="method_select",
+        disabled=is_disabled  # '요청 없음'일 때 비활성화
+    )
+    if is_disabled:
+        방식 = ""  # 비활성화 시에는 로직 처리를 위해 값을 비워줍니다.
 
 # 날짜 입력 로직
 날짜정보 = ""
 with col3:
-    if 분류 != "요청 없음":
+    if not is_disabled: # 비활성화가 아닐 때만 날짜 선택 위젯을 보여줍니다.
         if 방식 == "일자 선택":
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
             def format_date(date_obj):
@@ -143,23 +144,22 @@ with col3:
         elif 방식 == "주/요일 선택":
             선택주차 = st.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
             선택요일 = st.multiselect("요일 선택", ["월", "화", "수", "목", "금"], key="day_select")
-            주차_index, 요일_index = {"첫째주": 0, "둘째주": 1, "셋째주": 2, "넷째주": 3, "다섯째주": 4}, {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
-            날짜목록 = []
-            first_day = next_month_start
-            first_sunday_offset = (6 - first_day.weekday()) % 7
-            for i in range(last_day):
-                current_date = first_day + datetime.timedelta(days=i)
-                if current_date.month != next_month.month: continue
-                week_of_month = (current_date.day + first_sunday_offset - 1) // 7
-                if current_date.weekday() in 요일_index.values() and any(주차 == "매주" or 주차_index.get(주차) == week_of_month for 주차 in 선택주차):
-                    if current_date.weekday() in [요일_index[요일] for 요일 in 선택요일]:
-                        날짜목록.append(current_date.strftime("%Y-%m-%d"))
-            날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
+            if 선택주차 and 선택요일:
+                주차_index, 요일_index = {"첫째주": 0, "둘째주": 1, "셋째주": 2, "넷째주": 3, "다섯째주": 4}, {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
+                날짜목록 = []
+                first_day = next_month_start
+                first_sunday_offset = (6 - first_day.weekday()) % 7
+                for i in range(last_day):
+                    current_date = first_day + datetime.timedelta(days=i)
+                    if current_date.month != next_month.month: continue
+                    week_of_month = (current_date.day + first_sunday_offset - 1) // 7
+                    if current_date.weekday() in 요일_index.values() and any(주차 == "매주" or 주차_index.get(주차) == week_of_month for 주차 in 선택주차):
+                        if current_date.weekday() in [요일_index[요일] for 요일 in 선택요일]:
+                            날짜목록.append(current_date.strftime("%Y-%m-%d"))
+                날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
 
 with col4:
-    # --- [수정] 버튼 정렬을 위한 공백 추가 ---
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-    # 저장 로직
     if st.button("📅 추가", use_container_width=True):
         sheet = gc.open_by_url(url)
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
