@@ -11,6 +11,8 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
 
+st.set_page_config(page_title="마스터 수정", page_icon="🙋‍♂️", layout="wide")
+
 menu.menu()
 
 # 전역 변수로 gspread 클라이언트 초기화

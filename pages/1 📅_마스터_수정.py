@@ -12,11 +12,14 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
 
+st.set_page_config(page_title="마스터 수정", page_icon="📅", layout="wide")
+
 menu.menu()
 
 # 로그인 체크
 if not st.session_state.get("login_success", False):
     st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
+    
     st.stop()
 
 name = st.session_state.get("name", None)

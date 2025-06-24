@@ -17,9 +17,11 @@ from openpyxl.comments import Comment
 from datetime import timedelta
 import menu
 
+st.set_page_config(page_title="스케줄 배정", page_icon="🗓️", layout="wide")
+
 menu.menu()
 
-random.seed(42)
+# random.seed(42)
 
 # 🔒 관리자 페이지 체크
 if "login_success" not in st.session_state or not st.session_state["login_success"]:

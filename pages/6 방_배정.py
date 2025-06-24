@@ -13,6 +13,8 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 import menu
 
+st.set_page_config(page_title="방 배정", page_icon="🚪", layout="wide")
+
 menu.menu()
 
 # 세션 상태 초기화

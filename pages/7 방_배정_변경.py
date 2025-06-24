@@ -12,6 +12,8 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 import menu
 
+st.set_page_config(page_title="방 배정 변경", page_icon="🔄", layout="wide")
+
 menu.menu()
 
 # --- 상수 정의 ---

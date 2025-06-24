@@ -13,6 +13,8 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import uuid
 import menu
 
+st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
+
 menu.menu()
 
 # 로그인 및 사번 체크

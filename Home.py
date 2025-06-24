@@ -6,7 +6,7 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu # 1단계에서 만든 menu.py를 import
 
-st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪")
+st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
 
 # menu.py의 menu() 함수를 호출하여 사이드바를 생성합니다.
 menu.menu()

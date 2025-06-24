@@ -9,6 +9,8 @@ import uuid
 from zoneinfo import ZoneInfo
 import menu
 
+st.set_page_config(page_title="마스터 수정", page_icon="🔔", layout="wide")
+
 menu.menu()
 
 # --- 상수 정의 ---

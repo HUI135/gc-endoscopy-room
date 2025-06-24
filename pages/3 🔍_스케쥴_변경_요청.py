@@ -8,6 +8,8 @@ import uuid
 from zoneinfo import ZoneInfo # (수정) 한국 시간(KST)을 적용하기 위해 추가
 import menu
 
+st.set_page_config(page_title="마스터 수정", page_icon="🔍", layout="wide")
+
 menu.menu()
 
 # --- 상수 정의 ---
