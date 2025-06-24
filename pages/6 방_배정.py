@@ -28,6 +28,8 @@ if "room_settings" not in st.session_state:
         "1000_room_select": ['3', '9'],
         "1330_room_select": ['2', '3', '4', '9']
     }
+if "swapped_assignments" not in st.session_state:
+    st.session_state["swapped_assignments"] = set()
 
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
@@ -89,7 +91,7 @@ def load_data_page6_no_cache(month_str):
         worksheet_room_request = sheet.add_worksheet(f"{month_str} 방배정 요청", rows=100, cols=3)
         worksheet_room_request.append_row(["이름", "분류", "날짜정보"])
         df_room_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-    
+
     # 누적 시트 로드 - 첫 번째 열을 이름으로 처리
     try:
         worksheet_cumulative = sheet.worksheet(f"{month_str} 누적")
@@ -98,19 +100,30 @@ def load_data_page6_no_cache(month_str):
             st.warning(f"{month_str} 누적 시트가 비어 있습니다. 빈 DataFrame으로 초기화합니다.")
             df_cumulative = pd.DataFrame(columns=[f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
         else:
-            # 첫 번째 열 이름을 "이름"으로 변경
             df_cumulative.rename(columns={f"{month_str}": "이름"}, inplace=True)
     except:
         st.warning(f"{month_str} 누적 시트가 없습니다. 빈 DataFrame으로 초기화합니다.")
         df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-    
+
+    # [추가된 부분] 스케쥴 교환 요청 시트 불러오기
+    try:
+        worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케쥴 교환요청")
+        df_swap_requests = pd.DataFrame(worksheet_swap_requests.get_all_records())
+        st.session_state["df_swap_requests"] = df_swap_requests
+    except gspread.exceptions.WorksheetNotFound:
+        st.warning(f"'{month_str} 스케쥴 교환요청' 시트를 찾을 수 없습니다. 빈 테이블로 시작합니다.")
+        st.session_state["df_swap_requests"] = pd.DataFrame(columns=[
+            "RequestID", "Timestamp", "RequesterName", "RequesterID", "FromDateStr",
+            "ToPersonName", "ToDateStr", "ShiftType"
+        ])
+
     st.session_state["df_schedule"] = df_schedule
     st.session_state["df_room_request"] = df_room_request
     st.session_state["worksheet_room_request"] = worksheet_room_request
-    st.session_state["df_cumulative"] = df_cumulative  # 누적 데이터 저장
+    st.session_state["df_cumulative"] = df_cumulative
     st.session_state["data_loaded"] = True
     
-    # 정확히 3개 값만 반환
+    # 반환 값은 기존과 동일하게 유지
     result = (df_schedule, df_room_request, worksheet_room_request)
     return result
 
@@ -220,6 +233,59 @@ def create_df_schedule_md(df_schedule):
     df_schedule_md = df_schedule_md.drop(columns=['12', '오후5'], errors='ignore')
     return df_schedule_md
 
+# (기존 apply_schedule_swaps 함수 전체를 아래 코드로 교체)
+
+def apply_schedule_swaps(original_schedule_df, swap_requests_df):
+    """스케줄 교환 요청을 적용하고, 변경된 (날짜, 근무타입, 인원)을 기록합니다."""
+    
+    def parse_swap_date(date_str):
+        match = re.search(r'(\d+)월 (\d+)일', date_str)
+        return f"{int(match.group(1))}월 {int(match.group(2))}일" if match else None
+
+    df = original_schedule_df.copy()
+    applied_requests = 0
+
+    for _, row in swap_requests_df.iterrows():
+        from_date_str = parse_swap_date(row['FromDateStr'])
+        to_date_str = parse_swap_date(row['ToDateStr'])
+        shift_type = row['ShiftType'] # '오전' 또는 '오후'
+        requester = str(row['RequesterName']).strip()
+        to_person = str(row['ToPersonName']).strip()
+
+        if not all([from_date_str, to_date_str, shift_type, requester, to_person]):
+            st.warning(f"정보가 부족하여 교환 요청을 건너뜁니다: RequestID {row.get('RequestID', 'N/A')}")
+            continue
+
+        cols_to_search = [str(i) for i in range(1, 12)] if shift_type == '오전' else [f'오후{i}' for i in range(1, 5)]
+        from_row = df[df['날짜'] == from_date_str]
+        to_row = df[df['날짜'] == to_date_str]
+
+        if from_row.empty or to_row.empty:
+            continue
+
+        from_row_idx, to_row_idx = from_row.index[0], to_row.index[0]
+        from_col = next((col for col in cols_to_search if df.at[from_row_idx, col] == requester), None)
+        to_col = next((col for col in cols_to_search if df.at[to_row_idx, col] == to_person), None)
+        
+        if from_col and to_col:
+            df.at[from_row_idx, from_col] = to_person
+            df.at[to_row_idx, to_col] = requester
+            
+            # [수정] (날짜, 근무타입, 인원) 쌍으로 정확히 기록
+            st.session_state["swapped_assignments"].add((from_date_str, shift_type, to_person))
+            st.session_state["swapped_assignments"].add((to_date_str, shift_type, requester))
+
+            applied_requests += 1
+        else:
+            st.error(f"적용 실패: {from_date_str}의 '{requester}' 또는 {to_date_str}의 '{to_person}'을 스케줄에서 찾을 수 없습니다.")
+
+    if applied_requests > 0:
+        st.success(f"총 {applied_requests}건의 스케줄 교환이 성공적으로 반영되었습니다.")
+    else:
+        st.info("새롭게 적용할 스케줄 교환이 없습니다.")
+        
+    return df
+
 # 메인
 month_str = "2025년 04월"
 next_month_start = date(2025, 4, 1)
@@ -250,154 +316,208 @@ if st.button("🔄 새로고침 (R)"):
     st.success("데이터가 새로고침되었습니다.")
     st.rerun()
 
-# 근무자 명단
-st.subheader("📋 근무자 명단")
-st.dataframe(st.session_state["df_schedule_md"], use_container_width=True)
+# 근무자 명단 수정
+st.subheader("📋 근무자 명단 수정")
+st.write(" ")
+st.markdown("##### 📋 스케쥴 변경 요청 목록")
+st.write("아래 변경 요청 목록을 확인하고, 스케쥴을 수정 후 저장하세요.")
+df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
+if not df_swaps_raw.empty:
+    cols_to_display = {'Timestamp': '요청일시', 'RequesterName': '요청자', 'FromDateStr': '요청자 기존 근무', 'ToPersonName': '상대방', 'ToDateStr': '상대방 기존 근무'}
+    existing_cols = [col for col in cols_to_display.keys() if col in df_swaps_raw.columns]
+    df_swaps_display = df_swaps_raw[existing_cols].rename(columns=cols_to_display)
+    st.dataframe(df_swaps_display, use_container_width=True, hide_index=True)
+else:
+    st.info("표시할 교환 요청 데이터가 없습니다.")
+
+st.markdown("##### ✍️ 스케쥴 수정")
+st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
+if st.button("🔄 요청사항 일괄 적용"):
+    df_swaps = st.session_state.get("df_swap_requests", pd.DataFrame())
+    if not df_swaps.empty:
+        modified_schedule = apply_schedule_swaps(st.session_state["df_schedule"], df_swaps)
+        st.session_state.update({"df_schedule": modified_schedule, "df_schedule_md": create_df_schedule_md(modified_schedule)})
+        st.info("교환 요청이 적용되었습니다. 아래 표에서 결과를 확인하고 직접 수정할 수 있습니다.")
+        time.sleep(1); st.rerun()
+    else:
+        st.info("처리할 교환 요청이 없습니다.")
+edited_df_md = st.data_editor(st.session_state["df_schedule_md"], use_container_width=True, key="schedule_editor", disabled=['날짜', '요일'])
+st.write(" ")
+if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary", use_container_width=True):
+    df_schedule_to_save = st.session_state["df_schedule"].copy()
+    if not st.session_state["df_schedule_md"].equals(edited_df_md):
+        st.info("수작업 변경사항을 최종본에 반영합니다...")
+        for md_idx, edited_row in edited_df_md.iterrows():
+            original_row = st.session_state["df_schedule_md"].loc[md_idx]
+            if not original_row.equals(edited_row):
+                date_str = edited_row['날짜']
+                for col_name, new_value in edited_row.items():
+                    if original_row[col_name] != new_value and new_value and isinstance(new_value, str) and new_value.strip():
+                        # [핵심 수정] 수작업 시에도 근무타입을 판별하여 (날짜, 근무타입, 이름)의 3개짜리 데이터로 기록
+                        shift_type = '오후' if '오후' in col_name or '13:30' in col_name else '오전'
+                        st.session_state["swapped_assignments"].add((date_str, shift_type, new_value))
+                target_row_indices = df_schedule_to_save[df_schedule_to_save['날짜'] == date_str].index
+                if not target_row_indices.empty:
+                    target_idx = target_row_indices[0]
+                    for col_name in edited_df_md.columns:
+                        if col_name in df_schedule_to_save.columns:
+                            df_schedule_to_save.loc[target_idx, col_name] = edited_row[col_name]
+    try:
+        st.info("최종 스케줄을 Google Sheets에 저장합니다...")
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
+        schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
+        update_sheet_with_retry(worksheet_schedule, schedule_data)
+        st.session_state.update({"df_schedule": df_schedule_to_save, "df_schedule_md": create_df_schedule_md(df_schedule_to_save)})
+        st.success("✅ 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다."); time.sleep(1); st.rerun()
+    except Exception as e:
+        st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+
+st.write("---")
+st.caption("📝 현재까지 기록된 변경사항 로그 (날짜, 근무타입, 이름)")
+change_log_set = st.session_state.get("swapped_assignments", set())
+if change_log_set:
+    # [핵심 수정] 이제 모든 데이터가 3개짜리이므로 에러 없이 표 생성 가능
+    log_df = pd.DataFrame(list(change_log_set), columns=['날짜', '근무타입', '해당 날짜에 변경된 인원'])
+    log_df = log_df.sort_values(by=['날짜', '근무타입', '해당 날짜에 변경된 인원']).reset_index(drop=True)
+    st.dataframe(log_df, use_container_width=True, hide_index=True)
+else:
+    st.info("기록된 변경사항이 없습니다.")
 
 # 방 설정 UI
 st.divider()
 st.subheader("📋 방 설정")
+st.write("시간대별 탭을 클릭하여 운영할 방의 개수와 번호를 설정하세요.")
 room_options = [str(i) for i in range(1, 13)]
 
-st.write(" ")
-st.markdown("**🔷 8:30 시간대**")
-col1, col2, col3 = st.columns([1, 2, 1])
-with col1:
-    num_830 = st.number_input("방 개수", min_value=0, value=4, key="830_rooms")
-with col2:
-    if len(st.session_state["room_settings"]["830_room_select"]) > num_830:
-        st.session_state["room_settings"]["830_room_select"] = st.session_state["room_settings"]["830_room_select"][:num_830]
-    rooms_830 = st.multiselect(
-        "방 번호",
-        room_options,
-        default=st.session_state["room_settings"]["830_room_select"],
-        max_selections=num_830,
-        key="830_room_select"
-    )
-    if len(rooms_830) < num_830:
-        st.warning(f"방 개수({num_830})에 맞게 방 번호를 {num_830}개 선택해주세요. 현재 {len(rooms_830)}개 선택됨.")
-    st.session_state["room_settings"]["830_room_select"] = rooms_830
-with col3:
-    duty_830_options = rooms_830 if rooms_830 else room_options
-    duty_830 = st.selectbox("당직방", duty_830_options, index=0, key="830_duty")
-    st.session_state["room_settings"]["830_duty"] = duty_830
-
-st.markdown("**🔷 9:00 시간대**")
-col1, col2 = st.columns([1, 3])
-with col1:
-    num_900 = st.number_input("방 개수", min_value=0, value=3, key="900_rooms")
-with col2:
-    if len(st.session_state["room_settings"]["900_room_select"]) > num_900:
-        st.session_state["room_settings"]["900_room_select"] = st.session_state["room_settings"]["900_room_select"][:num_900]
-    rooms_900 = st.multiselect(
-        "방 번호",
-        room_options,
-        default=st.session_state["room_settings"]["900_room_select"],
-        max_selections=num_900,
-        key="900_room_select"
-    )
-    if len(rooms_900) < num_900:
-        st.warning(f"방 개수({num_900})에 맞게 방 번호를 {num_900}개 선택해주세요. 현재 {len(rooms_900)}개 선택됨.")
-    st.session_state["room_settings"]["900_room_select"] = rooms_900
-
-st.markdown("**🔷 9:30 시간대**")
-col1, col2 = st.columns([1, 3])
-with col1:
-    num_930 = st.number_input("방 개수", min_value=0, value=3, key="930_rooms")
-with col2:
-    if len(st.session_state["room_settings"]["930_room_select"]) > num_930:
-        st.session_state["room_settings"]["930_room_select"] = st.session_state["room_settings"]["930_room_select"][:num_930]
-    rooms_930 = st.multiselect(
-        "방 번호",
-        room_options,
-        default=st.session_state["room_settings"]["930_room_select"],
-        max_selections=num_930,
-        key="930_room_select"
-    )
-    if len(rooms_930) < num_930:
-        st.warning(f"방 개수({num_930})에 맞게 방 번호를 {num_930}개 선택해주세요. 현재 {len(rooms_930)}개 선택됨.")
-    st.session_state["room_settings"]["930_room_select"] = rooms_930
-
-st.markdown("**🔷 10:00 시간대**")
-col1, col2 = st.columns([1, 3])
-with col1:
-    num_1000 = st.number_input("방 개수", min_value=0, value=2, key="1000_rooms")
-with col2:
-    if len(st.session_state["room_settings"]["1000_room_select"]) > num_1000:
-        st.session_state["room_settings"]["1000_room_select"] = st.session_state["room_settings"]["1000_room_select"][:num_1000]
-    rooms_1000 = st.multiselect(
-        "방 번호",
-        room_options,
-        default=st.session_state["room_settings"]["1000_room_select"],
-        max_selections=num_1000,
-        key="1000_room_select"
-    )
-    if len(rooms_1000) < num_1000:
-        st.warning(f"방 개수({num_1000})에 맞게 방 번호를 {num_1000}개 선택해주세요. 현재 {len(rooms_1000)}개 선택됨.")
-    st.session_state["room_settings"]["1000_room_select"] = rooms_1000
-
-st.markdown("**🔶 13:30 시간대**")
-col1, col2 = st.columns([3, 1])
-with col1:
-    num_1330 = 4
-    if len(st.session_state["room_settings"]["1330_room_select"]) > num_1330:
-        st.session_state["room_settings"]["1330_room_select"] = st.session_state["room_settings"]["1330_room_select"][:num_1330]
-    rooms_1330 = st.multiselect(
-        "방 번호",
-        room_options,
-        default=st.session_state["room_settings"]["1330_room_select"],
-        max_selections=num_1330,
-        key="1330_room_select"
-    )
-    if len(rooms_1330) < num_1330:
-        st.warning(f"방 개수({num_1330})에 맞게 방 번호를 {num_1330}개 선택해주세요. 현재 {len(rooms_1330)}개 선택됨.")
-    st.session_state["room_settings"]["1330_room_select"] = rooms_1330
-with col2:
-    duty_1330_options = rooms_1330 if rooms_1330 else room_options
-    duty_1330 = st.selectbox("당직방", duty_1330_options, index=0, key="1330_duty")
-    st.session_state["room_settings"]["1330_duty"] = duty_1330
-
-# 중복 방 번호 검증
-all_selected_rooms = (
-    st.session_state["room_settings"]["830_room_select"] +
-    st.session_state["room_settings"]["900_room_select"] +
-    st.session_state["room_settings"]["930_room_select"] +
-    st.session_state["room_settings"]["1000_room_select"] +
-    st.session_state["room_settings"]["1330_room_select"]
-)
+tab830, tab900, tab930, tab1000, tab1330 = st.tabs([
+    "🕗 08:30", "🕘 09:00", "🕤 09:30", "🕙 10:00", "🕜 13:30 (오후)"
+])
+with tab830:
+    # ... (기존 방 설정 UI 코드는 모두 동일) ...
+    col1, col2 = st.columns([1, 2.5])
+    with col1:
+        st.markdown("###### **방 개수**")
+        num_830 = st.number_input("830_rooms_count", min_value=0, max_value=12, value=4, key="830_rooms", label_visibility="collapsed")
+        st.markdown("###### **오전 당직방**")
+        duty_830_options = st.session_state["room_settings"]["830_room_select"]
+        try:
+            duty_index_830 = duty_830_options.index(st.session_state["room_settings"].get("830_duty"))
+        except ValueError:
+            duty_index_830 = 0
+        duty_830 = st.selectbox("830_duty_room", duty_830_options, index=duty_index_830, key="830_duty", label_visibility="collapsed", help="8:30 시간대의 당직 방을 선택합니다.")
+        st.session_state["room_settings"]["830_duty"] = duty_830
+    with col2:
+        st.markdown("###### **방 번호 선택**")
+        if len(st.session_state["room_settings"]["830_room_select"]) > num_830:
+            st.session_state["room_settings"]["830_room_select"] = st.session_state["room_settings"]["830_room_select"][:num_830]
+        rooms_830 = st.multiselect("830_room_select_numbers", room_options, default=st.session_state["room_settings"]["830_room_select"], max_selections=num_830, key="830_room_select", label_visibility="collapsed")
+        if len(rooms_830) < num_830:
+            st.warning(f"방 번호를 {num_830}개 선택해주세요.")
+        st.session_state["room_settings"]["830_room_select"] = rooms_830
+# ... (다른 시간대 탭 UI도 모두 동일하게 유지) ...
+with tab900:
+    col1, col2 = st.columns([1, 2.5])
+    with col1:
+        st.markdown("###### **방 개수**")
+        num_900 = st.number_input("900_rooms_count", min_value=0, max_value=12, value=3, key="900_rooms", label_visibility="collapsed")
+    with col2:
+        st.markdown("###### **방 번호 선택**")
+        if len(st.session_state["room_settings"]["900_room_select"]) > num_900:
+            st.session_state["room_settings"]["900_room_select"] = st.session_state["room_settings"]["900_room_select"][:num_900]
+        rooms_900 = st.multiselect("900_room_select_numbers", room_options, default=st.session_state["room_settings"]["900_room_select"], max_selections=num_900, key="900_room_select", label_visibility="collapsed")
+        if len(rooms_900) < num_900:
+            st.warning(f"방 번호를 {num_900}개 선택해주세요.")
+        st.session_state["room_settings"]["900_room_select"] = rooms_900
+with tab930:
+    col1, col2 = st.columns([1, 2.5])
+    with col1:
+        st.markdown("###### **방 개수**")
+        num_930 = st.number_input("930_rooms_count", min_value=0, max_value=12, value=3, key="930_rooms", label_visibility="collapsed")
+    with col2:
+        st.markdown("###### **방 번호 선택**")
+        if len(st.session_state["room_settings"]["930_room_select"]) > num_930:
+            st.session_state["room_settings"]["930_room_select"] = st.session_state["room_settings"]["930_room_select"][:num_930]
+        rooms_930 = st.multiselect("930_room_select_numbers", room_options, default=st.session_state["room_settings"]["930_room_select"], max_selections=num_930, key="930_room_select", label_visibility="collapsed")
+        if len(rooms_930) < num_930:
+            st.warning(f"방 번호를 {num_930}개 선택해주세요.")
+        st.session_state["room_settings"]["930_room_select"] = rooms_930
+with tab1000:
+    col1, col2 = st.columns([1, 2.5])
+    with col1:
+        st.markdown("###### **방 개수**")
+        num_1000 = st.number_input("1000_rooms_count", min_value=0, max_value=12, value=2, key="1000_rooms", label_visibility="collapsed")
+    with col2:
+        st.markdown("###### **방 번호 선택**")
+        if len(st.session_state["room_settings"]["1000_room_select"]) > num_1000:
+            st.session_state["room_settings"]["1000_room_select"] = st.session_state["room_settings"]["1000_room_select"][:num_1000]
+        rooms_1000 = st.multiselect("1000_room_select_numbers", room_options, default=st.session_state["room_settings"]["1000_room_select"], max_selections=num_1000, key="1000_room_select", label_visibility="collapsed")
+        if len(rooms_1000) < num_1000:
+            st.warning(f"방 번호를 {num_1000}개 선택해주세요.")
+        st.session_state["room_settings"]["1000_room_select"] = rooms_1000
+with tab1330:
+    col1, col2 = st.columns([1, 2.5])
+    with col1:
+        st.markdown("###### **방 개수**")
+        st.info("4개 고정")
+        num_1330 = 4
+        st.markdown("###### **오후 당직방**")
+        duty_1330_options = st.session_state["room_settings"]["1330_room_select"]
+        try:
+            duty_index_1330 = duty_1330_options.index(st.session_state["room_settings"].get("1330_duty"))
+        except ValueError:
+            duty_index_1330 = 0
+        duty_1330 = st.selectbox("1330_duty_room", duty_1330_options, index=duty_index_1330, key="1330_duty", label_visibility="collapsed", help="13:30 시간대의 당직 방을 선택합니다.")
+        st.session_state["room_settings"]["1330_duty"] = duty_1330
+    with col2:
+        st.markdown("###### **방 번호 선택**")
+        if len(st.session_state["room_settings"]["1330_room_select"]) > num_1330:
+            st.session_state["room_settings"]["1330_room_select"] = st.session_state["room_settings"]["1330_room_select"][:num_1330]
+        rooms_1330 = st.multiselect("1330_room_select_numbers", room_options, default=st.session_state["room_settings"]["1330_room_select"], max_selections=num_1330, key="1330_room_select", label_visibility="collapsed")
+        if len(rooms_1330) < num_1330:
+            st.warning(f"방 번호를 {num_1330}개 선택해주세요.")
+        st.session_state["room_settings"]["1330_room_select"] = rooms_1330
+all_selected_rooms = (st.session_state["room_settings"]["830_room_select"] + st.session_state["room_settings"]["900_room_select"] + st.session_state["room_settings"]["930_room_select"] + st.session_state["room_settings"]["1000_room_select"] + st.session_state["room_settings"]["1330_room_select"])
 
 # 배정 요청 입력 UI
 st.divider()
 st.subheader("📋 배정 요청 관리")
+# ... (배정 요청 UI 코드는 모두 동일하게 유지) ...
 st.write("- 모든 인원의 배정 요청(고정 및 우선)을 추가 및 수정할 수 있습니다.")
-
-요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방",
-           "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "오후 당직 제외"]
-
+요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방", "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "오후 당직 제외"]
 st.write(" ")
 st.markdown("**🟢 방 배정 요청 추가**")
-col1, col2, col3 = st.columns([2, 2, 3])
+col1, col2, col3, col_button_add = st.columns([2.5, 2.5, 3.5, 1])
 with col1:
     names = sorted([str(name).strip() for name in df_schedule.iloc[:, 2:].stack().dropna().unique() if str(name).strip()])
-    name = st.selectbox("근무자", names, key="request_employee_select")
+    name = st.selectbox("근무자", names, key="request_employee_select", index=None, placeholder="근무자 선택")
 with col2:
     categories = st.multiselect("요청 분류", 요청분류, key="request_category_select")
 with col3:
-    st.cache_data.clear()
-    available_dates = get_user_available_dates(name, df_schedule, next_month_start, next_month_end)
-    date_options = [display_str for display_str, _ in available_dates]
-    dates = st.multiselect("요청 일자", date_options, key="request_date_select")
-    selected_save_dates = [save_str for display_str, save_str in available_dates if display_str in dates]
-
-if st.button("📅 추가", key="request_add_button"):
-    if not categories or not selected_save_dates:
+    selected_save_dates = []
+    if name:
+        st.cache_data.clear()
+        available_dates = get_user_available_dates(name, df_schedule, next_month_start, next_month_end)
+        date_options = [display_str for display_str, _ in available_dates]
+        dates = st.multiselect("요청 일자", date_options, key="request_date_select")
+        selected_save_dates = [save_str for display_str, save_str in available_dates if display_str in dates]
+    else:
+        dates = st.multiselect("요청 일자", [], key="request_date_select", disabled=True)
+with col_button_add:
+    st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
+    add_button_clicked = st.button("📅 추가", key="request_add_button")
+if add_button_clicked:
+    if not name:
+        st.error("근무자를 먼저 선택해주세요.")
+    elif not categories or not selected_save_dates:
         st.error("요청 분류와 날짜를 선택해주세요.")
     else:
         new_rows = []
         for date in selected_save_dates:
             for cat in categories:
                 new_rows.append({"이름": name, "분류": cat, "날짜정보": date})
-        df_room_request = pd.concat([df_room_request, pd.DataFrame(new_rows)], ignore_index=True)
+        df_room_request = pd.concat([st.session_state["df_room_request"], pd.DataFrame(new_rows)], ignore_index=True)
         st.session_state["df_room_request"] = df_room_request
         try:
             update_sheet_with_retry(st.session_state["worksheet_room_request"], [df_room_request.columns.tolist()] + df_room_request.values.tolist())
@@ -405,52 +525,54 @@ if st.button("📅 추가", key="request_add_button"):
             st.success("방 배정 요청 저장 완료!")
         except Exception as e:
             st.error(f"Google Sheets 업데이트 실패: {str(e)}")
-            st.write("로컬 df_room_request는 업데이트되었습니다. 아래에서 확인 후 Google Sheets 동기화를 다시 시도해주세요.")
-            st.dataframe(st.session_state["df_room_request"])
-
-# 방 배정 요청 삭제 섹션
 st.write(" ")
 st.markdown("**🔴 방 배정 요청 삭제**")
-if not df_room_request.empty:
-    col0, col1 = st.columns([1, 2])
+if not st.session_state["df_room_request"].empty:
+    col0, col1, col_button_del = st.columns([2.5, 4, 1])
     with col0:
-        selected_employee = st.selectbox("근무자 선택", df_room_request["이름"].unique(), key="delete_request_employee_select")
+        unique_names = st.session_state["df_room_request"]["이름"].unique()
+        selected_employee = st.selectbox("근무자 선택", unique_names, key="delete_request_employee_select", index=None, placeholder="근무자 선택")
     with col1:
-        df_request_filtered = df_room_request[df_room_request["이름"] == selected_employee]
-        if not df_request_filtered.empty:
-            options = [f"{row['분류']} - {row['날짜정보']}" for _, row in df_request_filtered.iterrows()]
-            selected_items = st.multiselect("삭제할 항목)", options, key="delete_request_select")
+        selected_items = []
+        if selected_employee:
+            df_request_filtered = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == selected_employee]
+            if not df_request_filtered.empty:
+                options = [f"{row['분류']} - {row['날짜정보']}" for _, row in df_request_filtered.iterrows()]
+                selected_items = st.multiselect("삭제할 항목", options, key="delete_request_select")
+            else:
+                st.multiselect("삭제할 항목", [], disabled=True, key="delete_request_select", help="해당 근무자의 요청이 없습니다.")
         else:
-            st.info("📍 선택한 근무자에 대한 방 배정 요청이 없습니다.")
-            selected_items = []
-    
-    if st.button("📅 삭제", key="request_delete_button"):
-        if selected_items:
+            st.multiselect("삭제할 항목", [], key="delete_request_select", disabled=True)
+    with col_button_del:
+        st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
+        delete_button_clicked = st.button("📅 삭제", key="request_delete_button")
+    if delete_button_clicked:
+        if not selected_employee or not selected_items:
+            st.error("삭제할 근무자와 항목을 선택해주세요.")
+        else:
             indices = []
             for item in selected_items:
-                for idx, row in df_request_filtered.iterrows():
-                    if f"{row['분류']} - {row['날짜정보']}" == item:
+                for idx, row in st.session_state["df_room_request"].iterrows():
+                    if row['이름'] == selected_employee and f"{row['분류']} - {row['날짜정보']}" == item:
                         indices.append(idx)
-            df_room_request = df_room_request.drop(indices).reset_index(drop=True)
+            df_room_request = st.session_state["df_room_request"].drop(indices).reset_index(drop=True)
             st.session_state["df_room_request"] = df_room_request
             try:
                 update_sheet_with_retry(st.session_state["worksheet_room_request"], [df_room_request.columns.tolist()] + df_room_request.values.tolist())
                 st.cache_data.clear()
                 st.success("선택한 방 배정 요청 삭제 완료!")
+                st.rerun()
             except Exception as e:
                 st.error(f"Google Sheets 업데이트 실패: {str(e)}")
-                st.write("로컬 df_room_request는 업데이트되었습니다. 아래에서 확인 후 Google Sheets 동기화를 다시 시도해주세요.")
-                st.dataframe(st.session_state["df_room_request"])
 else:
     st.info("📍 방 배정 요청이 없습니다.")
-
 st.write(" ")
 st.markdown("**🙋‍♂️ 현재 방 배정 요청 목록**")
-if df_room_request.empty:
+if st.session_state["df_room_request"].empty:
     st.info("☑️ 현재 방 배정 요청이 없습니다.")
 else:
-    st.dataframe(df_room_request, use_container_width=True)
-
+    st.dataframe(st.session_state["df_room_request"], use_container_width=True)
+    
 # 날짜정보 파싱 함수
 def parse_date_info(date_info):
     try:
@@ -551,58 +673,62 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     remaining_slots = [i for i, a in enumerate(assignment) if a is None]
     
     # 오전 슬롯 배정
-    morning_slot_indices = [i for i in remaining_slots if slots[i] in morning_slots]
-    while morning_remaining and morning_slot_indices:
-        best_person = None
-        best_slot_idx = None
+    morning_slot_indices = [i for i in remaining_slots if slots[i] in morning_slots] 
+    while morning_remaining and morning_slot_indices: 
+        best_person = None 
+        best_slot_idx = None 
         min_score = float('inf')
+
+        # ### 수정된 부분 1: shuffle 위치를 while 루프 안으로 이동 ###
+        # 매번 새로운 최적의 조합을 찾기 전에 순서를 섞어 공정성을 높입니다.
+        random.shuffle(morning_remaining)
         
-        for slot_idx in morning_slot_indices:
-            if assignment[slot_idx] is not None:
-                continue
-            slot = slots[slot_idx]
-            room_num = slot.split('(')[1].split(')')[0]
+        for slot_idx in morning_slot_indices: 
+            if assignment[slot_idx] is not None: 
+                continue 
+            slot = slots[slot_idx] 
+            room_num = slot.split('(')[1].split(')')[0] 
             
             for person in morning_remaining:
-                # 방별 배정 균등성
-                room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
-                # 이른방 균등성 (8:30)
-                early_count = total_stats['early'][person] + daily_stats['early'][person] if slot.startswith('8:30') and '_당직' not in slot else float('inf')
-                # 늦은방 균등성 (10:00)
-                late_count = total_stats['late'][person] + daily_stats['late'][person] if slot.startswith('10:00') else float('inf')
                 
-                # 해당 슬롯 유형에 따라 스코어 선택
-                if slot.startswith('8:30') and '_당직' not in slot:
-                    score = early_count  # 이른방 배정 시 이른방 횟수만 고려
-                elif slot.startswith('10:00'):
-                    score = late_count  # 늦은방 배정 시 늦은방 횟수만 고려
-                else:
-                    score = room_count  # 나머지 슬롯은 방별 횟수만 고려
+                # ### 수정된 부분 2: 슬롯 중요도에 따른 가중치 점수 체계 도입 ###
+                if slot.startswith('8:30') and '_당직' not in slot: 
+                    early_count = total_stats['early'][person] + daily_stats['early'][person]
+                    score = early_count  # 기준 점수 (가장 낮음)
                 
-                if score < min_score:
-                    min_score = score
-                    best_person = person
-                    best_slot_idx = slot_idx
+                elif slot.startswith('10:00'): 
+                    late_count = total_stats['late'][person] + daily_stats['late'][person]
+                    score = 10000 + late_count # 늦은방은 10000점대
+                
+                else: # 9:00, 9:30 등 일반방
+                    room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
+                    score = 20000 + room_count # 일반방은 20000점대
+                
+                if score < min_score: 
+                    min_score = score 
+                    best_person = person 
+                    best_slot_idx = slot_idx 
         
-        if best_slot_idx is None or best_person is None:
-            st.warning(f"오전 슬롯 배정 불가: 더 이상 배정 가능한 인원 없음")
-            break
+        if best_slot_idx is None or best_person is None: 
+            st.warning(f"오전 슬롯 배정 불가: 더 이상 배정 가능한 인원 없음") 
+            break 
         
-        slot = slots[best_slot_idx]
-        assignment[best_slot_idx] = best_person
-        assigned_personnel_morning.add(best_person)
-        morning_remaining.remove(best_person)
-        morning_slot_indices.remove(best_slot_idx)
-        remaining_slots.remove(best_slot_idx)
-        room_num = slot.split('(')[1].split(')')[0]
-        daily_stats['rooms'][room_num][best_person] += 1
-        if slot.startswith('8:30') and '_당직' not in slot:
-            daily_stats['early'][best_person] += 1
-        elif slot.startswith('10:00'):
-            daily_stats['late'][best_person] += 1
-        if slot.startswith('8:30') and slot.endswith('_당직'):
+        # 이하 배정 로직은 기존과 동일
+        slot = slots[best_slot_idx] 
+        assignment[best_slot_idx] = best_person 
+        assigned_personnel_morning.add(best_person) 
+        morning_remaining.remove(best_person) 
+        morning_slot_indices.remove(best_slot_idx) 
+        remaining_slots.remove(best_slot_idx) 
+        room_num = slot.split('(')[1].split(')')[0] 
+        daily_stats['rooms'][room_num][best_person] += 1 
+        if slot.startswith('8:30') and '_당직' not in slot: 
+            daily_stats['early'][best_person] += 1 
+        elif slot.startswith('10:00'): 
+            daily_stats['late'][best_person] += 1 
+        if slot.startswith('8:30') and slot.endswith('_당직'): 
             daily_stats['morning_duty'][best_person] += 1
-
+            
     # 오후 슬롯 배정
     afternoon_slot_indices = [i for i in remaining_slots if slots[i] in afternoon_slots]
     while afternoon_remaining and afternoon_slot_indices:
@@ -621,10 +747,16 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
                 room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
                 # 당직 배정 균등성
                 duty_count = total_stats['afternoon_duty'][person] + daily_stats['afternoon_duty'][person] if slot.endswith('_당직') else float('inf')
-                
+                early_count = total_stats['early'][person]
+                late_count = total_stats['late'][person]
+
                 # 해당 슬롯 유형에 따라 스코어 선택
                 if slot.endswith('_당직'):
                     score = duty_count  # 당직 슬롯은 오후 당직 횟수만 고려
+                elif slot.startswith('8:30') and '_당직' not in slot:
+                    score = (early_count, room_count)
+                elif slot.startswith('10:00'):
+                    score = (late_count, room_count)
                 else:
                     score = room_count  # 나머지 슬롯은 방별 횟수만 고려
                 
@@ -743,15 +875,16 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     return assignment, daily_stats
 
 # df_room 생성 로직 - 8:30 당직 통계 반영 추가
-if st.button("🚀 방배정 수행"):
+# (기존 if st.button("🚀 방배정 수행"): 블록 전체를 찾아 아래 코드로 교체)
+
+if st.button("🚀 방배정 수행", use_container_width=True):
     st.write(" ")
     st.subheader(f"💡 {month_str} 방배정 결과", divider='rainbow')
-    # 방 설정 입력값 검증 및 처리
-    time_slots = {}
-    time_groups = {}
-    memo_rules = {}
+    
+    # --- 방 설정 검증 및 슬롯 정보 생성 (기존과 동일) ---
+    time_slots, time_groups, memo_rules = {}, {}, {}
     if num_830 + num_900 + num_930 + num_1000 != 12:
-        st.error("오전 방 개수 합계는 12여야 합니다.")
+        st.error(f"오전 방 개수 합계는 12개여야 합니다. (온콜 제외) 현재: {num_830 + num_900 + num_930 + num_1000}개")
         st.stop()
     elif len(rooms_830) != num_830 or len(rooms_900) != num_900 or len(rooms_930) != num_930 or len(rooms_1000) != num_1000 or len(rooms_1330) != num_1330:
         st.error("각 시간대의 방 번호 선택을 완료해주세요.")
@@ -790,158 +923,90 @@ if st.button("🚀 방배정 수행"):
             '오후 당직 제외': [s for s in time_slots if s.startswith('13:30') and '_당직' not in s]
         }
         
-        st.session_state["time_slots"] = time_slots
-        st.session_state["time_groups"] = time_groups
-        st.session_state["memo_rules"] = memo_rules
-        st.session_state["morning_slots_830"] = [s for s in time_slots if s.startswith('8:30') and '_당직' not in s]
-        st.session_state["morning_slots_900"] = [s for s in time_slots if s.startswith('9:00')]
-        st.session_state["morning_slots_930"] = [s for s in time_slots if s.startswith('9:30')]
-        st.session_state["morning_slots_1000"] = [s for s in time_slots if s.startswith('10:00')]
-        st.session_state["afternoon_slots"] = [s for s in time_slots if s.startswith('13:30') and '_당직' not in s]
-        st.session_state["duty_slots"] = [s for s in time_slots if s.startswith('13:30') and '_당직' in s]
+        st.session_state.update({"time_slots": time_slots, "time_groups": time_groups, "memo_rules": memo_rules})
     
-    # all_slots 동적 생성 - 8:30 당직 방을 사용자가 설정한 값으로 반영
     morning_duty_slot = f"8:30({duty_830})_당직"
-    all_slots = [morning_duty_slot] + \
-                sorted([s for s in time_slots if s.startswith('8:30') and not s.endswith('_당직')]) + \
-                sorted([s for s in time_slots if s.startswith('9:00')]) + \
-                sorted([s for s in time_slots if s.startswith('9:30')]) + \
-                sorted([s for s in time_slots if s.startswith('10:00')]) + \
-                ['온콜'] + \
-                sorted([s for s in time_slots if s.startswith('13:30') and s.endswith('_당직')]) + \
-                sorted([s for s in time_slots if s.startswith('13:30') and not s.endswith('_당직')])
-    
-    # columns 정의
+    all_slots = [morning_duty_slot] + sorted([s for s in time_slots if s.startswith('8:30') and not s.endswith('_당직')]) + sorted([s for s in time_slots if s.startswith('9:00')]) + sorted([s for s in time_slots if s.startswith('9:30')]) + sorted([s for s in time_slots if s.startswith('10:00')]) + ['온콜'] + sorted([s for s in time_slots if s.startswith('13:30') and s.endswith('_당직')]) + sorted([s for s in time_slots if s.startswith('13:30') and not s.endswith('_당직')])
     columns = ['날짜', '요일'] + all_slots
     
-    # 배정 로직 시작
-    random.seed(time.time())
-    total_stats = {
-        'early': Counter(),
-        'late': Counter(),
-        'morning_duty': Counter(),  # 오전 당직 (8:30)
-        'afternoon_duty': Counter(),  # 오후 당직 (13:30)
-        'rooms': {str(i): Counter() for i in range(1, 13)}
-    }
-    
-    # 누적 시트 데이터에서 오후당직 횟수 추출
+    # --- 배정 로직 (기존과 동일) ---
+    # random.seed(time.time())
+    total_stats = {'early': Counter(),'late': Counter(),'morning_duty': Counter(),'afternoon_duty': Counter(),'rooms': {str(i): Counter() for i in range(1, 13)}}
     df_cumulative = st.session_state["df_cumulative"]
-    afternoon_duty_counts = {}
-    if not df_cumulative.empty:
-        for _, row in df_cumulative.iterrows():
-            name = row['이름']  # 첫 번째 열이 이름으로 변경됨
-            try:
-                duty_count = int(row['오후당직'])
-                if duty_count > 0:
-                    afternoon_duty_counts[name] = duty_count
-            except (ValueError, KeyError):
-                st.warning(f"누적 시트에서 {name}의 오후당직 횟수 파싱 실패")
-                continue
+    afternoon_duty_counts = {row['이름']: int(row['오후당직']) for _, row in df_cumulative.iterrows() if pd.notna(row.get('오후당직')) and int(row['오후당직']) > 0}
     
-    assignments = {}
-    slots = list(st.session_state["time_slots"].keys())
-    assignable_slots = [s for s in slots if not (s.startswith('8:30') and s.endswith('_당직'))]
-    
-    morning_slots_830 = st.session_state["morning_slots_830"]
-    morning_slots_900 = st.session_state["morning_slots_900"]
-    morning_slots_930 = st.session_state["morning_slots_930"]
-    morning_slots_1000 = st.session_state["morning_slots_1000"]
-    afternoon_slots = st.session_state["afternoon_slots"]
-    duty_slots = st.session_state["duty_slots"]
-    
-    date_cache = {}
-    request_cells = {}
-    result_data = []
+    assignments, date_cache, request_cells, result_data = {}, {}, {}, []
+    assignable_slots = [s for s in st.session_state["time_slots"].keys() if not (s.startswith('8:30') and s.endswith('_당직'))]
     weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+    
     for _, row in st.session_state["df_schedule_md"].iterrows():
         date_str = row['날짜']
         try:
-            if "월" in date_str:
-                date_obj = datetime.strptime(date_str, '%m월 %d일').replace(year=2025)
-            else:
-                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+            date_obj = datetime.strptime(date_str, '%m월 %d일').replace(year=2025) if "월" in date_str else datetime.strptime(date_str, '%Y-%m-%d')
             formatted_date = date_obj.strftime('%Y-%m-%d').strip()
             date_cache[date_str] = formatted_date
-        except ValueError:
-            st.warning(f"Invalid date format for {date_str}")
-            continue
-    
-        try:
             day_of_week = weekday_map[date_obj.weekday()]
-        except ValueError:
-            st.warning(f"Invalid date format for {date_str}")
+        except (ValueError, TypeError):
             continue
         
         result_row = [date_str, day_of_week]
-        personnel = [p for p in row[2:-1] if pd.notna(p) and p]
-        has_person = bool(personnel)
-        
+        has_person = any(val for val in row.iloc[2:-1] if pd.notna(val) and val)
+
         if day_of_week == '토' and has_person:
-            debug_columns = [col for col in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오후1', '오후2', '오후3', '오후4', '오전당직(온콜)'] if col in row.index]
-            saturday_personnel = [row.get(str(i), None) for i in range(1, 11)]
-            slot_person_map = {slot: None for slot in all_slots}
-            non_duty_slots = [s for s in all_slots if s not in [morning_duty_slot, '온콜']][:10]
-            for i, slot in enumerate(non_duty_slots):
-                if i < len(saturday_personnel):
-                    slot_person_map[slot] = saturday_personnel[i]
-            
-            for slot in all_slots:
-                if slot == morning_duty_slot or slot == '온콜':
-                    person = row['오전당직(온콜)'] if has_person else None
-                else:
-                    person = slot_person_map.get(slot, None)
-                result_row.append(person)
-            result_data.append(result_row)
-            continue
+             saturday_personnel = [row.get(str(i), None) for i in range(1, 11)]
+             slot_person_map = {slot: None for slot in all_slots}
+             non_duty_slots = [s for s in all_slots if s not in [morning_duty_slot, '온콜']][:10]
+             for i, slot in enumerate(non_duty_slots):
+                if i < len(saturday_personnel): slot_person_map[slot] = saturday_personnel[i]
+             for slot in all_slots:
+                result_row.append(row['오전당직(온콜)'] if slot == morning_duty_slot or slot == '온콜' else slot_person_map.get(slot, None))
+             result_data.append(result_row)
+             continue
         
         morning_personnel = [row[str(i)] for i in range(1, 12) if pd.notna(row[str(i)]) and row[str(i)]]
         afternoon_personnel = [row[f'오후{i}'] for i in range(1, 5) if pd.notna(row[f'오후{i}']) and row[f'오후{i}']]
-        personnel = list(set(morning_personnel + afternoon_personnel))
         
-        if not personnel:
-            assignments[formatted_date] = [None] * len(assignable_slots)
+        if not (morning_personnel or afternoon_personnel):
             result_row.extend([None] * len(all_slots))
             result_data.append(result_row)
             continue
         
-        if len(morning_personnel) != 11 or len(afternoon_personnel) != 4:
-            st.warning(f"{date_str}: 인원 불일치, 오전 {len(morning_personnel)}명(필요 11명), 오후 {len(afternoon_personnel)}명(필요 4명)")
-        
         request_assignments = {}
-        if not df_room_request.empty:
-            for _, req in df_room_request.iterrows():
+        if not st.session_state["df_room_request"].empty:
+            for _, req in st.session_state["df_room_request"].iterrows():
                 req_date, is_morning = parse_date_info(req['날짜정보'])
                 if req_date and req_date == formatted_date:
                     slots_for_category = st.session_state["memo_rules"].get(req['분류'], [])
-                    if not slots_for_category:
-                        st.warning(f"{req['분류']}으로 할당할 적합한 시간대(방)이 존재하지 않습니다.")
-                        continue
-                    valid_slots = [
-                        s for s in slots_for_category
-                        if (is_morning and s.startswith(('8:30', '9:00', '9:30', '10:00')) and '_당직' not in s) or
-                           (not is_morning and s.startswith('13:30') and '_당직' not in s)
-                    ]
-                    if valid_slots:
-                        room_totals = {s: sum(total_stats['rooms'][s.split('(')[1].split(')')[0]].values()) for s in valid_slots}
-                        min_total = min(room_totals.values())
-                        best_slots = [s for s, total in room_totals.items() if total == min_total]
-                        selected_slot = random.choice(best_slots)
-                        request_assignments[selected_slot] = req['이름']
-                        request_cells[(formatted_date, selected_slot)] = {'이름': req['이름'], '분류': req['분류']}
+                    if slots_for_category:
+                        valid_slots = [s for s in slots_for_category if (is_morning and not s.startswith('13:30')) or (not is_morning and s.startswith('13:30'))]
+                        if valid_slots:
+                            selected_slot = random.choice(valid_slots)
+                            request_assignments[selected_slot] = req['이름']
+                            request_cells[(formatted_date, selected_slot)] = {'이름': req['이름'], '분류': req['분류']}
 
-        assignment, daily_stats = random_assign(
-            personnel, assignable_slots, request_assignments, st.session_state["time_groups"],
-            total_stats, morning_personnel, afternoon_personnel, afternoon_duty_counts
-        )
-        assignments[formatted_date] = assignment
+        assignment, _ = random_assign(list(set(morning_personnel+afternoon_personnel)), assignable_slots, request_assignments, st.session_state["time_groups"], total_stats, morning_personnel, afternoon_personnel, afternoon_duty_counts)
         
         for slot in all_slots:
-            if slot == morning_duty_slot or slot == '온콜':
-                person = row['오전당직(온콜)'] if has_person else None
-            else:
-                person = assignment[assignable_slots.index(slot)] if slot in assignable_slots and assignment else None
+            person = row['오전당직(온콜)'] if slot == morning_duty_slot or slot == '온콜' else (assignment[assignable_slots.index(slot)] if slot in assignable_slots and assignment else None)
             result_row.append(person if has_person else None)
         
+        # [추가] 중복 배정 검증 로직
+        assignments_for_day = dict(zip(all_slots, result_row[2:]))
+        morning_slots_check = [s for s in all_slots if s.startswith(('8:30', '9:00', '9:30', '10:00'))]
+        afternoon_slots_check = [s for s in all_slots if s.startswith('13:30') or s == '온콜']
+
+        morning_counts = Counter(p for s, p in assignments_for_day.items() if s in morning_slots_check and p)
+        for person, count in morning_counts.items():
+            if count > 1:
+                duplicated_slots = [s for s, p in assignments_for_day.items() if p == person and s in morning_slots_check]
+                st.error(f"⚠️ {date_str}: '{person}'님이 오전에 중복 배정되었습니다 (슬롯: {', '.join(duplicated_slots)}).")
+        
+        afternoon_counts = Counter(p for s, p in assignments_for_day.items() if s in afternoon_slots_check and p)
+        for person, count in afternoon_counts.items():
+            if count > 1:
+                duplicated_slots = [s for s, p in assignments_for_day.items() if p == person and s in afternoon_slots_check]
+                st.error(f"⚠️ {date_str}: '{person}'님이 오후/온콜에 중복 배정되었습니다 (슬롯: {', '.join(duplicated_slots)}).")
+
         result_data.append(result_row)
     
     df_room = pd.DataFrame(result_data, columns=columns)
@@ -949,74 +1014,50 @@ if st.button("🚀 방배정 수행"):
     st.markdown("**✅ 통합 배치 결과**")
     st.dataframe(df_room)
     
-    # 8:30 당직 통계 반영
-    for idx, row in enumerate(result_data):
-        formatted_date = date_cache.get(row[0], '')
-        if formatted_date:
-            for slot_idx, slot in enumerate(all_slots):
-                if slot == morning_duty_slot:
-                    person = row[slot_idx + 2]  # '날짜', '요일' 이후의 열
-                    if person:
-                        total_stats['morning_duty'][person] += 1
-
-    # stats_df 생성 - 오전/오후 당직 합계 별도 포함
-    stats_data = []
-    all_personnel = set()
-    for _, row in st.session_state["df_schedule_md"].iterrows():
-        personnel = [p for p in row[2:-1].dropna() if p]
-        all_personnel.update(personnel)
+    # --- 통계 계산 (기존과 동일) ---
+    for row_data in result_data:
+        person_on_call = row_data[columns.index('온콜')]
+        if person_on_call:
+            total_stats['morning_duty'][person_on_call] += 1
     
-    for person in sorted(all_personnel):
-        stats_data.append({
-            '인원': person,
-            '이른방 합계': total_stats['early'][person],
-            '늦은방 합계': total_stats['late'][person],
-            '오전 당직 합계': total_stats['morning_duty'][person],
-            '오후 당직 합계': total_stats['afternoon_duty'][person],
-            **{f'{r}번방 합계': total_stats['rooms'][r][person] for r in total_stats['rooms']}
-        })
-    
+    # --- 통계 DataFrame 생성 (기존과 동일) ---
+    stats_data, all_personnel_stats = [], set(p for _, r in st.session_state["df_schedule_md"].iterrows() for p in r[2:-1].dropna() if p)
+    for person in sorted(all_personnel_stats):
+        stats_data.append({'인원': person, '이른방 합계': total_stats['early'][person], '늦은방 합계': total_stats['late'][person], '오전 당직 합계': total_stats['morning_duty'][person], '오후 당직 합계': total_stats['afternoon_duty'][person], **{f'{r}번방 합계': total_stats['rooms'][r][person] for r in total_stats['rooms']}})
     stats_df = pd.DataFrame(stats_data)
-    st.divider()
-    st.markdown("**☑️ 인원별 통계**")
-    if stats_df.empty:
-        st.error("통계 데이터가 생성되지 않았습니다. total_stats 확인 필요.")
-    else:
-        st.dataframe(stats_df)
+    st.divider(); st.markdown("**☑️ 인원별 통계**"); st.dataframe(stats_df)
     
+    # --- [수정] Excel 생성 및 다운로드 로직 ---
     wb = openpyxl.Workbook()
     sheet = wb.active
     sheet.title = "Schedule"
-    
+    sky_blue_fill = PatternFill(start_color="CCEEFF", end_color="CCEEFF", fill_type="solid")
+    duty_font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
+    default_font = Font(name="맑은 고딕", size=9)
+    swapped_set = st.session_state.get("swapped_assignments", set())
+
+    # 헤더 렌더링
     for col_idx, header in enumerate(columns, 1):
         cell = sheet.cell(1, col_idx, header)
         cell.font = Font(bold=True, name="맑은 고딕", size=9)
         cell.alignment = Alignment(horizontal='center', vertical='center')
         cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        if header.startswith('8:30'):
-            cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-        elif header.startswith('9:00'):
-            cell.fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
-        elif header.startswith('9:30'):
-            cell.fill = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
-        elif header.startswith('10:00'):
-            cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-        elif header.startswith('13:30'):
-            cell.fill = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
-        elif header == '온콜':
-            cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-    
-    for row_idx, row in enumerate(result_data, 2):
-        has_person = any(x for x in row[2:-1] if x is not None)
-        formatted_date = date_cache.get(row[0], '')
-        for col_idx, value in enumerate(row, 1):
+        if header.startswith('8:30') or header == '온콜': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+        elif header.startswith('9:00'): cell.fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
+        elif header.startswith('9:30'): cell.fill = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
+        elif header.startswith('10:00'): cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+        elif header.startswith('13:30'): cell.fill = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
+
+    # 데이터 렌더링
+    for row_idx, row_data in enumerate(result_data, 2):
+        has_person = any(val for val in row_data[2:] if val)
+
+        current_date_str = row_data[0]
+        for col_idx, value in enumerate(row_data, 1):
             cell = sheet.cell(row_idx, col_idx, value)
-            if (columns[col_idx-1].endswith('_당직') or columns[col_idx-1] == '온콜') and value:
-                cell.font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
-            else:
-                cell.font = Font(name="맑은 고딕", size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            
             if col_idx == 1:
                 cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
             elif col_idx == 2:
@@ -1025,52 +1066,48 @@ if st.button("🚀 방배정 수행"):
                     cell.fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
             elif not has_person and col_idx >= 3:
                 cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+
+            slot_name = columns[col_idx-1]
             
-            if col_idx > 2 and value and formatted_date:
-                slot = columns[col_idx-1]
-                if (formatted_date, slot) in request_cells and value == request_cells[(formatted_date, slot)]['이름']:
-                    cell.comment = Comment(f"배정 요청: {request_cells[(formatted_date, slot)]['분류']}", "System")
+            # [핵심 수정] 셀의 근무타입을 판별
+            cell_shift_type = '오후' if '13:30' in slot_name or '온콜' in slot_name else '오전'
+            
+            # 서식 적용 (배경색 -> 폰트 -> 메모 순)
+            if (current_date_str, cell_shift_type, value) in swapped_set:
+                cell.fill = sky_blue_fill
+            
+            if (slot_name.endswith('_당직') or slot_name == '온콜') and value:
+                cell.font = duty_font
+            else:
+                cell.font = default_font
+            
+            if col_idx > 2 and value and date_cache.get(current_date_str):
+                formatted_date_for_comment = date_cache[current_date_str]
+                if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
+                    cell.comment = Comment(f"배정 요청: {request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
     
-    # 엑셀 파일 생성 부분 수정
+    # --- Stats 시트 생성 및 최종 파일 저장 (기존과 동일) ---
     stats_sheet = wb.create_sheet("Stats")
     stats_columns = stats_df.columns.tolist()
-
-    # 열 너비를 모두 10으로 설정
     for col_idx in range(1, len(stats_columns) + 1):
-        col_letter = openpyxl.utils.get_column_letter(col_idx)
-        stats_sheet.column_dimensions[col_letter].width = 10
-
-    # 헤더 생성 및 스타일 적용
+        stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 10
     for col_idx, header in enumerate(stats_columns, 1):
         cell = stats_sheet.cell(1, col_idx, header)
         cell.font = Font(bold=True, name="맑은 고딕", size=9)
         cell.alignment = Alignment(horizontal='center', vertical='center')
         cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        
-        # 기본 색상 설정
-        if header == '인원':
-            cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
-        elif header == '이른방 합계':
-            cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-        elif header == '늦은방 합계':
-            cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-        elif header == '오전 당직 합계':
-            cell.fill = PatternFill(start_color="FF00FF", end_color="FF00FF", fill_type="solid")
-        elif header == '오후 당직 합계':
-            cell.fill = PatternFill(start_color="FF00FF", end_color="FF00FF", fill_type="solid")
-        
-        # 방 합계 열 헤더 색상을 #F2F2F2로 설정
-        if "번방 합계" in header:
-            cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-
-    # 데이터 채우기
+        if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+        elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+        elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+        elif '당직 합계' in header: cell.fill = PatternFill(start_color="FF00FF", end_color="FF00FF", fill_type="solid")
+        elif "번방 합계" in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
     for row_idx, row in enumerate(stats_df.values, 2):
         for col_idx, value in enumerate(row, 1):
             cell = stats_sheet.cell(row_idx, col_idx, value)
             cell.font = Font(name="맑은 고딕", size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-
+    
     output = BytesIO()
     wb.save(output)
     output.seek(0)
@@ -1081,7 +1118,8 @@ if st.button("🚀 방배정 수행"):
         data=output,
         file_name=f"{month_str} 방배정.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary"
+        type="primary",
+        use_container_width=True
     )
 
     # Google Sheets에 방배정 시트 저장
@@ -1089,9 +1127,7 @@ if st.button("🚀 방배정 수행"):
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     try:
         worksheet_result = sheet.worksheet(f"{month_str} 방배정")
-    except:
+    except gspread.exceptions.WorksheetNotFound:
         worksheet_result = sheet.add_worksheet(f"{month_str} 방배정", rows=100, cols=len(df_room.columns))
-        worksheet_result.append_row(df_room.columns.tolist())
-
-    update_sheet_with_retry(worksheet_result, [df_room.columns.tolist()] + df_room.values.tolist())
+    update_sheet_with_retry(worksheet_result, [df_room.columns.tolist()] + df_room.fillna('').values.tolist())
     st.success(f"✅ {month_str} 방배정 테이블이 Google Sheets에 저장되었습니다.")

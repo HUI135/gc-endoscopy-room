@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from collections import Counter
 import time
-from datetime import date
+from datetime import datetime, date
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -14,29 +14,22 @@ import menu
 
 menu.menu()
 
-# 상수 정의
+# --- 상수 정의 ---
 MONTH_STR = "2025년 04월"
-NEXT_MONTH_START = date(2025, 4, 1)
-NEXT_MONTH_END = date(2025, 4, 30)
-ROOM_MAPPING = {
-    '8:30(1)_당직': '1', '8:30(2)': '2', '8:30(4)': '4', '8:30(7)': '7',
-    '9:00(10)': '10', '9:00(11)': '11', '9:00(12)': '12',
-    '9:30(5)': '5', '9:30(6)': '6', '9:30(8)': '8',
-    '10:00(3)': '3', '10:00(9)': '9',
-    '13:30(2)_당직': '2', '13:30(3)': '3', '13:30(4)': '4', '13:30(9)': '9'
-}
-COLOR_MAPPING = {
-    '8:30': "FFE699", '9:00': "F8CBAD", '9:30': "B4C6E7", '10:00': "C6E0B4",
-    '13:30': "CC99FF", '온콜': "FFE699", '날짜': "808080", '요일_토': "BFBFBF",
-    '요일': "FFF2CC", 'no_person': "808080", '인원': "D0CECE", '당직 합계': "FF00FF",
-    '이른방 합계': "FFE699", '늦은방 합계': "C6E0B4"
-}
 
-# 세션 상태 초기화
-if "data_loaded" not in st.session_state:
-    st.session_state["data_loaded"] = False
+# --- 세션 상태 초기화 ---
+# 이 페이지에서 발생한 변경사항만 기록하도록 초기화
+def initialize_session_state():
+    st.session_state.setdefault("data_loaded", False)
+    st.session_state.setdefault("df_room_original", pd.DataFrame())
+    st.session_state.setdefault("df_room_edited", pd.DataFrame())
+    st.session_state.setdefault("df_room_swap_requests", pd.DataFrame())
+    # {날짜: {사람1, 사람2}} 형식으로 기록하여 특정 셀만 정확히 타겟
+    st.session_state.setdefault("schedule_changed_cells", {}) 
+    st.session_state.setdefault("room_changed_cells", {})
 
-# Google Sheets 클라이언트 초기화
+# --- 데이터 통신 함수 ---
+@st.cache_data(ttl=600)
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     service_account_info = dict(st.secrets["gspread"])
@@ -44,295 +37,264 @@ def get_gspread_client():
     credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
     return gspread.authorize(credentials)
 
-# Google Sheets 업데이트 함수
 def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
     for attempt in range(retries):
         try:
-            worksheet.batch_update([
-                {"range": "A1:D", "values": [[]]},
-                {"range": "A1", "values": data}
-            ])
+            worksheet.clear()
+            worksheet.update('A1', data, value_input_option='USER_ENTERED')
             return
         except Exception as e:
             if "Quota exceeded" in str(e):
                 st.warning(f"API 쿼터 초과, {delay}초 후 재시도 ({attempt+1}/{retries})")
+                time.sleep(delay)
             else:
-                st.warning(f"업데이트 실패, {delay}초 후 재시도 ({attempt+1}/{retries}): {str(e)}")
-            time.sleep(delay)
+                st.error(f"업데이트 실패, {delay}초 후 재시도 ({attempt+1}/{retries}): {str(e)}")
+                time.sleep(delay)
     st.error("Google Sheets 업데이트 실패: 재시도 횟수 초과")
 
-# 데이터 로드 함수
-@st.cache_data
-def load_data_page7(month_str):
-    return load_data_page7_no_cache(month_str)
-
-def load_data_page7_no_cache(month_str):
+# --- 데이터 로딩 ---
+def load_data(month_str):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+    
+    # 1. 최종 방배정 결과 불러오기
     try:
         worksheet_room = sheet.worksheet(f"{month_str} 방배정")
         df_room = pd.DataFrame(worksheet_room.get_all_records())
-    except Exception as e:
-        st.error(f"스케줄 시트를 불러오는 데 실패: {e}")
+        st.session_state["df_room_original"] = df_room.copy()
+        # 수정용 데이터프레임이 없으면 원본으로 초기화
+        if st.session_state.df_room_edited.empty:
+            st.session_state["df_room_edited"] = df_room.copy()
+    except gspread.exceptions.WorksheetNotFound:
+        st.error(f"'{month_str} 방배정' 시트를 찾을 수 없습니다. 이전 단계 먼저 수행해주세요.")
         st.stop()
-    
-    st.session_state["df_room"] = df_room
+        
+    # 2. 방 변경 요청 불러오기
+    try:
+        ws_room_swap = sheet.worksheet(f"{month_str} 방 변경요청")
+        st.session_state["df_room_swap_requests"] = pd.DataFrame(ws_room_swap.get_all_records())
+    except gspread.exceptions.WorksheetNotFound:
+        st.warning(f"'{month_str} 방 변경요청' 시트가 없습니다.")
+        st.session_state["df_room_swap_requests"] = pd.DataFrame()
+
+    # 3. 스케줄 변경 이력 불러오기 (하늘색 하이라이트용)
+    try:
+        ws_schedule_swap = sheet.worksheet(f"{month_str} 스케쥴 교환요청")
+        df_schedule_swaps = pd.DataFrame(ws_schedule_swap.get_all_records())
+        
+        def parse_swap_date(date_str):
+            match = re.search(r'(\d+)월 (\d+)일', date_str)
+            return f"{int(match.group(1))}월 {int(match.group(2))}일" if match else None
+
+        for _, row in df_schedule_swaps.iterrows():
+            from_date = parse_swap_date(row['FromDateStr'])
+            to_date = parse_swap_date(row['ToDateStr'])
+            if from_date:
+                st.session_state.schedule_changed_cells.setdefault(from_date, set()).add(row['ToPersonName'])
+            if to_date:
+                st.session_state.schedule_changed_cells.setdefault(to_date, set()).add(row['RequesterName'])
+    except gspread.exceptions.WorksheetNotFound:
+        pass # 이 시트는 없어도 오류 아님
+
     st.session_state["data_loaded"] = True
-    return df_room
 
-# 중복 배정 확인 함수
-def check_duplicates(df, morning_slots, afternoon_slots):
-    duplicate_errors = []
+# --- 로직 함수 ---
+def apply_room_swaps(df_current, df_requests):
+    df_modified = df_current.copy()
+    applied_count = 0
+    for _, row in df_requests.iterrows():
+        date_str = row['Date']
+        requester = row['RequesterName']
+        target_person = row['TheirName']
+        my_room_col = row['MyRoom']
+        their_room_col = row['TheirRoom']
+        
+        target_row_idx = df_modified[df_modified['날짜'] == date_str].index
+        if target_row_idx.empty:
+            st.warning(f"적용 실패: 날짜 '{date_str}'를 방배정 표에서 찾을 수 없습니다.")
+            continue
+
+        idx = target_row_idx[0]
+        # 현재 셀의 값이 요청자와 일치하는지 확인 후 교환
+        if df_modified.at[idx, my_room_col] == requester and df_modified.at[idx, their_room_col] == target_person:
+            df_modified.at[idx, my_room_col] = target_person
+            df_modified.at[idx, their_room_col] = requester
+            
+            # 변경된 인원 기록 (연두색 하이라이트용)
+            st.session_state.room_changed_cells.setdefault(date_str, set()).update([requester, target_person])
+            applied_count += 1
+        else:
+            st.warning(f"적용 실패: {date_str}의 {my_room_col} 또는 {their_room_col}의 근무자가 요청과 다릅니다.")
+            
+    if applied_count > 0:
+        st.success(f"{applied_count}건의 방 변경 요청이 적용되었습니다.")
+    else:
+        st.info("새롭게 적용할 방 변경 요청이 없습니다.")
+        
+    return df_modified
+
+def check_duplicates(df):
+    errors = []
+    morning_slots = [c for c in df.columns if re.match(r'^(8:30|9:00|9:30|10:00)', c)]
+    afternoon_slots = [c for c in df.columns if c.startswith('13:30') or c == '온콜']
+    
     for idx, row in df.iterrows():
-        date_str = row['날짜']
-        morning_assignments = [row[col] for col in morning_slots if pd.notna(row[col]) and row[col].strip()]
-        afternoon_assignments = [row[col] for col in afternoon_slots if pd.notna(row[col]) and row[col].strip()]
-        
-        morning_counts = Counter(morning_assignments)
-        afternoon_counts = Counter(afternoon_assignments)
-        
-        for person, count in morning_counts.items():
-            if person and count > 1:
-                duplicate_errors.append(f"{date_str}: {person}이(가) 오전 시간대에 {count}번 중복 배정되었습니다.")
-        for person, count in afternoon_counts.items():
-            if person and count > 1:
-                duplicate_errors.append(f"{date_str}: {person}이(가) 오후 시간대에 {count}번 중복 배정되었습니다.")
-    
-    return duplicate_errors
+        date = row['날짜']
+        morning_workers = [p for p in row[morning_slots].values if pd.notna(p) and p]
+        afternoon_workers = [p for p in row[afternoon_slots].values if pd.notna(p) and p]
 
-# 근무 횟수 비교 함수
-def compare_counts(df_original, df_modified):
-    count_original = Counter()
-    count_modified = Counter()
-    
-    for _, row in df_original.drop(columns=["날짜", "요일"]).iterrows():
-        for value in row:
-            if pd.notna(value) and value.strip():
-                count_original[value] += 1
-    
-    for _, row in df_modified.drop(columns=["날짜", "요일"]).iterrows():
-        for value in row:
-            if pd.notna(value) and value.strip():
-                count_modified[value] += 1
-    
-    all_names = set(count_original.keys()).union(set(count_modified.keys()))
-    discrepancies = []
-    for name in all_names:
-        orig_count = count_original.get(name, 0)
-        mod_count = count_modified.get(name, 0)
-        if orig_count != mod_count:
-            if mod_count < orig_count:
-                discrepancies.append(f"{name}이(가) 기존 파일보다 근무가 {orig_count - mod_count}회 적습니다.")
-            elif mod_count > orig_count:
-                discrepancies.append(f"{name}이(가) 기존 파일보다 근무가 {mod_count - orig_count}회 많습니다.")
-    
-    return discrepancies
+        for person, count in Counter(morning_workers).items():
+            if count > 1:
+                errors.append(f"{date}: '{person}'님이 오전에 중복 배정되었습니다.")
+        for person, count in Counter(afternoon_workers).items():
+            if count > 1:
+                errors.append(f"{date}: '{person}'님이 오후/온콜에 중복 배정되었습니다.")
+    return errors
 
-# 통계 계산 함수
-def calculate_stats(df):
-    all_personnel = set()
-    for _, row in df.drop(columns=["날짜", "요일"]).iterrows():
-        personnel = [p for p in row if pd.notna(p) and p.strip()]
-        all_personnel.update(personnel)
-    
-    total_stats = {
-        'early': Counter(),  # 8:30 시작 (당직 제외)
-        'late': Counter(),   # 10:00 시작
-        'duty': Counter(),   # 당직
-        'rooms': {str(i): Counter() for i in range(1, 13)}  # 방 번호 AscendingSort
-    }
-    
-    for _, row in df.iterrows():
-        for col in df.columns:
-            if col in ['날짜', '요일']:
-                continue
-            person = row[col]
-            if pd.notna(person) and person.strip():
-                # 이른방 (8:30, 당직 제외)
-                if col.startswith('8:30') and not col.endswith('_당직'):
-                    total_stats['early'][person] += 1
-                # 늦은방 (10:00)
-                if col.startswith('10:00'):
-                    total_stats['late'][person] += 1
-                # 당직 (8:30(1)_당직, 13:30(2)_당직)
-                if col in ['8:30(1)_당직', '13:30(2)_당직']:
-                    total_stats['duty'][person] += 1
-                # 방별
-                if col in ROOM_MAPPING:
-                    room_num = ROOM_MAPPING[col]
-                    total_stats['rooms'][room_num][person] += 1
-    
-    stats_data = [
-        {
-            '인원': person,
-            '이른방 합계': total_stats['early'][person],
-            '늦은방 합계': total_stats['late'][person],
-            '당직 합계': total_stats['duty'][person],
-            **{f'{r}번방 합계': total_stats['rooms'][r][person] for r in total_stats['rooms']}
-        }
-        for person in sorted(all_personnel)
-    ]
-    
-    return pd.DataFrame(stats_data)
-
-# 엑셀 파일 생성 함수
-def create_excel_file(df, stats_df, request_cells=None, date_cache=None):
+def create_final_excel(df, stats_df):
     wb = openpyxl.Workbook()
-    sheet = wb.active
-    sheet.title = "Schedule"
+    ws = wb.active
+    ws.title = "방배정 최종"
     
-    columns = df.columns.tolist()
-    result_data = df.values.tolist()
+    # 스타일 정의
+    sky_blue_fill = PatternFill(start_color="CCEEFF", end_color="CCEEFF", fill_type="solid")
+    light_green_fill = PatternFill(start_color="D8E4BC", end_color="D8E4BC", fill_type="solid")
+    duty_font = Font(color="FF00FF", bold=True)
     
-    # 헤더 스타일링
-    for col_idx, header in enumerate(columns, 1):
-        cell = sheet.cell(1, col_idx, header)
-        cell.font = Font(bold=True, name="맑은 고딕", size=9)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        
-        for time_key, color in COLOR_MAPPING.items():
-            if header.startswith(time_key):
-                cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-                break
+    # 헤더 쓰기
+    for c, col_name in enumerate(df.columns, 1):
+        ws.cell(row=1, column=c, value=col_name).font = Font(bold=True)
     
-    # 데이터 스타일링
-    for row_idx, row in enumerate(result_data, 2):
-        has_person = any(x for x in row[2:-1] if x)
-        formatted_date = date_cache.get(row[0], '') if date_cache else row[0]
-        
-        for col_idx, value in enumerate(row, 1):
-            cell = sheet.cell(row_idx, col_idx, value)
-            cell.font = Font(name="맑은 고딕", size=9, bold=(columns[col_idx-1].endswith('_당직') or columns[col_idx-1] == '온콜') and value, color="FF00FF" if (columns[col_idx-1].endswith('_당직') or columns[col_idx-1] == '온콜') and value else "000000")
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    # 데이터 쓰기 및 서식 적용
+    for r, row in enumerate(df.itertuples(), 2):
+        date_str = row.날짜
+        for c, value in enumerate(row[1:], 1):
+            cell = ws.cell(row=r, column=c, value=value)
             
-            if col_idx == 1:
-                cell.fill = PatternFill(start_color=COLOR_MAPPING['날짜'], end_color=COLOR_MAPPING['날짜'], fill_type="solid")
-            elif col_idx == 2:
-                cell.fill = PatternFill(start_color=COLOR_MAPPING['요일_토'] if value == '토' and has_person else COLOR_MAPPING['요일'], end_color=COLOR_MAPPING['요일_토'] if value == '토' and has_person else COLOR_MAPPING['요일'], fill_type="solid")
-            elif not has_person and col_idx >= 3:
-                cell.fill = PatternFill(start_color=COLOR_MAPPING['no_person'], end_color=COLOR_MAPPING['no_person'], fill_type="solid")
-            
-            if col_idx > 2 and value and formatted_date and request_cells:
-                slot = columns[col_idx-1]
-                if (formatted_date, slot) in request_cells and value == request_cells[(formatted_date, slot)]['이름']:
-                    cell.comment = Comment(f"배정 요청: {request_cells[(formatted_date, slot)]['분류']}", "System")
+            # 배경색 적용 (우선순위: 연두색 > 하늘색)
+            is_room_changed = date_str in st.session_state.room_changed_cells and value in st.session_state.room_changed_cells[date_str]
+            is_schedule_changed = date_str in st.session_state.schedule_changed_cells and value in st.session_state.schedule_changed_cells[date_str]
+
+            if is_room_changed:
+                cell.fill = light_green_fill
+            elif is_schedule_changed:
+                cell.fill = sky_blue_fill
+
+            # 당직자 폰트
+            if df.columns[c-1].endswith('_당직') or df.columns[c-1] == '온콜':
+                cell.font = duty_font
     
-    # 통계 시트 추가
-    stats_sheet = wb.create_sheet("Stats")
-    stats_columns = stats_df.columns.tolist()
-    
-    for col_idx, header in enumerate(stats_columns, 1):
-        cell = stats_sheet.cell(1, col_idx, header)
-        cell.font = Font(bold=True, name="맑은 고딕", size=9)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        
-        for key, color in COLOR_MAPPING.items():
-            if header == key:
-                cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-                break
-    
-    for row_idx, row in enumerate(stats_df.values, 2):
-        for col_idx, value in enumerate(row, 1):
-            cell = stats_sheet.cell(row_idx, col_idx, value)
-            cell.font = Font(name="맑은 고딕", size=9)
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-    
+    # 통계 시트 추가 (옵션)
+    if not stats_df.empty:
+        ws_stats = wb.create_sheet("통계")
+        for r, row in enumerate(pd.DataFrame(stats_df).itertuples(index=False), 1):
+            for c, value in enumerate(row, 1):
+                ws_stats.cell(row=r, column=c, value=value)
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
     return output
 
-# 메인 로직
-def main():
-    # 로그인 및 관리자 권한 체크
-    if "login_success" not in st.session_state or not st.session_state["login_success"]:
-        st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
-        st.stop()
-    
-    # 새로고침 버튼
-    if st.button("🔄 새로고침 (R)"):
-        st.cache_data.clear()
-        df_room = load_data_page7_no_cache(MONTH_STR)
-        st.session_state["df_room"] = df_room
-        st.success("데이터가 새로고침되었습니다.")
+# --- 메인 UI ---
+st.set_page_config(layout="wide")
+initialize_session_state()
+
+# 로그인 체크
+if not st.session_state.get("login_success"):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.stop()
+
+st.title(f"✨ {MONTH_STR} 방배정 최종 조정")
+if st.button("🔄 데이터 새로고침"):
+    st.cache_data.clear()
+    st.rerun()
+
+load_data(MONTH_STR)
+
+# --- 1. 방 변경 요청 확인 및 일괄 적용 ---
+st.header("Step 1. 변경 요청 확인 및 적용")
+st.write("방배정 결과를 확인하고, 아래 요청에 따라 스케줄을 조정합니다.")
+
+st.subheader("📋 방 변경 요청 목록")
+df_swaps = st.session_state.df_room_swap_requests
+if not df_swaps.empty:
+    st.dataframe(df_swaps, use_container_width=True, hide_index=True)
+    if st.button("🔄 요청 일괄 적용하기"):
+        st.session_state.df_room_edited = apply_room_swaps(st.session_state.df_room_edited, df_swaps)
         st.rerun()
+else:
+    st.info("접수된 방 변경 요청이 없습니다.")
+
+st.divider()
+
+# --- 2. 수작업 수정 및 최종 확인 ---
+st.header("Step 2. 최종 수정 및 저장")
+st.write("일괄 적용 결과를 확인하거나, 셀을 더블클릭하여 직접 수정한 후 저장하세요.")
+
+edited_df = st.data_editor(
+    st.session_state.df_room_edited,
+    use_container_width=True,
+    key="room_editor"
+)
+
+# --- 3. 저장 및 내보내기 ---
+st.write(" ")
+if st.button("💾 최종 저장 및 내보내기", type="primary", use_container_width=True):
+    final_df = edited_df.copy()
     
-    # 메인 UI
-    st.subheader(f"✨ {MONTH_STR} 방 배정 조정")
-    st.write("- 직접 이름을 수정하여 방 배정을 조정할 수 있습니다.")
-    df_room = load_data_page7(MONTH_STR)
-    edited_df = st.data_editor(
-        df_room,
-        use_container_width=True,
-        num_rows="fixed",
-        key="editor1"
+    # 3-1. 중복 배정 검증
+    st.info("중복 배정 여부를 확인합니다...")
+    errors = check_duplicates(final_df)
+    if errors:
+        for error in errors:
+            st.error(error)
+        st.warning("오류를 수정한 후 다시 저장해주세요.")
+        st.stop()
+    else:
+        st.success("중복 배정 오류가 없습니다.")
+
+    # 3-2. 수작업 변경사항 기록
+    diff = final_df.compare(st.session_state.df_room_edited)
+    if not diff.empty:
+        st.info("수작업 변경사항을 기록합니다...")
+        for idx, row in diff.iterrows():
+            date_str = final_df.loc[idx, '날짜']
+            # 변경된 셀의 값(사람 이름)을 기록
+            changed_values = set(val for val in row.values if pd.notna(val))
+            st.session_state.room_changed_cells.setdefault(date_str, set()).update(changed_values)
+
+    # 3-3. Google Sheets 저장
+    st.info("Google Sheets에 최종 결과를 저장합니다...")
+    gc = get_gspread_client()
+    sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+    try:
+        worksheet_final = sheet.worksheet(f"{MONTH_STR} 방배정 최종")
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet_final = sheet.add_worksheet(title=f"{MONTH_STR} 방배정 최종", rows=100, cols=50)
+    
+    update_sheet_with_retry(worksheet_final, [final_df.columns.tolist()] + final_df.fillna('').values.tolist())
+    st.success("✅ Google Sheets 저장이 완료되었습니다.")
+    
+    # 3-4. Excel 파일 생성 및 다운로드
+    st.info("다운로드할 Excel 파일을 생성합니다...")
+    stats_df = calculate_stats(final_df) # 통계는 최종본으로 계산
+    excel_file = create_final_excel(final_df, stats_df)
+    
+    st.download_button(
+        label="📥 변경사항 포함된 Excel 다운로드",
+        data=excel_file,
+        file_name=f"{MONTH_STR} 방배정_최종본.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
     )
     
-    # 방 배정 조정 확인
-    st.divider()
-    st.subheader(f"✨ {MONTH_STR} 방 배정 조정 확인")
-    st.write("- 모든 인원의 근무 횟수가 원본과 동일한지, 누락 및 추가 인원이 있는지 확인합니다.")
-    st.write("- 날짜별 오전(8:30, 9:00, 9:30, 10:00) 및 오후(13:30) 시간대에 동일 인물이 중복 배정되지 않았는지 확인합니다.")
-    
-    if st.button("확인"):
-        try:
-            df_room_md = edited_df.copy()
-            
-            if not df_room.columns.equals(df_room_md.columns):
-                st.error("수정된 데이터의 컬럼이 원본 데이터와 일치하지 않습니다.")
-                st.stop()
-            
-            morning_slots = [col for col in df_room_md.columns if col.startswith(('8:30', '9:00', '9:30', '10:00')) and col != '온콜']
-            afternoon_slots = [col for col in df_room_md.columns if col.startswith('13:30')]
-            
-            duplicate_errors = check_duplicates(df_room_md, morning_slots, afternoon_slots)
-            count_discrepancies = compare_counts(df_room, df_room_md)
-            
-            if duplicate_errors or count_discrepancies:
-                for error in duplicate_errors:
-                    st.warning(error)
-                for warning in count_discrepancies:
-                    st.warning(warning)
-            else:
-                st.success("모든 인원의 근무 횟수가 원본과 동일하며, 중복 배정 오류가 없습니다!")
-                # st.write(" ")
-                # st.markdown("**✅ 통합 배치 결과**")
-                # st.dataframe(df_room_md)
-                
-                stats_df = calculate_stats(df_room_md)
-                st.write(" ")
-                st.markdown("**📊 인원별 통계**")
-                st.dataframe(stats_df)
-                
-                # 엑셀 파일 생성 및 다운로드
-                excel_file = create_excel_file(df_room_md, stats_df)  # request_cells, date_cache 전달 필요 시 추가
-                st.divider()
-                st.download_button(
-                    label="📥 최종 방배정 다운로드",
-                    data=excel_file,
-                    file_name=f"{MONTH_STR} 방배정 최종.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
-                
-                # Google Sheets 저장
-                gc = get_gspread_client()
-                sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-                try:
-                    worksheet_result = sheet.worksheet(f"{MONTH_STR} 방배정 최종")
-                except:
-                    worksheet_result = sheet.add_worksheet(f"{MONTH_STR} 방배정 최종", rows=100, cols=len(df_room.columns))
-                    worksheet_result.append_row(df_room.columns.tolist())
-                
-                update_sheet_with_retry(worksheet_result, [df_room.columns.tolist()] + df_room_md.values.tolist())
-                st.success(f"✅ {MONTH_STR} 방배정 최종 테이블이 Google Sheets에 저장되었습니다.")
-        
-        except Exception as e:
-            st.error(f"데이터 처리 중 오류 발생: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+    # 3-5. 변경 로그 표시
+    st.subheader("📝 최종 변경사항 요약")
+    if st.session_state.room_changed_cells:
+        log_data = []
+        for date_val, names in st.session_state.room_changed_cells.items():
+            log_data.append(f"**{date_val}:** {', '.join(names)}")
+        st.markdown("\n".join(f"- {item}" for item in log_data))
+    else:
+        st.info("이번 세션에서 방 배정 변경사항이 없습니다.")
