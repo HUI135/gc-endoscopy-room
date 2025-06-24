@@ -11,9 +11,20 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
 
-st.set_page_config(page_title="마스터 수정", page_icon="🏠", layout="wide")
+st.set_page_config(page_title="방배정 요청", page_icon="🏠", layout="wide")
+
+import os
+st.session_state.current_page = os.path.basename(__file__)
 
 menu.menu()
+
+# 로그인 체크 및 자동 리디렉션
+if not st.session_state.get("login_success", False):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.error("1초 후 Home 페이지로 돌아갑니다...")
+    time.sleep(1)
+    st.switch_page("Home.py")  # Home 페이지로 이동
+    st.stop()
 
 # 전역 변수로 gspread 클라이언트 초기화
 @st.cache_resource
@@ -214,12 +225,6 @@ def generate_room_request_events(df_user_room_request, next_month):
                 continue
     return events
 
-
-# 로그인 체크
-if not st.session_state.get("login_success", False):
-    st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
-    st.stop()
-
 # 기본 설정
 gc = get_gspread_client()
 url = st.secrets["google_sheet"]["url"]
@@ -349,7 +354,7 @@ elif df_room_request.empty or df_user_room_request.empty:
         "eventDisplay": "block",
         "dayHeaderFormat": {"weekday": "short"},
         "themeSystem": "bootstrap",
-        "height": 500,
+        "height": 800,
         "headerToolbar": {"left": "", "center": "", "right": ""},
         "showNonCurrentDates": False,
         "fixedWeekCount": False,
@@ -365,7 +370,7 @@ else:
         "eventDisplay": "block",
         "dayHeaderFormat": {"weekday": "short"},
         "themeSystem": "bootstrap",
-        "height": 500,
+        "height": 700,
         "headerToolbar": {"left": "", "center": "", "right": ""},
         "showNonCurrentDates": False,
         "fixedWeekCount": False,

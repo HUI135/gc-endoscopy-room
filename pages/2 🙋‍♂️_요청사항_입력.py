@@ -13,7 +13,18 @@ import menu
 
 st.set_page_config(page_title="마스터 수정", page_icon="🙋‍♂️", layout="wide")
 
+import os
+st.session_state.current_page = os.path.basename(__file__)
+
 menu.menu()
+
+# 로그인 체크 및 자동 리디렉션
+if not st.session_state.get("login_success", False):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.error("1초 후 Home 페이지로 돌아갑니다...")
+    time.sleep(1)
+    st.switch_page("Home.py")  # Home 페이지로 이동
+    st.stop()
 
 # 전역 변수로 gspread 클라이언트 초기화
 @st.cache_resource
@@ -39,11 +50,6 @@ def load_request_data_page2(_gc, url, month_str):
         worksheet.append_row(["이름", "분류", "날짜정보"])
     data = worksheet.get_all_records()
     return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-
-# 로그인 체크
-if not st.session_state.get("login_success", False):
-    st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
-    st.stop()
 
 # 기본 설정
 gc = get_gspread_client()
@@ -82,7 +88,7 @@ st.write("- 휴가 / 보충 불가 / 꼭 근무 관련 요청사항이 있을 �
 
 if df_user_request.empty or (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):
     st.info("☑️ 당월에 입력하신 요청사항이 없습니다.")
-    calendar_options = {"initialView": "dayGridMonth", "initialDate": next_month.strftime("%Y-%m-%d"), "height": 500, "headerToolbar": {"left": "", "center": "", "right": ""}}
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": next_month.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}}
     st_calendar(options=calendar_options)
 else:
     status_colors_request = {"휴가": "#FE7743", "보충 어려움(오전)": "#FFB347", "보충 어려움(오후)": "#FFA07A", "보충 불가(오전)": "#FFB347", "보충 불가(오후)": "#FFA07A", "꼭 근무(오전)": "#4CAF50", "꼭 근무(오후)": "#2E8B57"}
@@ -102,7 +108,7 @@ else:
                     dt = datetime.datetime.strptime(날짜, "%Y-%m-%d").date()
                     events_request.append({"title": label_map.get(분류, 분류), "start": dt.strftime("%Y-%m-%d"), "end": dt.strftime("%Y-%m-%d"), "color": status_colors_request.get(분류, "#E0E0E0")})
                 except: continue
-    calendar_options = {"initialView": "dayGridMonth", "initialDate": next_month.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 500, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False}
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": next_month.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False}
     st_calendar(events=events_request, options=calendar_options)
 
 st.divider()
@@ -192,7 +198,7 @@ st.write(" ")
 st.markdown(f"<h6 style='font-weight:bold;'>🔴 요청사항 삭제</h6>", unsafe_allow_html=True)
 if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):
     # --- [수정] 컬럼을 사용해 '삭제' 버튼을 같은 행에 배치 ---
-    del_col1, del_col2 = st.columns([4, 1])
+    del_col1, del_col2 = st.columns([4, 0.5])
     with del_col1:
         options = [f"{row['분류']} - {row['날짜정보']}" for _, row in df_user_request[df_user_request['분류'] != '요청 없음'].iterrows()]
         selected_items = st.multiselect("삭제할 요청사항 선택", options, key="delete_select")

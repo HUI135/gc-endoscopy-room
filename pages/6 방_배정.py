@@ -15,7 +15,18 @@ import menu
 
 st.set_page_config(page_title="방 배정", page_icon="🚪", layout="wide")
 
+import os
+st.session_state.current_page = os.path.basename(__file__)
+
 menu.menu()
+
+# 로그인 체크 및 자동 리디렉션
+if not st.session_state.get("login_success", False):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.error("1초 후 Home 페이지로 돌아갑니다...")
+    time.sleep(1)
+    st.switch_page("Home.py")  # Home 페이지로 이동
+    st.stop()
 
 # 세션 상태 초기화
 if "data_loaded" not in st.session_state:
@@ -292,11 +303,6 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
 month_str = "2025년 04월"
 next_month_start = date(2025, 4, 1)
 next_month_end = date(2025, 4, 30)
-
-# 로그인 체크
-if "login_success" not in st.session_state or not st.session_state["login_success"]:
-    st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
-    st.stop()
 
 # 데이터 로드 호출
 df_schedule, df_room_request, worksheet_room_request = load_data_page6(month_str)

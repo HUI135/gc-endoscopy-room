@@ -15,11 +15,17 @@ import menu
 
 st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
 
+import os
+st.session_state.current_page = os.path.basename(__file__)
+
 menu.menu()
 
-# 로그인 및 사번 체크
-if "login_success" not in st.session_state or not st.session_state["login_success"]:
-    st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
+# 로그인 체크 및 자동 리디렉션
+if not st.session_state.get("login_success", False):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.error("1초 후 Home 페이지로 돌아갑니다...")
+    time.sleep(1)
+    st.switch_page("Home.py")  # Home 페이지로 이동
     st.stop()
 
 # Google Sheets 클라이언트 초기화

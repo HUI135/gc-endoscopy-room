@@ -19,13 +19,19 @@ import menu
 
 st.set_page_config(page_title="스케줄 배정", page_icon="🗓️", layout="wide")
 
+import os
+st.session_state.current_page = os.path.basename(__file__)
+
 menu.menu()
 
 # random.seed(42)
 
-# 🔒 관리자 페이지 체크
-if "login_success" not in st.session_state or not st.session_state["login_success"]:
-    st.warning("⚠️ Home 페이지에서 비밀번호와 사번을 먼저 입력해주세요.")
+# 로그인 체크 및 자동 리디렉션
+if not st.session_state.get("login_success", False):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.error("1초 후 Home 페이지로 돌아갑니다...")
+    time.sleep(1)
+    st.switch_page("Home.py")  # Home 페이지로 이동
     st.stop()
 
 # 초기 데이터 로드 및 세션 상태 설정
@@ -341,9 +347,6 @@ df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근
 # 데이터프레임 로드 확인 (Streamlit UI로 변경)
 st.divider()
 st.subheader(f"✨ {month_str} 스케쥴 배정 수행")
-st.write("- 근무 배정 실행 시, 입력되어있는 '스케쥴 조정사항'이 초기화되므로 주의 부탁드립니다.")
-# st.write("df_shift_processed 확인:", df_shift_processed.head())
-# st.write("df_supplement_processed 확인:", df_supplement_processed.head())
 # st.write("df_request 확인:", df_request.head())
 # st.write("df_cumulative 확인:", df_cumulative.head())
 
@@ -1533,167 +1536,138 @@ if st.button("🚀 근무 배정 실행"):
         # 따라서 'return' 문을 사용하면 SyntaxError가 발생합니다.
         # 대신 'st.stop()'를 사용하여 앱의 현재 실행을 중단합니다.
 
-        if st.session_state.get("is_admin_authenticated", False):
-            # 날짜 설정
-            month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
-            next_month_dt = (month_dt + timedelta(days=32)).replace(day=1)
-            next_month_str = next_month_dt.strftime("%Y년 %m월")
-            next_month_start = month_dt.replace(day=1)
-            _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
-            next_month_end = month_dt.replace(day=last_day)
+        # 날짜 설정
+        month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+        next_month_dt = (month_dt + timedelta(days=32)).replace(day=1)
+        next_month_str = next_month_dt.strftime("%Y년 %m월")
+        next_month_start = month_dt.replace(day=1)
+        _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
+        next_month_end = month_dt.replace(day=last_day)
 
-            # 구글 시트 열기
+        # 구글 시트 열기
+        try:
+            url = st.secrets["google_sheet"]["url"]
+            gc = get_gspread_client()
+            if gc is None: # get_gspread_client에서 이미 stop()을 하지만, 방어 코드
+                st.stop()
+            sheet = gc.open_by_url(url)
+            st.write(f"DEBUG: Google Sheet '{url}' 저장용으로 다시 열기 성공.") # DEBUG
+        except APIError as e: # gspread.exceptions.APIError 명시적으로 잡기
+            st.error(f"❌ Google Sheets 연결 중 API 오류 발생 (저장 단계): {e.response.status_code} - {e.response.text}")
+            st.exception(e) # 상세 스택 트레이스 출력
+            st.stop()
+        except Exception as e:
+            st.error(f"❌ Google Sheets 연결 중 예기치 않은 오류 발생 (저장 단계): {type(e).__name__} - {e}")
+            st.exception(e) # 상세 스택 트레이스 출력
+            st.stop()
+
+        # df_final_unique와 df_excel을 기반으로 스케줄 데이터 변환
+        df_schedule = transform_schedule_data(df_final_unique, df_excel, next_month_start, next_month_end)
+        st.write("DEBUG: 최종 df_schedule 변환 완료.") # DEBUG
+
+        # Google Sheets에 스케쥴 저장
+        try:
+            # 시트 존재 여부 확인 및 생성/재사용
             try:
-                url = st.secrets["google_sheet"]["url"]
-                gc = get_gspread_client()
-                if gc is None: # get_gspread_client에서 이미 stop()을 하지만, 방어 코드
-                    st.stop()
-                sheet = gc.open_by_url(url)
-                st.write(f"DEBUG: Google Sheet '{url}' 저장용으로 다시 열기 성공.") # DEBUG
-            except APIError as e: # gspread.exceptions.APIError 명시적으로 잡기
-                st.error(f"❌ Google Sheets 연결 중 API 오류 발생 (저장 단계): {e.response.status_code} - {e.response.text}")
-                st.exception(e) # 상세 스택 트레이스 출력
-                st.stop()
-            except Exception as e:
-                st.error(f"❌ Google Sheets 연결 중 예기치 않은 오류 발생 (저장 단계): {type(e).__name__} - {e}")
-                st.exception(e) # 상세 스택 트레이스 출력
-                st.stop()
+                worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
+                st.write(f"DEBUG: '{month_str} 스케쥴' 시트 업데이트 준비.") # DEBUG
+            except WorksheetNotFound:
+                st.warning(f"⚠️ '{month_str} 스케쥴' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+                worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케쥴", rows=1000, cols=50)
+                st.write(f"DEBUG: '{month_str} 스케쥴' 시트 새로 생성 완료.") # DEBUG
 
-            # month_str 스케쥴 조정사항 시트 초기화
+            # 기존 데이터 삭제 및 업데이트
+            worksheet_schedule.clear()
+            data_schedule = [df_schedule.columns.tolist()] + df_schedule.astype(str).values.tolist()
+            worksheet_schedule.update('A1', data_schedule, value_input_option='RAW')
+            st.write(f"DEBUG: '{month_str} 스케쥴' 시트 Google Sheets 저장 완료.") # DEBUG
+        except Exception as e: # APIError를 포함한 모든 예외를 잡도록 변경 (APIError만 잡기에는 너무 한정적)
+            st.error(f"⚠️ {month_str} 스케쥴 테이블 저장 중 오류 발생: {str(e)}")
+            st.exception(e) # 상세 스택 트레이스 출력
+            st.stop()
+
+        # df_cumulative_next 처리
+        df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True) # 누적 테이블의 첫 컬럼명을 '이름'에서 '다음달 년월'로 변경
+        st.write("DEBUG: df_cumulative_next 컬럼 이름 변경 완료.") # DEBUG
+
+        # 다음 달 누적 시트 저장
+        try:
+            # 시트 존재 여부 확인 및 생성/재사용
             try:
-                # 시트 존재 여부 확인
-                try:
-                    worksheet_adjustments = sheet.worksheet(f"{month_str} 스케쥴 조정사항")
-                    st.write(f"DEBUG: '{month_str} 스케쥴 조정사항' 시트 존재 확인. 초기화 중...") # DEBUG
-                    # 시트 데이터 초기화 (기존 데이터 삭제)
-                    worksheet_adjustments.clear()
-                    # 초기 헤더 추가 (필요 시)
-                    worksheet_adjustments.update('A1', [['Timestamp', '조정사항']], value_input_option='RAW')
-                except WorksheetNotFound:
-                    # 시트가 없으면 새로 생성
-                    st.warning(f"⚠️ '{month_str} 스케쥴 조정사항' 시트를 찾을 수 없습니다. 새로 생성합니다.") # DEBUG
-                    worksheet_adjustments = sheet.add_worksheet(title=f"{month_str} 스케쥴 조정사항", rows=100, cols=10)
-                    # 초기 헤더 추가
-                    worksheet_adjustments.update('A1', [['Timestamp', '조정사항']], value_input_option='RAW')
-                    st.write(f"DEBUG: '{month_str} 스케쥴 조정사항' 시트 새로 생성 완료.") # DEBUG
-                
-                st.success(f"✅ {month_str} 스케쥴 조정사항 시트가 초기화되었습니다.")
-            except APIError as e: # APIError 명시적으로 잡기
-                st.error(f"❌ {month_str} 스케쥴 조정사항 시트 초기화 중 API 오류 발생: {e.response.status_code} - {e.response.text}")
-                st.exception(e) # 상세 스택 트레이스 출력
-                st.stop()
-            except Exception as e:
-                st.error(f"❌ {month_str} 스케쥴 조정사항 시트 초기화 중 예기치 않은 오류 발생: {type(e).__name__} - {e}")
-                st.exception(e) # 상세 스택 트레이스 출력
-                st.stop()
+                worksheet = sheet.worksheet(f"{next_month_str} 누적")
+                st.write(f"DEBUG: '{next_month_str} 누적' 시트 업데이트 준비.") # DEBUG
+            except WorksheetNotFound:
+                st.warning(f"⚠️ '{next_month_str} 누적' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+                worksheet = sheet.add_worksheet(title=f"{next_month_str} 누적", rows=1000, cols=20) 
+                st.write(f"DEBUG: '{next_month_str} 누적' 시트 새로 생성 완료.") # DEBUG
 
-            # df_final_unique와 df_excel을 기반으로 스케줄 데이터 변환
-            df_schedule = transform_schedule_data(df_final_unique, df_excel, next_month_start, next_month_end)
-            st.write("DEBUG: 최종 df_schedule 변환 완료.") # DEBUG
+            worksheet.clear()
+            data = [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist()
+            worksheet.update('A1', data, value_input_option='USER_ENTERED')
+            st.write(f"DEBUG: '{next_month_str} 누적' 시트 Google Sheets 저장 완료.") # DEBUG
+        except Exception as e: # APIError를 포함한 모든 예외를 잡도록 변경
+            st.error(f"⚠️ {next_month_str} 누적 테이블 저장 중 오류 발생: {str(e)}")
+            st.exception(e) # 상세 스택 트레이스 출력
+            st.stop()
 
-            # Google Sheets에 스케쥴 저장
-            try:
-                # 시트 존재 여부 확인 및 생성/재사용
-                try:
-                    worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
-                    st.write(f"DEBUG: '{month_str} 스케쥴' 시트 업데이트 준비.") # DEBUG
-                except WorksheetNotFound:
-                    st.warning(f"⚠️ '{month_str} 스케쥴' 시트를 찾을 수 없습니다. 새로 생성합니다.")
-                    worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케쥴", rows=1000, cols=50)
-                    st.write(f"DEBUG: '{month_str} 스케쥴' 시트 새로 생성 완료.") # DEBUG
+        # 세션 상태 설정
+        st.session_state.assigned = True
+        st.session_state.output = output
+        st.session_state.sheet = sheet
+        st.session_state.data_schedule = data_schedule
+        st.session_state.df_cumulative_next = df_cumulative_next
+        st.session_state.next_month_str = next_month_str
+        st.write("DEBUG: 세션 상태 업데이트 완료.") # DEBUG
 
-                # 기존 데이터 삭제 및 업데이트
-                worksheet_schedule.clear()
-                data_schedule = [df_schedule.columns.tolist()] + df_schedule.astype(str).values.tolist()
-                worksheet_schedule.update('A1', data_schedule, value_input_option='RAW')
-                st.write(f"DEBUG: '{month_str} 스케쥴' 시트 Google Sheets 저장 완료.") # DEBUG
-            except Exception as e: # APIError를 포함한 모든 예외를 잡도록 변경 (APIError만 잡기에는 너무 한정적)
-                st.error(f"⚠️ {month_str} 스케쥴 테이블 저장 중 오류 발생: {str(e)}")
-                st.exception(e) # 상세 스택 트레이스 출력
-                st.stop()
+        # 1. 누적 테이블 출력
+        st.write(" ")
+        st.markdown(f"**➕ {next_month_str} 누적 테이블**")
+        st.dataframe(df_cumulative_next)
 
-            # df_cumulative_next 처리
-            df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True) # 누적 테이블의 첫 컬럼명을 '이름'에서 '다음달 년월'로 변경
-            st.write("DEBUG: df_cumulative_next 컬럼 이름 변경 완료.") # DEBUG
+        # 2. 누적 테이블 저장 완료 메시지
+        st.success(f"✅ {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
 
-            # 다음 달 누적 시트 저장
-            try:
-                # 시트 존재 여부 확인 및 생성/재사용
-                try:
-                    worksheet = sheet.worksheet(f"{next_month_str} 누적")
-                    st.write(f"DEBUG: '{next_month_str} 누적' 시트 업데이트 준비.") # DEBUG
-                except WorksheetNotFound:
-                    st.warning(f"⚠️ '{next_month_str} 누적' 시트를 찾을 수 없습니다. 새로 생성합니다.")
-                    worksheet = sheet.add_worksheet(title=f"{next_month_str} 누적", rows=1000, cols=20) 
-                    st.write(f"DEBUG: '{next_month_str} 누적' 시트 새로 생성 완료.") # DEBUG
+        # 3. 구분선
+        st.divider()
 
-                worksheet.clear()
-                data = [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist()
-                worksheet.update('A1', data, value_input_option='USER_ENTERED')
-                st.write(f"DEBUG: '{next_month_str} 누적' 시트 Google Sheets 저장 완료.") # DEBUG
-            except Exception as e: # APIError를 포함한 모든 예외를 잡도록 변경
-                st.error(f"⚠️ {next_month_str} 누적 테이블 저장 중 오류 발생: {str(e)}")
-                st.exception(e) # 상세 스택 트레이스 출력
-                st.stop()
+        # 4. 스케쥴 테이블 저장 완료 메시지
+        st.success(f"✅ {month_str} 스케쥴 테이블이 Google Sheets에 저장되었습니다.")
 
-            # 세션 상태 설정
-            st.session_state.assigned = True
-            st.session_state.output = output
-            st.session_state.sheet = sheet
-            st.session_state.data_schedule = data_schedule
-            st.session_state.df_cumulative_next = df_cumulative_next
-            st.session_state.next_month_str = next_month_str
-            st.write("DEBUG: 세션 상태 업데이트 완료.") # DEBUG
+        # 5. 다운로드 버튼
+        st.markdown("""
+            <style>
+            .download-button > button {
+                background: linear-gradient(90deg, #e74c3c 0%, #c0392b 100%) !important;
+                color: white !important;
+                font-weight: bold;
+                font-size: 16px;
+                border-radius: 12px;
+                padding: 12px 24px;
+                border: none;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                transition: all 0.3s ease;
+            }
+            .download-button > button:hover {
+                background: linear-gradient(90deg, #c0392b 0%, #e74c3c 100%) !important;
+                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+                transform: translateY(-2px);
+            }
+            .download-button > button:active {
+                transform: translateY(0);
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+            </style>
+        """, unsafe_allow_html=True)
 
-            # 1. 누적 테이블 출력
-            st.write(" ")
-            st.markdown(f"**➕ {next_month_str} 누적 테이블**")
-            st.dataframe(df_cumulative_next)
-
-            # 2. 누적 테이블 저장 완료 메시지
-            st.success(f"✅ {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
-
-            # 3. 구분선
-            st.divider()
-
-            # 4. 스케쥴 테이블 저장 완료 메시지
-            st.success(f"✅ {month_str} 스케쥴 테이블이 Google Sheets에 저장되었습니다.")
-
-            # 5. 다운로드 버튼
-            st.markdown("""
-                <style>
-                .download-button > button {
-                    background: linear-gradient(90deg, #e74c3c 0%, #c0392b 100%) !important;
-                    color: white !important;
-                    font-weight: bold;
-                    font-size: 16px;
-                    border-radius: 12px;
-                    padding: 12px 24px;
-                    border: none;
-                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-                    transition: all 0.3s ease;
-                }
-                .download-button > button:hover {
-                    background: linear-gradient(90deg, #c0392b 0%, #e74c3c 100%) !important;
-                    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-                    transform: translateY(-2px);
-                }
-                .download-button > button:active {
-                    transform: translateY(0);
-                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                }
-                </style>
-            """, unsafe_allow_html=True)
-
-            if st.session_state.assigned and not st.session_state.downloaded:
-                with st.container():
-                    st.download_button(
-                        label="📥 최종 스케쥴 다운로드",
-                        data=st.session_state.output,
-                        file_name=f"{month_str} 스케쥴.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="download_schedule_button",
-                        type="primary",
-                        on_click=lambda: st.session_state.update({"downloaded": True})
-                    )
-            st.write("DEBUG: 근무 배정 로직 최종 완료.") # DEBUG
+        if st.session_state.assigned and not st.session_state.downloaded:
+            with st.container():
+                st.download_button(
+                    label="📥 최종 스케쥴 다운로드",
+                    data=st.session_state.output,
+                    file_name=f"{month_str} 스케쥴.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_schedule_button",
+                    type="primary",
+                    on_click=lambda: st.session_state.update({"downloaded": True})
+                )
+        st.write("DEBUG: 근무 배정 로직 최종 완료.") # DEBUG
