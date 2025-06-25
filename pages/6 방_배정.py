@@ -89,7 +89,7 @@ def load_data_page6_no_cache(month_str):
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     
     try:
-        worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
+        worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
     except Exception as e:
         st.error(f"스케줄 시트를 불러오는 데 실패: {e}")
@@ -118,16 +118,16 @@ def load_data_page6_no_cache(month_str):
         st.warning(f"{month_str} 누적 시트가 없습니다. 빈 DataFrame으로 초기화합니다.")
         df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
 
-    # [추가된 부분] 스케쥴 교환 요청 시트 불러오기
+    # [추가된 부분] 스케줄 교환 요청 시트 불러오기
     try:
-        worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케쥴 교환요청")
+        worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케줄 변경요청")
         df_swap_requests = pd.DataFrame(worksheet_swap_requests.get_all_records())
         st.session_state["df_swap_requests"] = df_swap_requests
     except gspread.exceptions.WorksheetNotFound:
-        st.warning(f"'{month_str} 스케쥴 교환요청' 시트를 찾을 수 없습니다. 빈 테이블로 시작합니다.")
+        st.warning(f"'{month_str} 스케줄 변경요청' 시트를 찾을 수 없습니다. 빈 테이블로 시작합니다.")
         st.session_state["df_swap_requests"] = pd.DataFrame(columns=[
-            "RequestID", "Timestamp", "RequesterName", "RequesterID", "FromDateStr",
-            "ToPersonName", "ToDateStr", "ShiftType"
+            "RequestID", "요청일시", "요청자", "요청자 사번", "요청자 기존 근무",
+            "상대방", "상대방 기존 근무", "시간대"
         ])
 
     st.session_state["df_schedule"] = df_schedule
@@ -259,11 +259,11 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     applied_requests = 0
 
     for _, row in swap_requests_df.iterrows():
-        from_date_str = parse_swap_date(row['FromDateStr'])
-        to_date_str = parse_swap_date(row['ToDateStr'])
-        shift_type = row['ShiftType'] # '오전' 또는 '오후'
-        requester = str(row['RequesterName']).strip()
-        to_person = str(row['ToPersonName']).strip()
+        from_date_str = parse_swap_date(row['요청자 기존 근무'])
+        to_date_str = parse_swap_date(row['상대방 기존 근무'])
+        shift_type = row['시간대'] # '오전' 또는 '오후'
+        requester = str(row['요청자']).strip()
+        to_person = str(row['상대방']).strip()
 
         if not all([from_date_str, to_date_str, shift_type, requester, to_person]):
             st.warning(f"정보가 부족하여 교환 요청을 건너뜁니다: RequestID {row.get('RequestID', 'N/A')}")
@@ -325,20 +325,22 @@ if st.button("🔄 새로고침 (R)"):
     st.rerun()
 
 # 근무자 명단 수정
-st.subheader("📋 근무자 명단 수정")
 st.write(" ")
-st.markdown("##### 📋 스케쥴 변경 요청 목록")
-st.write("아래 변경 요청 목록을 확인하고, 스케쥴을 수정 후 저장하세요.")
+st.subheader("📝 근무자 명단 수정")
+st.write(" ")
+st.write("**📋 스케줄 변경 요청 목록**")
+st.write("아래 변경 요청 목록을 확인하고, 스케줄을 수정 후 저장하세요.")
 df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
 if not df_swaps_raw.empty:
-    cols_to_display = {'Timestamp': '요청일시', 'RequesterName': '요청자', 'FromDateStr': '요청자 기존 근무', 'ToPersonName': '상대방', 'ToDateStr': '상대방 기존 근무'}
+    cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '요청자 기존 근무': '요청자 기존 근무', '상대방': '상대방', '상대방 기존 근무': '상대방 기존 근무'}
     existing_cols = [col for col in cols_to_display.keys() if col in df_swaps_raw.columns]
     df_swaps_display = df_swaps_raw[existing_cols].rename(columns=cols_to_display)
     st.dataframe(df_swaps_display, use_container_width=True, hide_index=True)
 else:
     st.info("표시할 교환 요청 데이터가 없습니다.")
 
-st.markdown("##### ✍️ 스케쥴 수정")
+st.write(" ")
+st.write("**✍️ 스케줄 수정**")
 st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
 if st.button("🔄 요청사항 일괄 적용"):
     df_swaps = st.session_state.get("df_swap_requests", pd.DataFrame())
@@ -374,7 +376,7 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary
         st.info("최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
+        worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
         update_sheet_with_retry(worksheet_schedule, schedule_data)
         st.session_state.update({"df_schedule": df_schedule_to_save, "df_schedule_md": create_df_schedule_md(df_schedule_to_save)})

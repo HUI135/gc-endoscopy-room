@@ -179,7 +179,7 @@ _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
 
 st.write(" ")
-st.subheader("📁 스케쥴 시트 이동")
+st.subheader("📁 스케줄 시트 이동")
 st.markdown("https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?usp=sharing")
 
 # 명단 관리 탭

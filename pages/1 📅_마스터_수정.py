@@ -70,7 +70,7 @@ def track_sheets_update_usage():
                 range="'로그'!A1",
                 valueInputOption="RAW",
                 insertDataOption="INSERT_ROWS",
-                body={"values": [[f"{timestamp} - {user_name} 스케쥴 수정"]]}
+                body={"values": [[f"{timestamp} - {user_name} 스케줄 수정"]]}
             ).execute()
 
     except Exception as e:
@@ -259,7 +259,7 @@ st_calendar(events=events, options=calendar_options)
 
 # ✅ 캘린더 섹션
 st.divider()
-st.markdown(f"<h6 style='font-weight:bold;'>📅 마스터 스케쥴 편집</h6>", unsafe_allow_html=True)
+st.markdown(f"<h6 style='font-weight:bold;'>📅 마스터 스케줄 편집</h6>", unsafe_allow_html=True)
 
 # 🌙 월 단위 일괄 설정
 with st.expander("📅 월 단위로 일괄 설정"):

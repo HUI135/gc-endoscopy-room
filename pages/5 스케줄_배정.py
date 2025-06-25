@@ -338,7 +338,7 @@ next_month = datetime.datetime(2025, 4, 1)
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 dates = pd.date_range(start=next_month, end=next_month.replace(day=last_day))
 weekdays = [d for d in dates if d.weekday() < 5]
-week_numbers = {d: (d.day - 1) // 7 + 1 for d in dates}
+week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in dates}
 day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
 
 # df_final 초기화
@@ -346,7 +346,7 @@ df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근
 
 # 데이터프레임 로드 확인 (Streamlit UI로 변경)
 st.divider()
-st.subheader(f"✨ {month_str} 스케쥴 배정 수행")
+st.subheader(f"✨ {month_str} 스케줄 배정 수행")
 # st.write("df_request 확인:", df_request.head())
 # st.write("df_cumulative 확인:", df_cumulative.head())
 
@@ -403,7 +403,7 @@ def update_worker_status(df, date_str, time_slot, worker, status, memo, color):
         new_row = pd.DataFrame({
             '날짜': [date_str],
             '요일': [day_map[pd.to_datetime(date_str).weekday()]],
-            '주차': [week_numbers[pd.to_datetime(date_str)]],
+            '주차': [week_numbers.get(date_obj.date())],
             '시간대': [time_slot],
             '근무자': [worker.strip()],
             '상태': [status],
@@ -518,60 +518,68 @@ for holiday in selected_holidays:
             holiday_dates.append(option[1])
             break
 
-# 토요 스케쥴 입력 UI 추가
-st.markdown("**📅 토요 스케쥴 입력**")
-
 # df_master와 df_request에서 이름 추출 및 중복 제거
 names_in_master = set(df_master["이름"].unique().tolist())
 names_in_request = set(df_request["이름"].unique().tolist())
 all_names = sorted(list(names_in_master.union(names_in_request)))  # 중복 제거 후 정렬
 
-# 2025년 4월의 토요일 날짜 추출
-saturdays = [d for d in dates if d.weekday() == 5]  # 토요일은 weekday() == 5
-saturday_options = []
-for date in saturdays:
-    date_str = date.strftime('%Y-%m-%d')
-    date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
-    saturday_format = f"{date_obj.month}월 {date_obj.day}일(토)"
-    saturday_options.append((saturday_format, date_str))
+# 근무 배정 로직 (날짜 관련 변수 설정)
+month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+_, last_day = calendar.monthrange(month_dt.year, month_dt.month)
+all_month_dates = pd.date_range(start=month_dt, end=month_dt.replace(day=last_day))
+weekdays = [d for d in all_month_dates if d.weekday() < 5]
+# 이 부분: 키를 .date() 객체로 생성
+week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in all_month_dates}
+day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
 
-# 최대 3개의 토요일 스케쥴 입력 허용
-saturday_schedules = []
-for i in range(3):
-    cols = st.columns(2)
+# --- UI 개선: 토요/휴일 스케줄 입력 ---
+st.markdown("**📅 토요/휴일 스케줄 입력**")
+
+# 전체 인원 목록 준비
+all_names = sorted(list(df_master["이름"].unique()))
+
+# special_schedules 리스트 초기화
+special_schedules = []
+
+# st.session_state을 사용하여 추가된 입력 필드 수 관리
+if 'special_schedule_count' not in st.session_state:
+    st.session_state.special_schedule_count = 1
+
+for i in range(st.session_state.special_schedule_count):
+    cols = st.columns([2, 3])
     with cols[0]:
-        selected_saturday = st.selectbox(
-            label=f"토요일 날짜 선택 {i+1}",
-            options=["선택 안 함"] + [option[0] for option in saturday_options],
-            key=f"saturday_select_{i}"
+        # 날짜 선택 위젯 (전체 월 대상)
+        selected_date = st.date_input(
+            label=f"날짜 선택",
+            value=None,
+            min_value=month_dt.date(),
+            max_value=month_dt.replace(day=last_day).date(),
+            key=f"special_date_{i}",
+            help="주말, 공휴일 등 정규 스케줄 외 근무가 필요한 날짜를 선택하세요."
         )
     with cols[1]:
-        if selected_saturday != "선택 안 함":
+        if selected_date:
+            # 인원 선택 위젯 (제한 없음)
             selected_workers = st.multiselect(
-                label=f"근무 인원 선택 {i+1} (최대 10명)",
-                options=all_names,  # df_master와 df_request의 모든 이름 사용
-                default=[],
-                key=f"saturday_workers_{i}",
+                label=f"근무 인원 선택",
+                options=all_names,
+                key=f"special_workers_{i}"
             )
-            if len(selected_workers) > 10:
-                st.warning("근무 인원은 최대 10명까지 선택 가능합니다.")
-                selected_workers = selected_workers[:10]
-        else:
-            selected_workers = []
+            # 선택된 스케줄 정보를 리스트에 저장
+            special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
 
-    # 선택된 데이터 저장
-    if selected_saturday != "선택 안 함":
-        for option in saturday_options:
-            if option[0] == selected_saturday:
-                saturday_date = option[1]  #-MM-DD 형식
-                saturday_schedules.append((saturday_date, selected_workers))
-                break
+# 입력 필드 추가 버튼
+if st.button("➕ 토요/휴일 스케줄 추가"):
+    st.session_state.special_schedule_count += 1
+    st.rerun()
 
 if st.button("🚀 근무 배정 실행"):
     # 버튼 클릭 시 세션 상태 초기화
     st.session_state.assigned = False
     st.session_state.output = None
     st.session_state.downloaded = False
+
+    special_schedule_dates = [s[0] for s in special_schedules]
 
     with st.spinner("근무 배정 중..."):
         time.sleep(1)
@@ -589,7 +597,7 @@ if st.button("🚀 근무 배정 실행"):
         for date in active_weekdays:
             date_str = date.strftime('%Y-%m-%d')
             day_name = day_map[date.weekday()]
-            week_num = week_numbers[date]
+            week_num = week_numbers[date.date()]
             for time_slot in ['오전', '오후']:
                 shift_key = f"{day_name} {time_slot}"
                 shift_row = df_shift_processed[df_shift_processed['시간대'] == shift_key]
@@ -762,6 +770,17 @@ if st.button("🚀 근무 배정 실행"):
              if worker in df_cumulative_next.index: df_cumulative_next.loc[worker, '오후누적'] = count
         df_cumulative_next.reset_index(inplace=True)
 
+        if special_schedules:
+            for date_str, workers in special_schedules:
+                # 해당 날짜의 자동 배정된 모든 기록(오전/오후)을 df_final에서 삭제
+                if not df_final.empty:
+                    df_final = df_final[df_final['날짜'] != date_str].copy()
+
+                # 입력된 인원을 '오전' 근무로 새로 추가
+                for worker in workers:
+                    # 함수 정의에 맞게 7개의 인자만 전달하도록 수정
+                    df_final = update_worker_status(df_final, date_str, '오전', worker, '근무', '', '특수근무색')
+        
         # 엑셀 및 구글시트 출력을 위한 최종 데이터 생성
         _, last_day = calendar.monthrange(next_month.year, next_month.month)
         all_month_dates = pd.date_range(start=next_month, end=next_month.replace(day=last_day))
@@ -799,8 +818,8 @@ if st.button("🚀 근무 배정 실행"):
             
             # 토요일 UI 입력 덮어쓰기
             if row['요일'] == '토':
-                for saturday_date, workers in saturday_schedules:
-                    if date == saturday_date:
+                for special_date, workers in special_schedules:
+                    if date == special_date:
                         workers_padded = workers[:10] + [''] * (10 - len(workers[:10]))
                         for i in range(1, 11): df_excel.at[idx, str(i)] = workers_padded[i-1]
         
@@ -839,57 +858,82 @@ if st.button("🚀 근무 배정 실행"):
         for worker, actual_count in actual_oncall_counts.items():
             max_count = oncall_assignments.get(worker, 0)
             if actual_count > max_count: st.info(f"오전당직(온콜) 횟수 제한 한계로, {worker} 님이 최대 배치 {max_count}회가 아닌 {actual_count}회 배치되었습니다.")
+        
         wb = Workbook()
         ws = wb.active
         ws.title = "스케줄"
+        
+        # 1. 색상 맵에 특수근무용 색상 추가
+        color_map = {
+            '🔴 빨간색': 'C00000', '🟠 주황색': 'FFD966', '🟢 초록색': '92D050', 
+            '🟡 노란색': 'FFFF00', '🔵 파란색': '0070C0', '🟣 보라색': '7030A0', 
+            '기본': 'FFFFFF', '특수근무색': 'B7DEE8' # 특수근무 셀 색상
+        }
+        # 2. 특수근무일/빈 날짜용 색상 미리 정의
+        special_day_fill = PatternFill(start_color='95B3D7', end_color='95B3D7', fill_type='solid')
+        empty_day_fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid')
+        default_day_fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+
+        # 헤더 생성
         for col_idx, col_name in enumerate(df_excel.columns, 1):
             cell = ws.cell(row=1, column=col_idx)
             cell.value = col_name
             cell.fill = PatternFill(start_color='000000', end_color='000000', fill_type='solid')
             cell.font = Font(size=9, color='FFFFFF')
             cell.alignment = Alignment(horizontal='center', vertical='center')
+
         border = Border(left=Side(style='thin', color='000000'), right=Side(style='thin', color='000000'), top=Side(style='thin', color='000000'), bottom=Side(style='thin', color='000000'))
-        color_map = {'🔴 빨간색': 'C00000', '🟠 주황색': 'FFD966', '🟢 초록색': '92D050', '🟡 노란색': 'FFFF00', '🔵 파란색': '0070C0', '🟣 보라색': '7030A0', '기본': 'FFFFFF'}
+        
+        # 데이터 행 순회하며 스타일 적용
         for row_idx, (idx, row) in enumerate(df_excel.iterrows(), 2):
+            date_str_lookup = df_schedule.at[idx, '날짜']
+            is_special_day = date_str_lookup in special_schedule_dates
+            is_empty_day = df_final_unique[df_final_unique['날짜'] == date_str_lookup].empty and not is_special_day
+            
+            # 행 전체 스타일 적용
             for col_idx, col_name in enumerate(df_excel.columns, 1):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 cell.value = row[col_name]
                 cell.font = Font(size=9)
                 cell.border = border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
-                if col_name == '날짜': cell.fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid')
+
+                # 우선순위 1: 빈 날짜 행 전체 음영 처리
+                if is_empty_day:
+                    cell.fill = empty_day_fill
+                    continue # 빈 행은 아래 스타일 로직을 건너뜀
+
+                # 우선순위 2: 그 외의 경우, 각 셀에 맞는 스타일 적용
+                if col_name == '날짜':
+                    cell.fill = empty_day_fill # '날짜' 열은 항상 회색
                 elif col_name == '요일':
-                    date_str_formatted = row['날짜']
-                    date_obj_for_holiday_check = datetime.datetime.strptime(date_str_formatted, '%m월 %d일').replace(year=2025)
-                    formatted_date_for_holiday_check = date_obj_for_holiday_check.strftime('%Y-%m-%d')
-                    selected_saturday_dates = [schedule[0] for schedule in saturday_schedules]
-                    if formatted_date_for_holiday_check in holiday_dates: cell.fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid')
-                    elif row['요일'] == '토' and formatted_date_for_holiday_check in selected_saturday_dates: cell.fill = PatternFill(start_color='BFBFBF', end_color='BFBFBF', fill_type='solid')
-                    elif row['요일'] in ['토', '일']: cell.fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid')
-                    else: cell.fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
-                elif col_name in [str(i) for i in range(1, max_morning_workers + 1)] or col_name.startswith('오후'):
-                    date_str_for_lookup = datetime.datetime.strptime(row['날짜'], '%m월 %d일').replace(year=2025).strftime('%Y-%m-%d')
+                    if is_special_day:
+                        cell.fill = special_day_fill # 특수근무일 '요일' 셀
+                    else:
+                        cell.fill = default_day_fill # 일반 '요일' 셀
+                elif str(col_name).isdigit() or '오후' in str(col_name):
                     worker = row[col_name]
                     if worker:
-                        time_slot_lookup = '오전' if col_name in [str(i) for i in range(1, max_morning_workers + 1)] else '오후'
-                        worker_data = df_final_unique[(df_final_unique['날짜'] == date_str_for_lookup) & (df_final_unique['시간대'] == time_slot_lookup) & (df_final_unique['근무자'] == worker)]
+                        time_slot_lookup = '오전' if str(col_name).isdigit() else '오후'
+                        worker_data = df_final_unique[(df_final_unique['날짜'] == date_str_lookup) & (df_final_unique['시간대'] == time_slot_lookup) & (df_final_unique['근무자'] == worker)]
                         if not worker_data.empty:
-                            status, memo, color = worker_data.iloc[0]['상태'], worker_data.iloc[0]['메모'], worker_data.iloc[0]['색상']
-                            fill = PatternFill(start_color=color_map.get(color, 'FFFFFF'), end_color=color_map.get(color, 'FFFFFF'), fill_type='solid')
-                            cell.fill = fill
-                            if memo: cell.comment = Comment(memo, 'Huiyeon Kim')
-                    if row['요일'] == '토' and worker and col_name in [str(i) for i in range(1, 11)]: cell.fill = PatternFill(start_color=color_map['기본'], end_color=color_map['기본'], fill_type='solid')
-                elif col_name == '오전당직(온콜)':
-                    if row[col_name]: cell.font = Font(size=9, bold=True, color='FF69B4')
-                    else: cell.font = Font(size=9)
+                            color_name = worker_data.iloc[0]['색상']
+                            cell.fill = PatternFill(start_color=color_map.get(color_name, 'FFFFFF'), end_color=color_map.get(color_name, 'FFFFFF'), fill_type='solid')
+                            memo_text = worker_data.iloc[0]['메모']
+                            if memo_text: # 메모가 있을 경우에만 추가 (특수근무는 메모가 ''이므로 추가 안됨)
+                                cell.comment = Comment(memo_text, "Schedule Bot")
+        
         ws.column_dimensions['A'].width = 10
         for col in ws.columns:
-            if col[0].column_letter != 'A': ws.column_dimensions[col[0].column_letter].width = 7
+            if col[0].column_letter != 'A':
+                ws.column_dimensions[col[0].column_letter].width = 7
+
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
         st.session_state.output = output
         
+        import calendar
         # ... 이하 G-Sheet 저장 및 다운로드 버튼 표시 로직은 기존과 동일
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월") 
         next_month_dt = (month_dt + timedelta(days=32)).replace(day=1)
@@ -911,9 +955,9 @@ if st.button("🚀 근무 배정 실행"):
         df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, next_month_start, next_month_end)
         
         try:
-            worksheet_schedule = sheet.worksheet(f"{month_str} 스케쥴")
+            worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         except WorksheetNotFound:
-            worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케쥴", rows=1000, cols=50)
+            worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄", rows=1000, cols=50)
         worksheet_schedule.clear()
         data_to_save = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.astype(str).values.tolist()
         worksheet_schedule.update('A1', data_to_save, value_input_option='RAW')
@@ -936,15 +980,15 @@ if st.button("🚀 근무 배정 실행"):
         st.dataframe(df_cumulative_next)
         st.success(f"✅ {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
         st.divider()
-        st.success(f"✅ {month_str} 스케쥴 테이블이 Google Sheets에 저장되었습니다.")
+        st.success(f"✅ {month_str} 스케줄 테이블이 Google Sheets에 저장되었습니다.")
 
         st.markdown("""<style>.download-button > button { ... }</style>""", unsafe_allow_html=True)
         if st.session_state.assigned and not st.session_state.downloaded:
             with st.container():
                 st.download_button(
-                    label="📥 최종 스케쥴 다운로드",
+                    label="📥 최종 스케줄 다운로드",
                     data=st.session_state.output,
-                    file_name=f"{month_str} 스케쥴.xlsx",
+                    file_name=f"{month_str} 스케줄.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_schedule_button",
                     type="primary",

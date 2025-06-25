@@ -84,17 +84,17 @@ def load_data(month_str):
         st.error(f"'{month_str} 방배정' 시트를 찾을 수 없습니다. 이전 단계 먼저 수행해주세요.")
         st.stop()
         
-    # 2. 방 변경 요청 불러오기
+    # 2. 방배정 변경 요청 불러오기
     try:
-        ws_room_swap = sheet.worksheet(f"{month_str} 방 변경요청")
+        ws_room_swap = sheet.worksheet(f"{month_str} 방배정 변경요청")
         st.session_state["df_room_swap_requests"] = pd.DataFrame(ws_room_swap.get_all_records())
     except gspread.exceptions.WorksheetNotFound:
-        st.warning(f"'{month_str} 방 변경요청' 시트가 없습니다.")
+        st.warning(f"'{month_str} 방배정 변경요청' 시트가 없습니다.")
         st.session_state["df_room_swap_requests"] = pd.DataFrame()
 
     # 3. 스케줄 변경 이력 불러오기 (하늘색 하이라이트용)
     try:
-        ws_schedule_swap = sheet.worksheet(f"{month_str} 스케쥴 교환요청")
+        ws_schedule_swap = sheet.worksheet(f"{month_str} 스케줄 교환요청")
         df_schedule_swaps = pd.DataFrame(ws_schedule_swap.get_all_records())
         
         def parse_swap_date(date_str):
@@ -142,9 +142,9 @@ def apply_room_swaps(df_current, df_requests):
             st.warning(f"적용 실패: {date_str}의 {my_room_col} 또는 {their_room_col}의 근무자가 요청과 다릅니다.")
             
     if applied_count > 0:
-        st.success(f"{applied_count}건의 방 변경 요청이 적용되었습니다.")
+        st.success(f"{applied_count}건의 방배정 변경 요청이 적용되었습니다.")
     else:
-        st.info("새롭게 적용할 방 변경 요청이 없습니다.")
+        st.info("새롭게 적용할 방배정 변경 요청이 없습니다.")
         
     return df_modified
 
@@ -222,11 +222,11 @@ if st.button("🔄 데이터 새로고침"):
 
 load_data(MONTH_STR)
 
-# --- 1. 방 변경 요청 확인 및 일괄 적용 ---
+# --- 1. 방배정 변경 요청 확인 및 일괄 적용 ---
 st.header("Step 1. 변경 요청 확인 및 적용")
 st.write("방배정 결과를 확인하고, 아래 요청에 따라 스케줄을 조정합니다.")
 
-st.subheader("📋 방 변경 요청 목록")
+st.subheader("📋 방배정 변경 요청 목록")
 df_swaps = st.session_state.df_room_swap_requests
 if not df_swaps.empty:
     st.dataframe(df_swaps, use_container_width=True, hide_index=True)
@@ -234,7 +234,7 @@ if not df_swaps.empty:
         st.session_state.df_room_edited = apply_room_swaps(st.session_state.df_room_edited, df_swaps)
         st.rerun()
 else:
-    st.info("접수된 방 변경 요청이 없습니다.")
+    st.info("접수된 방배정 변경 요청이 없습니다.")
 
 st.divider()
 
