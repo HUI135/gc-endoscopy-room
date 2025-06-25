@@ -329,7 +329,7 @@ st.write(" ")
 st.subheader("📝 근무자 명단 수정")
 st.write(" ")
 st.write("**📋 스케줄 변경 요청 목록**")
-st.write("아래 변경 요청 목록을 확인하고, 스케줄을 수정 후 저장하세요.")
+st.write("- 아래 변경 요청 목록을 확인하고, 스케줄을 수정 후 저장하세요.")
 df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
 if not df_swaps_raw.empty:
     cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '요청자 기존 근무': '요청자 기존 근무', '상대방': '상대방', '상대방 기존 근무': '상대방 기존 근무'}
@@ -581,7 +581,7 @@ st.markdown("**🙋‍♂️ 현재 방 배정 요청 목록**")
 if st.session_state["df_room_request"].empty:
     st.info("☑️ 현재 방 배정 요청이 없습니다.")
 else:
-    st.dataframe(st.session_state["df_room_request"], use_container_width=True)
+    st.dataframe(st.session_state["df_room_request"], use_container_width=True, hide_index=True)
     
 # 날짜정보 파싱 함수
 def parse_date_info(date_info):
@@ -1022,7 +1022,7 @@ if st.button("🚀 방배정 수행", use_container_width=True):
     df_room = pd.DataFrame(result_data, columns=columns)
     st.write(" ")
     st.markdown("**✅ 통합 배치 결과**")
-    st.dataframe(df_room)
+    st.dataframe(df_room, hide_index=True)
     
     # --- 통계 계산 (기존과 동일) ---
     for row_data in result_data:
@@ -1035,7 +1035,7 @@ if st.button("🚀 방배정 수행", use_container_width=True):
     for person in sorted(all_personnel_stats):
         stats_data.append({'인원': person, '이른방 합계': total_stats['early'][person], '늦은방 합계': total_stats['late'][person], '오전 당직 합계': total_stats['morning_duty'][person], '오후 당직 합계': total_stats['afternoon_duty'][person], **{f'{r}번방 합계': total_stats['rooms'][r][person] for r in total_stats['rooms']}})
     stats_df = pd.DataFrame(stats_data)
-    st.divider(); st.markdown("**☑️ 인원별 통계**"); st.dataframe(stats_df)
+    st.divider(); st.markdown("**☑️ 인원별 통계**"); st.dataframe(stats_df, hide_index=True)
     
     # --- [수정] Excel 생성 및 다운로드 로직 ---
     wb = openpyxl.Workbook()

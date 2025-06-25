@@ -167,7 +167,7 @@ df_room = load_room_data(MONTH_STR)
 if df_room.empty:
     st.warning("방 데이터를 불러올 수 없거나 데이터가 비어있습니다.")
 else:
-    st.dataframe(df_room.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True)
+    st.dataframe(df_room.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)
     st.divider()
 
     st.subheader("✨ 방 교환 요청하기")
