@@ -313,6 +313,8 @@ st.session_state["worksheet_room_request"] = worksheet_room_request
 if "df_schedule_md" not in st.session_state:
     st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
 
+st.header("🚪 방 배정", divider='rainbow')
+
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()

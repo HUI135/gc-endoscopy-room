@@ -249,6 +249,8 @@ def split_column_to_multiple(df, column_name, prefix):
 
     return df
 
+st.header("🗓️ 스케줄 배정", divider='rainbow')
+
 # 새로고침 버튼 (맨 상단)
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()

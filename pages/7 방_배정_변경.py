@@ -156,10 +156,12 @@ def apply_assignment_swaps(df_assignment, df_requests):
     elif applied_count == 0 and not df_requests.empty:
         st.info("반영할 유효한 변경 요청이 없습니다. 요청 내용을 확인해주세요.")
         time.sleep(1)
-            
+
     return df_modified, changed_log
 
 month_str = "2025년 04월" # 필요시 날짜 선택 UI로 변경 가능
+
+st.header("🔄 스케줄 배정", divider='rainbow')
 
 # 새로고침 버튼
 if st.button("🔄 새로고침(R)"):
@@ -168,7 +170,7 @@ if st.button("🔄 새로고침(R)"):
 
 # --- 메인 UI ---
 st.write(" ")
-st.subheader(f"🔄 {month_str} 방배정 변경 및 최종 확정")
+st.subheader(f"✅ {month_str} 방배정 변경 및 최종 확정")
 
 # 데이터 로드
 df_final, df_req = load_data_for_change_page(month_str)

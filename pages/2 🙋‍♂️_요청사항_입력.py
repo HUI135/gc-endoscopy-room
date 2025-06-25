@@ -63,15 +63,6 @@ next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
 
-# 새로고침 버튼 (맨 상단)
-if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
-    st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-    st.success("데이터가 새로고침되었습니다.")
-    time.sleep(1)
-    st.rerun()
-
 # 초기 데이터 로드 및 세션 상태 설정
 if "df_request" not in st.session_state:
     st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
@@ -84,6 +75,16 @@ df_user_request = st.session_state["df_user_request"]
 
 # 캘린더 표시
 st.header(f"🙋‍♂️ {name} 님의 {month_str} 요청사항", divider='rainbow')
+
+# 새로고침 버튼 (맨 상단)
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
+    st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+    st.success("데이터가 새로고침되었습니다.")
+    time.sleep(1)
+    st.rerun()
+
 st.write("- 휴가 / 보충 불가 / 꼭 근무 관련 요청사항이 있을 경우 반드시 기재해 주세요.\n- 요청사항은 매월 기재해 주셔야 하며, 별도 요청이 없을 경우에도 반드시 '요청 없음'을 입력해 주세요.")
 
 if df_user_request.empty or (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):

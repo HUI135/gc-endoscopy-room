@@ -236,32 +236,6 @@ next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
 
-# 새로고침 버튼 (맨 상단)
-if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    gc = get_gspread_client()
-    st.session_state["df_master"] = load_master_data_page3(gc, url)
-    st.session_state["df_request"] = load_request_data_page3(gc, url, f"{month_str} 요청")
-    st.session_state["df_room_request"] = load_room_request_data_page3(gc, url, f"{month_str} 방배정 요청")
-    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
-    st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-    if not st.session_state["df_room_request"].empty and "이름" in st.session_state["df_room_request"].columns:
-        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
-    else:
-        st.session_state["df_user_room_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-
-    week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=next_month, end=next_month.replace(day=last_day))))
-    week_labels = [f"{i+1}주" for i in range(len(week_nums))]
-
-    master_events = generate_master_events(st.session_state["df_user_master"], next_month.year, next_month.month, week_labels)
-    request_events = generate_request_events(st.session_state["df_user_request"], next_month)
-    room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
-    st.session_state["all_events"] = master_events + request_events + room_request_events
-    
-    st.success("데이터가 새로고침되었습니다.")
-    st.rerun()
-
 # 초기 데이터 로드 및 세션 상태 설정
 if "df_master" not in st.session_state:
     st.session_state["df_master"] = load_master_data_page3(gc, url)
@@ -341,6 +315,34 @@ if "all_events" not in st.session_state:
 
 # 캘린더 표시
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
+
+# 새로고침 버튼 (맨 상단)
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    gc = get_gspread_client()
+    st.session_state["df_master"] = load_master_data_page3(gc, url)
+    st.session_state["df_request"] = load_request_data_page3(gc, url, f"{month_str} 요청")
+    st.session_state["df_room_request"] = load_room_request_data_page3(gc, url, f"{month_str} 방배정 요청")
+    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+    st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+    if not st.session_state["df_room_request"].empty and "이름" in st.session_state["df_room_request"].columns:
+        st.session_state["df_user_room_request"] = st.session_state["df_room_request"][st.session_state["df_room_request"]["이름"] == name].copy()
+    else:
+        st.session_state["df_user_room_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+
+    week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=next_month, end=next_month.replace(day=last_day))))
+    week_labels = [f"{i+1}주" for i in range(len(week_nums))]
+
+    master_events = generate_master_events(st.session_state["df_user_master"], next_month.year, next_month.month, week_labels)
+    request_events = generate_request_events(st.session_state["df_user_request"], next_month)
+    room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month)
+    st.session_state["all_events"] = master_events + request_events + room_request_events
+    
+    st.success("데이터가 새로고침되었습니다.")
+    st.rerun()
+
+
 st.write("- 일자별 내시경실(방) 및 시간대 요청사항이 있으신 경우 입력해 주세요.")
 if not st.session_state["all_events"]:
     st.info("☑️ 표시할 스케줄 또는 요청사항이 없습니다.")

@@ -166,6 +166,8 @@ worksheet2 = st.session_state.get("worksheet2")
 df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
 names_in_master = df_master["이름"].unique() if not df_master.empty else []
 
+st.header("⚙️ 스케줄 관리", divider='rainbow')
+
 # 새로고침 버튼
 if st.button("🔄 새로고침(R)"):
     load_request_data_page4()

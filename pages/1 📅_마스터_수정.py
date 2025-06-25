@@ -96,15 +96,6 @@ def refresh_data():
         st.error(f"데이터 로드 중 오류 발생: {e}")
         return pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
 
-# 새로고침 버튼 (맨 상단)
-if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    st.session_state["df_master"] = load_master_data_page1(gc, url)
-    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
-    st.success("데이터가 새로고침되었습니다.")
-    time.sleep(1)
-    st.rerun()
-
 # ✅ 캘린더 이벤트 생성 함수
 def generate_calendar_events(df_user_master, year, month, week_labels):
     print(f"df_user_master:\n{df_user_master}")  # df_user_master 데이터 확인
@@ -204,6 +195,15 @@ week_nums = sorted(set(d.isocalendar()[1] for d in dates))
 month_str = next_month.strftime("%Y년 %m월")
 
 st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
+
+# 새로고침 버튼 (맨 상단)
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.session_state["df_master"] = load_master_data_page1(gc, url)
+    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+    st.success("데이터가 새로고침되었습니다.")
+    time.sleep(1)
+    st.rerun()
 
 # ✅ 주차 리스트
 has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
