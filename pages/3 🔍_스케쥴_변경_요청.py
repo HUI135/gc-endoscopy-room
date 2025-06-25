@@ -202,7 +202,7 @@ def main():
     all_names = set(df_schedule[AM_COLS + PM_COLS].values.ravel()) - {''}
     all_colleagues = sorted(list(all_names - {user_name}))
 
-    st.dataframe(df_schedule.drop(columns=['날짜_dt'], errors='ignore'))
+    st.dataframe(df_schedule.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True)
     st.divider()
 
     st.markdown("#### ✨ 스케쥴 변경 요청하기")
