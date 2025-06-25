@@ -197,8 +197,10 @@ else:
     if is_step2_active:
         my_shift = st.session_state.pending_swap["my_shift"]
         colleague_name = st.session_state.pending_swap["colleague_name"]
+        
+        st.write(" ")
         st.markdown(f"<h6 style='font-weight:bold;'>🔴 {colleague_name} 님의 근무와 교환</h6>", unsafe_allow_html=True)
-        # ... 2단계 하단 UI ...
+        st.info(f"'{my_shift['display_str']}' 근무를 **{colleague_name}** 님의 아래 근무와 교환합니다.")
         colleague_shifts = get_person_shifts(df_schedule, colleague_name)
         compatible_shifts = [s for s in colleague_shifts if s['shift_type'] == my_shift['shift_type']]
         if not compatible_shifts:
