@@ -224,8 +224,7 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
             worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
             st.cache_data.clear()
             st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
-            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name]
-.copy()
+            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
             st.success("✅ 선택한 요청사항이 삭제되었습니다!")
             st.rerun()
 else:
