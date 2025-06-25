@@ -170,7 +170,7 @@ else:
     st.dataframe(df_room.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)
     st.divider()
 
-    st.subheader("✨ 방 교환 요청하기")
+    st.subheader("✨ 방 변경 요청하기")
     st.write("- 변경은 같은 일자 같은 시간대(오전/오후)끼리만 가능합니다.")
 
     st.write(" ")
