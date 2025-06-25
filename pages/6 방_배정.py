@@ -886,9 +886,6 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 
     return assignment, daily_stats
 
-# df_room 생성 로직 - 8:30 당직 통계 반영 추가
-# (기존 if st.button("🚀 방배정 수행"): 블록 전체를 찾아 아래 코드로 교체)
-
 if st.button("🚀 방배정 수행", use_container_width=True):
     st.write(" ")
     st.subheader(f"💡 {month_str} 방배정 결과", divider='rainbow')
@@ -964,16 +961,26 @@ if st.button("🚀 방배정 수행", use_container_width=True):
         result_row = [date_str, day_of_week]
         has_person = any(val for val in row.iloc[2:-1] if pd.notna(val) and val)
 
-        if day_of_week == '토' and has_person:
-             saturday_personnel = [row.get(str(i), None) for i in range(1, 11)]
-             slot_person_map = {slot: None for slot in all_slots}
-             non_duty_slots = [s for s in all_slots if s not in [morning_duty_slot, '온콜']][:10]
-             for i, slot in enumerate(non_duty_slots):
-                if i < len(saturday_personnel): slot_person_map[slot] = saturday_personnel[i]
-             for slot in all_slots:
-                result_row.append(row['오전당직(온콜)'] if slot == morning_duty_slot or slot == '온콜' else slot_person_map.get(slot, None))
-             result_data.append(result_row)
-             continue
+        personnel_for_the_day = [p for p in row.iloc[2:].dropna() if p]
+
+        # 2. '소수 인원 근무'로 판단할 기준 인원수를 설정합니다. (이 값을 조절하여 기준 변경 가능)
+        SMALL_TEAM_THRESHOLD = 15
+
+        # 3. 근무 인원수가 설정된 기준보다 적으면, 방 배정 없이 순서대로 나열합니다.
+        if len(personnel_for_the_day) < SMALL_TEAM_THRESHOLD and has_person:
+            
+            result_row.append(None)
+            
+            result_row.extend(personnel_for_the_day)
+
+            num_slots_to_fill = len(all_slots)
+            slots_filled_count = len(personnel_for_the_day) + 1 # 근무자 수 + 비워둔 1칸
+            padding_needed = num_slots_to_fill - slots_filled_count
+            if padding_needed > 0:
+                result_row.extend([None] * padding_needed)
+
+            result_data.append(result_row)
+            continue
         
         morning_personnel = [row[str(i)] for i in range(1, 12) if pd.notna(row[str(i)]) and row[str(i)]]
         afternoon_personnel = [row[f'오후{i}'] for i in range(1, 5) if pd.notna(row[f'오후{i}']) and row[f'오후{i}']]
@@ -1048,6 +1055,10 @@ if st.button("🚀 방배정 수행", use_container_width=True):
     default_font = Font(name="맑은 고딕", size=9)
     swapped_set = st.session_state.get("swapped_assignments", set())
 
+    special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid") # 소수 근무일 '요일' 색상
+    no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid") # 근무자 없는 날 색상
+    default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 기본 '요일' 색상
+
     # 헤더 렌더링
     for col_idx, header in enumerate(columns, 1):
         cell = sheet.cell(1, col_idx, header)
@@ -1065,6 +1076,13 @@ if st.button("🚀 방배정 수행", use_container_width=True):
         has_person = any(val for val in row_data[2:] if val)
 
         current_date_str = row_data[0]
+        assignment_cells = row_data[2:]
+        personnel_in_row = [p for p in assignment_cells if p]
+        is_no_person_day = not any(personnel_in_row)
+        SMALL_TEAM_THRESHOLD_FORMAT = 15
+        is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT)
+
+        current_date_str = row_data[0]
         for col_idx, value in enumerate(row_data, 1):
             cell = sheet.cell(row_idx, col_idx, value)
             cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -1072,12 +1090,15 @@ if st.button("🚀 방배정 수행", use_container_width=True):
             
             if col_idx == 1:
                 cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-            elif col_idx == 2:
-                cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-                if value == '토' and has_person:
-                    cell.fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
-            elif not has_person and col_idx >= 3:
-                cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+            elif col_idx == 2: # '요일' 열
+                if is_no_person_day:
+                    cell.fill = no_person_day_fill   # 1순위: 근무자 없는 날
+                elif is_small_team_day:
+                    cell.fill = special_day_fill     # 2순위: 소수 인원 근무일
+                else:
+                    cell.fill = default_yoil_fill    # 3순위: 일반 근무일
+            elif is_no_person_day and col_idx >= 3: # 근무자 없는 날의 배정 슬롯
+                cell.fill = no_person_day_fill
 
             slot_name = columns[col_idx-1]
             

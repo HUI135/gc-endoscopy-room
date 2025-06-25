@@ -430,9 +430,10 @@ def is_worker_already_excluded_with_memo(df_data, date_s, time_s, worker_s):
 
 
 # df_final_unique와 df_excel을 기반으로 스케줄 데이터 변환
+
 def transform_schedule_data(df, df_excel, month_start, month_end):
-    # '근무'와 '보충' 상태만 필터링 (평일 데이터)
-    df = df[df['상태'].isin(['근무', '보충'])][['날짜', '시간대', '근무자', '요일']].copy()
+    # [수정] '근무', '보충', '추가보충' 상태를 모두 포함하도록 필터링
+    df = df[df['상태'].isin(['근무', '보충', '추가보충'])][['날짜', '시간대', '근무자', '요일']].copy()
     
     # 전체 날짜 범위 생성
     date_range = pd.date_range(start=month_start, end=month_end)
@@ -890,7 +891,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             must_work = set(requests_on_date[requests_on_date['분류'] == f'꼭 근무({time_slot_am})']['이름'].tolist())
             final_workers = (base_workers - vacationers) | (must_work - vacationers)
             for worker in final_workers:
-                df_final = update_worker_status(df_final, date_str, time_slot_am, worker, '근무', '꼭 근무' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
+                df_final = update_worker_status(df_final, date_str, time_slot_am, worker, '근무', '' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
             for vac in (vacationers & base_workers):
                 df_final = update_worker_status(df_final, date_str, time_slot_am, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
         
@@ -914,7 +915,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             final_workers.update((must_work & eligible_workers) - vacationers)
 
             for worker in final_workers:
-                df_final = update_worker_status(df_final, date_str, time_slot_pm, worker, '근무', '꼭 근무' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
+                df_final = update_worker_status(df_final, date_str, time_slot_pm, worker, '근무', '' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
             for vac in (vacationers & base_workers):
                  if not df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot_pm) & (df_final['근무자'] == vac) & (df_final['상태'] == '근무')].empty: continue
                  df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
@@ -936,7 +937,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             for date_str, workers in special_schedules:
                 if not df_final.empty: df_final = df_final[df_final['날짜'] != date_str].copy()
                 for worker in workers:
-                    df_final = update_worker_status(df_final, date_str, '오전', worker, '근무', '특별 근무', '특수근무색', day_map, week_numbers)
+                    df_final = update_worker_status(df_final, date_str, '오전', worker, '근무', '', '특수근무색', day_map, week_numbers)
         
         color_priority = {'🟠 주황색': 0, '🟢 초록색': 1, '🟡 노란색': 2, '기본': 3, '🔴 빨간색': 4, '🔵 파란색': 5, '🟣 보라색': 6, '특수근무색': -1}
         df_final['색상_우선순위'] = df_final['색상'].map(color_priority)
