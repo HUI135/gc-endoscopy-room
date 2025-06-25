@@ -2,6 +2,7 @@ import re
 import streamlit as st
 import pandas as pd
 import gspread
+from collections import Counter
 from google.oauth2.service_account import Credentials
 import time
 from datetime import datetime
@@ -152,6 +153,51 @@ def apply_assignment_swaps(df_assignment, df_requests):
 
     return df_modified, changed_log
 
+def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
+    """최종 방배정 결과 DataFrame을 바탕으로 인원별 통계를 계산합니다."""
+    total_stats = {
+        'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(),
+        'rooms': {str(i): Counter() for i in range(1, 13)}
+    }
+    
+    all_personnel = sorted([p for p in pd.unique(result_df.iloc[:, 2:].values.ravel('K')) if pd.notna(p) and p])
+    SMALL_TEAM_THRESHOLD = 13
+
+    for _, row in result_df.iterrows():
+        personnel_in_row = [p for p in row.iloc[2:].dropna() if p]
+        if 0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD:
+            continue
+
+        for slot_name in result_df.columns[2:]:
+            person = row[slot_name]
+            if not person or pd.isna(person):
+                continue
+
+            if slot_name.startswith('8:30') and not slot_name.endswith('_당직'):
+                total_stats['early'][person] += 1
+            elif slot_name.startswith('10:00'):
+                total_stats['late'][person] += 1
+            
+            if slot_name == '온콜' or (slot_name.startswith('8:30') and slot_name.endswith('_당직')):
+                total_stats['morning_duty'][person] += 1
+            elif slot_name.startswith('13:30') and slot_name.endswith('_당직'):
+                total_stats['afternoon_duty'][person] += 1
+            
+            match = re.search(r'\((\d+)\)', slot_name)
+            if match:
+                room_num = match.group(1)
+                if room_num in total_stats['rooms']:
+                    total_stats['rooms'][room_num][person] += 1
+
+    stats_data = [{
+        '인원': p,
+        '이른방 합계': total_stats['early'][p], '늦은방 합계': total_stats['late'][p],
+        '오전 당직 합계': total_stats['morning_duty'][p], '오후 당직 합계': total_stats['afternoon_duty'][p],
+        **{f'{r}번방 합계': total_stats['rooms'][r][p] for r in total_stats['rooms']}
+    } for p in all_personnel]
+    
+    return pd.DataFrame(stats_data)
+
 # --- UI 및 데이터 핸들링 ---
 month_str = "2025년 04월" # 필요시 날짜 선택 UI로 변경 가능
 
@@ -233,7 +279,17 @@ else:
 
 if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 Excel 생성", type="primary", use_container_width=True):
     final_df_to_save = st.session_state.df_final_assignment
+
+    st.write(" ")
+    st.subheader(f"💡 {month_str} 최종 방배정 결과", divider='rainbow')
     
+    st.markdown("**✅ 통합 배치 결과**")
+    st.dataframe(final_df_to_save, hide_index=True)
+
+    stats_df = calculate_statistics(final_df_to_save)
+    st.markdown("**☑️ 인원별 통계**")
+    st.dataframe(stats_df, hide_index=True)
+
     # 1. Google Sheets에 저장
     with st.spinner("Google Sheets에 저장 중..."):
         try:
@@ -278,19 +334,33 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 Excel 생�
             has_person = any(val for val in row_data[2:] if val)
 
             current_date_str = row_data[0]
+            assignment_cells = row_data[2:]
+            personnel_in_row = [p for p in assignment_cells if p]
+            is_no_person_day = not any(personnel_in_row)
+            SMALL_TEAM_THRESHOLD_FORMAT = 15
+            is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT)
+            
+            current_date_str = row_data[0]
             for col_idx, value in enumerate(row_data, 1):
                 cell = sheet.cell(row_idx, col_idx, value if value else None)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                 
+                special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid") # 소수 근무일 '요일' 색상
+                no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid") # 근무자 없는 날 색상
+                default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 기본 '요일' 색상
+
                 if col_idx == 1:
                     cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-                elif col_idx == 2:
-                    cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-                    if value == '토' and has_person:
-                        cell.fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
-                elif not has_person and col_idx >= 3:
-                    cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+                elif col_idx == 2: # '요일' 열
+                    if is_no_person_day:
+                        cell.fill = no_person_day_fill   # 1순위: 근무자 없는 날
+                    elif is_small_team_day:
+                        cell.fill = special_day_fill     # 2순위: 소수 인원 근무일
+                    else:
+                        cell.fill = default_yoil_fill    # 3순위: 일반 근무일
+                elif is_no_person_day and col_idx >= 3: # 근무자 없는 날의 배정 슬롯
+                    cell.fill = no_person_day_fill
 
                 slot_name = columns[col_idx-1]
                 
@@ -303,6 +373,27 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 Excel 생�
                     cell.font = duty_font
                 else:
                     cell.font = default_font
+
+        stats_sheet = wb.create_sheet("Stats")
+        stats_columns = stats_df.columns.tolist()
+        for col_idx, header in enumerate(stats_columns, 1):
+             stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
+             cell = stats_sheet.cell(1, col_idx, header)
+             cell.font = Font(bold=True, name="맑은 고딕", size=9)
+             cell.alignment = Alignment(horizontal='center', vertical='center')
+             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+             if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+             elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+             elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+             elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+             elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+        
+        for row_idx, row in enumerate(stats_df.values, 2):
+            for col_idx, value in enumerate(row, 1):
+                cell = stats_sheet.cell(row_idx, col_idx, value)
+                cell.font = Font(name="맑은 고딕", size=9)
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
         output = BytesIO()
         wb.save(output)

@@ -1122,25 +1122,25 @@ if st.button("🚀 방배정 수행", use_container_width=True):
     # --- Stats 시트 생성 및 최종 파일 저장 (기존과 동일) ---
     stats_sheet = wb.create_sheet("Stats")
     stats_columns = stats_df.columns.tolist()
-    for col_idx in range(1, len(stats_columns) + 1):
-        stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 10
     for col_idx, header in enumerate(stats_columns, 1):
-        cell = stats_sheet.cell(1, col_idx, header)
-        cell.font = Font(bold=True, name="맑은 고딕", size=9)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
-        elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-        elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-        elif '당직 합계' in header: cell.fill = PatternFill(start_color="FF00FF", end_color="FF00FF", fill_type="solid")
-        elif "번방 합계" in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+            stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
+            cell = stats_sheet.cell(1, col_idx, header)
+            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+            elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+            elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+            elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+            elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    
     for row_idx, row in enumerate(stats_df.values, 2):
         for col_idx, value in enumerate(row, 1):
             cell = stats_sheet.cell(row_idx, col_idx, value)
             cell.font = Font(name="맑은 고딕", size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-    
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
