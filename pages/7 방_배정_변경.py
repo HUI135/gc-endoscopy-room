@@ -284,11 +284,11 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 Excel 생�
     st.subheader(f"💡 {month_str} 최종 방배정 결과", divider='rainbow')
     
     st.markdown("**✅ 통합 배치 결과**")
-    st.dataframe(final_df_to_save, hide_index=True)
+    st.dataframe(final_df_to_save, use_container_width=True, hide_index=True)
 
     stats_df = calculate_statistics(final_df_to_save)
     st.markdown("**☑️ 인원별 통계**")
-    st.dataframe(stats_df, hide_index=True)
+    st.dataframe(stats_df, use_container_width=True, hide_index=True)
 
     # 1. Google Sheets에 저장
     with st.spinner("Google Sheets에 저장 중..."):
