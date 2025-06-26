@@ -225,6 +225,8 @@ if not st.session_state.df_change_requests.empty:
     df_display = st.session_state.df_change_requests.copy()
     if 'RequestID' in df_display.columns:
         df_display = df_display.drop(columns=['RequestID'])
+    if '요청자 사번' in df_display.columns:
+        df_display = df_display.drop(columns=['요청자 사번'])
     st.dataframe(df_display, use_container_width=True, hide_index=True)
 else:
     st.info("접수된 변경 요청이 없습니다.")
@@ -270,14 +272,14 @@ if not edited_df.equals(st.session_state.df_final_assignment):
     st.session_state.df_final_assignment = edited_df.copy()
 
 st.divider()
-st.caption("변경사항 로그 (이 셀들이 Excel에서 하이라이트됩니다)")
+st.caption("📝 현재까지 기록된 변경사항 로그")
 if st.session_state.changed_cells_log:
     log_df = pd.DataFrame(list(st.session_state.changed_cells_log), columns=['날짜', '슬롯', '변경된 인원'])
     st.dataframe(log_df.sort_values(by=['날짜', '슬롯']).reset_index(drop=True), use_container_width=True, hide_index=True)
 else:
     st.info("기록된 변경사항이 없습니다.")
 
-if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 Excel 생성", type="primary", use_container_width=True):
+if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 수행", type="primary", use_container_width=True):
     final_df_to_save = st.session_state.df_final_assignment
 
     st.write(" ")

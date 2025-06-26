@@ -387,7 +387,7 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary
         st.error(f"Google Sheets 저장 중 오류 발생: {e}")
 
 st.write("---")
-st.caption("📝 현재까지 기록된 변경사항 로그 (날짜, 근무타입, 이름)")
+st.caption("📝 현재까지 기록된 변경사항 로그")
 change_log_set = st.session_state.get("swapped_assignments", set())
 if change_log_set:
     # [핵심 수정] 이제 모든 데이터가 3개짜리이므로 에러 없이 표 생성 가능
@@ -540,7 +540,7 @@ if add_button_clicked:
 st.write(" ")
 st.markdown("**🔴 방 배정 요청 삭제**")
 if not st.session_state["df_room_request"].empty:
-    col0, col1, col_button_del = st.columns([2.5, 4, 1])
+    col0, col1, col_button_del = st.columns([2.5, 4.5, 1])
     with col0:
         unique_names = st.session_state["df_room_request"]["이름"].unique()
         selected_employee = st.selectbox("근무자 선택", unique_names, key="delete_request_employee_select", index=None, placeholder="근무자 선택")
@@ -886,7 +886,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 
     return assignment, daily_stats
 
-if st.button("🚀 방배정 수행", use_container_width=True):
+if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
     st.write(" ")
     st.subheader(f"💡 {month_str} 방배정 결과", divider='rainbow')
     

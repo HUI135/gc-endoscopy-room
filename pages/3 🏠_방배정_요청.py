@@ -525,7 +525,7 @@ st.write(" ")
 st.markdown(f"<h6 style='font-weight:bold;'>🔴 방배정 요청사항 삭제</h6>", unsafe_allow_html=True)
 if not df_user_room_request.empty:
     # [수정] 컬럼을 사용하여 multiselect와 버튼을 나란히 배치
-    del_col1, del_col2 = st.columns([4, 1])
+    del_col1, del_col2 = st.columns([4, 0.5])
     
     with del_col1:
         options = [f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" for _, row in df_user_room_request.iterrows()]
