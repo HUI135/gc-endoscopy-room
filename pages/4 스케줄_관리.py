@@ -411,43 +411,44 @@ if 분류 != "요청 없음":
                 시작, 종료 = 날짜범위
                 날짜정보 = f"{시작.strftime('%Y-%m-%d')} ~ {종료.strftime('%Y-%m-%d')}"
         
-            elif 방식 == "주/요일 선택":
-                선택주차 = st.multiselect(
-                    "주차 선택",
-                    ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"],
-                    key="week_select"
-                )
-                선택요일 = st.multiselect(
-                    "요일 선택",
-                    ["월", "화", "수", "목", "금"],
-                    key="day_select"
-                )
+        elif 방식 == "주/요일 선택":
+            선택주차 = st.multiselect(
+                "주차 선택",
+                ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"],
+                key="week_select"
+            )
+            선택요일 = st.multiselect(
+                "요일 선택",
+                ["월", "화", "수", "목", "금"],
+                key="day_select"
+            )
+            
+            if 선택주차 and 선택요일:
+                c = calendar.Calendar(firstweekday=6) # 일요일부터 시작하는 달력 객체
+                month_calendar = c.monthdatescalendar(next_month.year, next_month.month)
                 
-                if 선택주차 and 선택요일:
-                    c = calendar.Calendar(firstweekday=6) # 일요일부터 시작하는 달력 객체
-                    month_calendar = c.monthdatescalendar(next_month.year, next_month.month)
-                    
-                    요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4} # weekday()와 일치
-                    선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
-                    
-                    날짜목록 = []
-                    for i, week in enumerate(month_calendar):
-                        주차_이름 = ""
-                        if i == 0: 주차_이름 = "첫째주"
-                        elif i == 1: 주차_이름 = "둘째주"
-                        elif i == 2: 주차_이름 = "셋째주"
-                        elif i == 3: 주차_이름 = "넷째주"
-                        elif i == 4: 주차_이름 = "다섯째주"
-                        
-                        if "매주" in 선택주차 or 주차_이름 in 선택주차:
-                            for date_obj in week:
-                                if date_obj.month == next_month.month and date_obj.weekday() in 선택된_요일_인덱스:
-                                    날짜목록.append(date_obj.strftime("%Y-%m-%d"))
+                요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4} # weekday()와 일치
+                선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
                 
-                if 날짜목록:
-                    날짜정보 = ", ".join(sorted(list(set(날짜목록))))
-                elif 선택주차 and 선택요일:
-                    st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+                날짜목록 = []
+                for i, week in enumerate(month_calendar):
+                    주차_이름 = ""
+                    if i == 0: 주차_이름 = "첫째주"
+                    elif i == 1: 주차_이름 = "둘째주"
+                    elif i == 2: 주차_이름 = "셋째주"
+                    elif i == 3: 주차_이름 = "넷째주"
+                    elif i == 4: 주차_이름 = "다섯째주"
+                    
+                    if "매주" in 선택주차 or 주차_이름 in 선택주차:
+                        for date_obj in week:
+                            if date_obj.month == next_month.month and date_obj.weekday() in 선택된_요일_인덱스:
+                                날짜목록.append(date_obj.strftime("%Y-%m-%d"))
+            
+            if 날짜목록:
+                날짜정보 = ", ".join(sorted(list(set(날짜목록))))
+            elif 선택주차 and 선택요일:
+                st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+
 else:
     if "method_select" in st.session_state:
         del st.session_state["method_select"]
