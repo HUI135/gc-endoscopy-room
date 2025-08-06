@@ -191,37 +191,37 @@ with col3:
 with col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
     if st.button("📅 추가", use_container_width=True):
-        sheet = gc.open_by_url(url)
-        worksheet2 = sheet.worksheet(f"{month_str} 요청")
-        
-        # 새 요청 데이터 생성
-        new_row = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
-        
-        if 분류 == "요청 없음":
-            # 요청 없음을 선택하면 기존 요청 삭제
-            st.session_state["df_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name]
-            st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([new_row])], ignore_index=True)
-            st.success("✅ '요청 없음'으로 저장되었습니다.")
-        elif 날짜정보:
-            # 기존에 '요청 없음'이 있다면 해당 행을 삭제
-            st.session_state["df_request"] = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))]
-            # 새 요청 데이터 추가
-            st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([new_row])], ignore_index=True)
-            st.success("✅ 요청사항이 저장되었습니다!")
-        else:
+        # 날짜 정보가 유효한지 먼저 확인
+        if not 날짜정보 and 분류 != "요청 없음":
             st.warning("날짜 정보를 올바르게 입력해주세요.")
-            # st.stop() 대신 return 사용
-            return
+        else:
+            sheet = gc.open_by_url(url)
+            worksheet2 = sheet.worksheet(f"{month_str} 요청")
             
-        # DataFrame 정렬 및 업데이트
-        st.session_state["df_request"] = st.session_state["df_request"].sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-        
-        # 구글 스프레드시트 업데이트
-        worksheet2.clear()
-        worksheet2.update([st.session_state["df_request"].columns.tolist()] + st.session_state["df_request"].astype(str).values.tolist())
-        
-        # 사용자 요청 데이터프레임 업데이트
-        st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+            # 새 요청 데이터 생성
+            new_row = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
+            
+            if 분류 == "요청 없음":
+                # '요청 없음'을 선택하면 기존 요청 삭제
+                st.session_state["df_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name]
+                st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([new_row])], ignore_index=True)
+                st.success("✅ '요청 없음'으로 저장되었습니다.")
+            else:
+                # 기존에 '요청 없음'이 있다면 해당 행을 삭제
+                st.session_state["df_request"] = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))]
+                # 새 요청 데이터 추가
+                st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([new_row])], ignore_index=True)
+                st.success("✅ 요청사항이 저장되었습니다!")
+
+            # DataFrame 정렬 및 업데이트 (유효한 경우에만 실행)
+            st.session_state["df_request"] = st.session_state["df_request"].sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+            
+            # 구글 스프레드시트 업데이트
+            worksheet2.clear()
+            worksheet2.update([st.session_state["df_request"].columns.tolist()] + st.session_state["df_request"].astype(str).values.tolist())
+            
+            # 사용자 요청 데이터프레임 업데이트
+            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
 
 if 분류 == "요청 없음":
     st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
