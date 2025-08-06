@@ -186,30 +186,42 @@ with col3:
             날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
             if not 날짜목록 and 선택주차 and 선택요일:
                 st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
-
+                st.time(2)
+                
 with col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
     if st.button("📅 추가", use_container_width=True):
         sheet = gc.open_by_url(url)
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
+        
+        # 새 요청 데이터 생성
+        new_row = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
+        
         if 분류 == "요청 없음":
-            df_request = df_request[df_request["이름"] != name]
-            df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
+            # 요청 없음을 선택하면 기존 요청 삭제
+            st.session_state["df_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name]
+            st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([new_row])], ignore_index=True)
+            st.success("✅ '요청 없음'으로 저장되었습니다.")
         elif 날짜정보:
-            df_request = df_request[~((df_request["이름"] == name) & (df_request["분류"] == "요청 없음"))]
-            df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": 날짜정보}])], ignore_index=True)
+            # 기존에 '요청 없음'이 있다면 해당 행을 삭제
+            st.session_state["df_request"] = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))]
+            # 새 요청 데이터 추가
+            st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([new_row])], ignore_index=True)
+            st.success("✅ 요청사항이 저장되었습니다!")
         else:
             st.warning("날짜 정보를 올바르게 입력해주세요.")
-            st.stop()
+            # st.stop() 대신 return 사용
+            return
+            
+        # DataFrame 정렬 및 업데이트
+        st.session_state["df_request"] = st.session_state["df_request"].sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
         
-        df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+        # 구글 스프레드시트 업데이트
         worksheet2.clear()
-        worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-        st.cache_data.clear()
-        st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
+        worksheet2.update([st.session_state["df_request"].columns.tolist()] + st.session_state["df_request"].astype(str).values.tolist())
+        
+        # 사용자 요청 데이터프레임 업데이트
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-        st.success("✅ 요청사항이 저장되었습니다!")
-        st.rerun()
 
 if 분류 == "요청 없음":
     st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
@@ -225,49 +237,43 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
         selected_items = st.multiselect("삭제할 요청사항 선택", options, key="delete_select")
     
     with del_col2:
-        # --- [수정] 버튼 정렬을 위한 공백 추가 ---
         st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
         if st.button("🗑️ 삭제", use_container_width=True) and selected_items:
             sheet = gc.open_by_url(url)
             worksheet2 = sheet.worksheet(f"{month_str} 요청")
             
-            # 삭제할 항목의 인덱스를 찾기 위한 새로운 로직
-            # `df_request`에서 사용자 이름과 선택한 분류, 날짜정보가 모두 일치하는 행을 찾아 인덱스를 가져옵니다.
             rows_to_delete = []
             for item in selected_items:
-                # "분류 - 날짜정보" 형식으로 된 문자열을 다시 분류와 날짜정보로 분리
                 parts = item.split(" - ", 1)
                 if len(parts) == 2:
                     분류_str, 날짜정보_str = parts
-                    
-                    # `df_request` DataFrame에서 일치하는 행의 인덱스를 찾습니다.
-                    # `df_request`에 여러 사용자의 데이터가 있으므로 `이름`도 함께 검사해야 합니다.
-                    matching_rows = df_request[
-                        (df_request['이름'] == name) & 
-                        (df_request['분류'] == 분류_str) & 
-                        (df_request['날짜정보'] == 날짜정보_str)
+                    matching_rows = st.session_state["df_request"][
+                        (st.session_state["df_request"]['이름'] == name) & 
+                        (st.session_state["df_request"]['분류'] == 분류_str) & 
+                        (st.session_state["df_request"]['날짜정보'] == 날짜정보_str)
                     ]
-                    
-                    # 중복 항목이 있을 수 있으므로 모든 일치하는 인덱스를 저장합니다.
                     rows_to_delete.extend(matching_rows.index.tolist())
             
             if rows_to_delete:
-                # 인덱스를 사용하여 `df_request`에서 해당 행들을 삭제합니다.
-                df_request = df_request.drop(index=rows_to_delete).reset_index(drop=True)
+                # 세션 상태에 저장된 DataFrame을 직접 삭제
+                st.session_state["df_request"] = st.session_state["df_request"].drop(index=rows_to_delete).reset_index(drop=True)
                 
-                # ... (기존 코드 - 요청 없음 처리) ...
-                if df_request[df_request["이름"] == name].empty:
-                    df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
-
-                # ... (기존 코드 - 데이터 업데이트) ...
-                df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                # 사용자 요청이 모두 삭제되었는지 확인하고 '요청 없음' 추가
+                if st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].empty:
+                    st.session_state["df_request"] = pd.concat([st.session_state["df_request"], pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
+                
+                # DataFrame 정렬 및 업데이트
+                st.session_state["df_request"] = st.session_state["df_request"].sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                
+                # 구글 스프레드시트 업데이트
                 worksheet2.clear()
-                worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-                st.cache_data.clear()
-                st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
+                worksheet2.update([st.session_state["df_request"].columns.tolist()] + st.session_state["df_request"].astype(str).values.tolist())
+                
+                # 사용자 요청 데이터프레임 업데이트
                 st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+                
                 st.success("✅ 선택한 요청사항이 삭제되었습니다!")
-                st.rerun()
+                # st.rerun()을 제거하여 불필요한 새로고침 방지
             else:
                 st.warning("삭제할 항목을 찾을 수 없습니다.")
 
