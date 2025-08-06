@@ -67,7 +67,6 @@ def load_schedule_data(month_str):
         st.error(f"스케줄 데이터 로딩 중 오류 발생: {e}")
         return pd.DataFrame()
 
-# 요청 목록 가져오는 함수
 @st.cache_data(ttl=30)
 def get_my_requests(month_str, employee_id):
     if not employee_id: return []
@@ -75,7 +74,6 @@ def get_my_requests(month_str, employee_id):
         gc = get_gspread_client()
         if not gc: return []
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        # 새로운 컬럼 이름으로 헤더 생성
         headers = ['RequestID', '요청일시', '요청자', '요청자 사번', '요청자 기존 근무', '상대방', '상대방 기존 근무', '시간대']
         try:
             worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
@@ -85,21 +83,18 @@ def get_my_requests(month_str, employee_id):
             return []
         
         all_requests = worksheet.get_all_records()
-        # '요청자 사번' 컬럼으로 필터링
         my_requests = [req for req in all_requests if str(req.get('요청자 사번')) == str(employee_id)]
         return my_requests
     except Exception as e:
         st.error(f"요청 목록을 불러오는 중 오류 발생: {e}")
         return []
 
-# 요청을 시트에 추가하는 함수
 def add_request_to_sheet(request_data, month_str):
     try:
         gc = get_gspread_client()
         if not gc: return False
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
-        # 새로운 컬럼 순서에 맞게 데이터 추가
         row_to_add = [
             request_data['RequestID'], request_data['요청일시'], request_data['요청자'],
             request_data['요청자 사번'], request_data['요청자 기존 근무'], request_data['상대방'],
@@ -164,149 +159,106 @@ else:
 
     st.markdown("#### ✨ 스케줄 변경 요청하기")
     st.write("- 오전 근무는 오전 근무끼리, 오후 근무는 오후 근무끼리만 교환 가능합니다.")
-          
-    st.write(" ")
-          
-    # --- [변경 시작] 요청 타입 선택 기능 추가 ---
-    request_type = st.radio(
-        "요청 방식 선택",
-        ["근무 교환", "대체하여 근무"],
-        key="request_type_radio",
-        horizontal=True
-    )
-          
-    # "대체하여 근무"를 선택했을 때의 안내 문구
-    if request_type == "대체하여 근무":
-        st.info("선택한 상대방의 근무를 나의 근무로 변경 요청합니다. 나의 기존 근무는 사라지지 않습니다.")
 
-    # --- [변경 시작] 1단계 UI 로직 변경 ---
     is_step2_active = st.session_state.pending_swap is not None
 
-    # '대체하여 근무'인 경우, 나의 근무 선택 없이 바로 상대방 근무 선택으로 넘어감
-    if request_type == "대체하여 근무":
-        if not is_step2_active:
-            cols_takeover = st.columns([2, 2, 1])
-            with cols_takeover[0]:
-                selected_colleague = st.selectbox("상대방 선택", all_colleagues, index=None, placeholder="대체할 근무를 가진 인원 선택")
-            with cols_takeover[1]:
-                st.write("")
-                st.session_state.pending_swap = {"request_type": "대체 근무", "colleague_name": selected_colleague}
+    if not is_step2_active:
+        cols_top = st.columns([2, 2, 1])
+        with cols_top[0]:
+            selected_colleague = st.selectbox(
+                "**교환/대체 근무할 상대방 선택**",
+                all_colleagues,
+                index=None,
+                placeholder="상대방 선택"
+            )
+        
+        with cols_top[1]:
+            st.write("")
+        
+        with cols_top[2]:
+            st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
+            if st.button("다음 단계 ➞", use_container_width=True, disabled=(not selected_colleague)):
+                st.session_state.pending_swap = {"colleague_name": selected_colleague}
                 st.rerun()
 
-    # '근무 교환'인 경우, 기존의 1단계 로직
-    else: # request_type == "근무 교환"
-        user_shifts = get_person_shifts(df_schedule, user_name)
-        if not user_shifts and not is_step2_active:
-            st.warning(f"'{user_name}'님의 배정된 근무일이 없습니다. 교환이 불가합니다.")
-        else:
-            cols_top = st.columns([2, 2, 1])
-            if is_step2_active:
-                # ... 2단계 상단 UI ...
-                with cols_top[2]:
-                    st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-                    if st.button("✏️ 수정", use_container_width=True):
+    if is_step2_active:
+        colleague_name = st.session_state.pending_swap["colleague_name"]
+        colleague_shifts = get_person_shifts(df_schedule, colleague_name)
+
+        if not colleague_shifts:
+            st.error(f"**{colleague_name}** 님에게는 교환/대체 가능한 근무가 없습니다.")
+            st.session_state.pending_swap = None
+            if st.button("이전 단계로 돌아가기"):
+                st.rerun()
+            st.stop()
+
+        cols_bottom = st.columns([2, 2, 1])
+        with cols_bottom[0]:
+            colleague_shift_options = {s['display_str']: s for s in colleague_shifts}
+            colleague_selected_shift_str = st.selectbox(
+                f"**{colleague_name} 님의 교환/대체할 근무 선택**",
+                colleague_shift_options.keys(),
+                index=None,
+                placeholder="상대방 근무 선택"
+            )
+
+        with cols_bottom[1]:
+            if colleague_selected_shift_str:
+                selected_shift_type = colleague_shift_options[colleague_selected_shift_str]['shift_type']
+                user_shifts = get_person_shifts(df_schedule, user_name)
+                
+                # '대체하여 근무' 옵션 추가
+                my_shift_options = {"대체하여 근무": {"display_str": "대체하여 근무", "shift_type": selected_shift_type}}
+                
+                # 호환되는 나의 근무 추가
+                for s in user_shifts:
+                    if s['shift_type'] == selected_shift_type:
+                        my_shift_options[s['display_str']] = s
+                        
+                my_selected_shift_str = st.selectbox(
+                    f"**나의 근무 선택** ({selected_shift_type} 근무)",
+                    list(my_shift_options.keys()),
+                    index=0,
+                    placeholder="교환할 나의 근무 선택 또는 대체"
+                )
+            else:
+                my_selected_shift_str = None
+                st.write("")
+
+        with cols_bottom[2]:
+            st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
+            if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not my_selected_shift_str)):
+                colleague_shift = colleague_shift_options[colleague_selected_shift_str]
+
+                # '대체하여 근무' 요청 처리
+                if my_selected_shift_str == "대체하여 근무":
+                    my_shift_data = {"display_str": "대체 근무", "shift_type": selected_shift_type}
+                else:
+                    my_shift_data = my_shift_options[my_selected_shift_str]
+
+                new_request = {
+                    "RequestID": str(uuid.uuid4()),
+                    "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
+                    "요청자": user_name,
+                    "요청자 사번": employee_id,
+                    "요청자 기존 근무": my_shift_data['display_str'],
+                    "상대방": colleague_name,
+                    "상대방 기존 근무": colleague_shift['display_str'],
+                    "시간대": my_shift_data['shift_type']
+                }
+
+                with st.spinner("Google Sheet에 요청을 기록하는 중입니다..."):
+                    success = add_request_to_sheet(new_request, MONTH_STR)
+                    if success:
+                        st.success("변경 요청이 성공적으로 기록되었습니다.")
                         st.session_state.pending_swap = None
                         st.rerun()
-            else:
-                my_shift_options = {s['display_str']: s for s in user_shifts}
-                with cols_top[0]:
-                    my_selected_shift_str = st.selectbox("**요청 일자**", my_shift_options.keys(), index=None, placeholder="변경을 원하는 나의 근무 선택")
-                with cols_top[1]:
-                    selected_colleague = st.selectbox("**변경 후 인원**", all_colleagues, index=None, placeholder="교환할 인원을 선택하세요")
-                with cols_top[2]:
-                    st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-                    if st.button("다음 단계 ➞", use_container_width=True, disabled=(not my_selected_shift_str or not selected_colleague)):
-                        st.session_state.pending_swap = {"request_type": "근무 교환", "my_shift": my_shift_options[my_selected_shift_str], "colleague_name": selected_colleague}
-                        st.rerun()
-    # --- [변경 종료] 1단계 UI 로직 변경 ---
-
-    # --- [변경 시작] 2단계 UI 및 요청 생성 로직 변경 ---
-    if is_step2_active:
-        req_type = st.session_state.pending_swap["request_type"]
-        colleague_name = st.session_state.pending_swap["colleague_name"]
-        
-        st.write(" ")
-        
-        colleague_shifts = get_person_shifts(df_schedule, colleague_name)
-        
-        # 근무 교환 로직
-        if req_type == "근무 교환":
-            my_shift = st.session_state.pending_swap["my_shift"]
-            st.markdown(f"<h6 style='font-weight:bold;'>🔴 {colleague_name} 님의 근무와 교환</h6>", unsafe_allow_html=True)
-            st.info(f"'{my_shift['display_str']}' 근무를 **{colleague_name}** 님의 아래 근무와 교환합니다.")
-            compatible_shifts = [s for s in colleague_shifts if s['shift_type'] == my_shift['shift_type']]
-            if not compatible_shifts:
-                st.error(f"**{colleague_name}** 님은 교환 가능한 {my_shift['shift_type']} 근무가 없습니다.")
-                st.session_state.pending_swap = None
-            else:
-                colleague_shift_options = {s['display_str']: s for s in compatible_shifts}
-                cols_bottom = st.columns([2, 1])
-                with cols_bottom[0]:
-                    colleague_selected_shift_str = st.selectbox(f"**{colleague_name}님의 교환할 근무 선택**", colleague_shift_options.keys(), index=None, placeholder="상대방 근무 선택")
-                with cols_bottom[1]:
-                    st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-                    if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not colleague_selected_shift_str)):
-                        colleague_shift = colleague_shift_options[colleague_selected_shift_str]
-                        # 새로운 데이터 형식으로 요청 생성
-                        new_request = {
-                            "RequestID": str(uuid.uuid4()),
-                            "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
-                            "요청자": user_name,
-                            "요청자 사번": employee_id,
-                            "요청자 기존 근무": my_shift['display_str'],
-                            "상대방": colleague_name,
-                            "상대방 기존 근무": colleague_shift['display_str'],
-                            "시간대": my_shift['shift_type']
-                        }
-                        with st.spinner("Google Sheet에 요청을 기록하는 중입니다..."):
-                            success = add_request_to_sheet(new_request, MONTH_STR)
-                            if success:
-                                st.success("변경 요청이 성공적으로 기록되었습니다.")
-                                st.session_state.pending_swap = None
-                                st.rerun()
-
-        # 대체 근무 로직
-        else: # req_type == "대체 근무"
-            st.markdown(f"<h6 style='font-weight:bold;'>🔴 {colleague_name} 님의 근무 대체</h6>", unsafe_allow_html=True)
-            st.info(f"**{colleague_name}** 님의 아래 근무를 **대체**하여 근무합니다.")
-            
-            if not colleague_shifts:
-                st.error(f"**{colleague_name}** 님에게는 대체 가능한 근무가 없습니다.")
-                st.session_state.pending_swap = None
-            else:
-                colleague_shift_options = {s['display_str']: s for s in colleague_shifts}
-                cols_bottom = st.columns([2, 1])
-                with cols_bottom[0]:
-                    colleague_selected_shift_str = st.selectbox(f"**{colleague_name}님의 대체할 근무 선택**", colleague_shift_options.keys(), index=None, placeholder="상대방 근무 선택")
-                with cols_bottom[1]:
-                    st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-                    if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not colleague_selected_shift_str)):
-                        colleague_shift = colleague_shift_options[colleague_selected_shift_str]
-                        # 대체 근무 요청 데이터 생성
-                        new_request = {
-                            "RequestID": str(uuid.uuid4()),
-                            "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
-                            "요청자": user_name,
-                            "요청자 사번": employee_id,
-                            "요청자 기존 근무": "대체 근무", # '대체 근무'로 구분
-                            "상대방": colleague_name,
-                            "상대방 기존 근무": colleague_shift['display_str'],
-                            "시간대": colleague_shift['shift_type']
-                        }
-                        with st.spinner("Google Sheet에 요청을 기록하는 중입니다..."):
-                            success = add_request_to_sheet(new_request, MONTH_STR)
-                            if success:
-                                st.success("변경 요청이 성공적으로 기록되었습니다.")
-                                st.session_state.pending_swap = None
-                                st.rerun()
-    # --- [변경 종료] 2단계 UI 및 요청 생성 로직 변경 ---
 
     st.divider()
     st.markdown(f"#### 📝 {user_name}님의 스케줄 변경 요청 목록")
-          
+
     my_requests = get_my_requests(MONTH_STR, employee_id)
-          
-    # --- [변경 시작] 요청 목록 표시 로직 변경 ---
+    
     if not my_requests:
         st.info("현재 접수된 변경 요청이 없습니다.")
     else:
@@ -314,8 +266,9 @@ else:
             req_id = req['RequestID']
             col1, col2 = st.columns([5, 1])
             with col1:
-                # '대체 근무'와 '근무 교환'을 구분하여 표시
+                # '대체하여 근무' 요청과 '근무 교환' 요청을 구분하여 표시
                 if req.get('요청자 기존 근무') == "대체 근무":
+                    # '대체하여 근무' 카드 템플릿
                     card_html = f"""
                     <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                         <table style="width: 100%; border-collapse: collapse; text-align: center;">
@@ -330,7 +283,8 @@ else:
                         <div style="text-align: right; font-size: 0.85em; color: #757575;">요청 시간: {req.get('요청일시', '')}</div>
                     </div>
                     """
-                else: # 기존 근무 교환 로직
+                else:
+                    # '근무 교환' 카드 템플릿
                     card_html = f"""
                     <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                         <table style="width: 100%; border-collapse: collapse; text-align: center;">
@@ -354,4 +308,3 @@ else:
                     with st.spinner("요청을 삭제하는 중입니다..."):
                         delete_request_from_sheet(req_id, MONTH_STR)
                         st.rerun()
-    # --- [변경 종료] 요청 목록 표시 로직 변경 ---
