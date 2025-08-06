@@ -225,9 +225,8 @@ else:
                 my_selected_shift_str = None
                 st.write("")
 
-        cols_buttons = st.columns([2, 2, 1])
+        cols_buttons = st.columns([2, 2])
         with cols_buttons[0]:
-            st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
             if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not my_selected_shift_str)):
                 colleague_shift = colleague_shift_options[colleague_selected_shift_str]
 
@@ -255,7 +254,6 @@ else:
                         st.rerun()
 
         with cols_buttons[1]:
-            st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
             if st.button("❌ 취소", use_container_width=True):
                 st.session_state.pending_swap = None
                 st.rerun()
@@ -268,42 +266,39 @@ else:
     if not my_requests:
         st.info("현재 접수된 변경 요청이 없습니다.")
     else:
+        # 기존 HTML 카드 템플릿
+        HTML_CARD_TEMPLATE = (
+            '<div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
+            '<table style="width: 100%; border-collapse: collapse; text-align: center;">'
+            '<thead><tr>'
+            '<th style="font-weight: bold; color: #2E86C1; width: 50%; padding-bottom: 5px; font-size: 1.0em;">나의 근무</th>'
+            '<th style="font-weight: bold; color: #28B463; width: 50%; padding-bottom: 5px; font-size: 1.0em;">교환 근무</th>'
+            '</tr></thead>'
+            '<tbody><tr>'
+            '<td style="font-size: 1.1em; padding-top: 5px; vertical-align: middle;">{from_date_str}</td>'
+            '<td style="font-size: 1.1em; padding-top: 5px; vertical-align: middle;">{to_date_str} (<strong style="color:#1E8449;">{to_person_name}</strong> 님)</td>'
+            '</tr></tbody>'
+            '</table>'
+            '<hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 8px 0 5px 0;">'
+            '<div style="text-align: right; font-size: 0.85em; color: #757575;">요청 시간: {timestamp}</div>'
+            '</div>'
+        )
+
         for req in my_requests:
             req_id = req['RequestID']
             col1, col2 = st.columns([5, 1])
             with col1:
-                if req.get('요청자 기존 근무') == "대체 근무":
-                    card_html = f"""
-                    <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                        <table style="width: 100%; border-collapse: collapse; text-align: center;">
-                            <thead><tr>
-                                <th style="font-weight: bold; color: #E74C3C; width: 100%; padding-bottom: 5px; font-size: 1.0em;">대체하여 근무</th>
-                            </tr></thead>
-                            <tbody><tr>
-                                <td style="font-size: 1.1em; padding-top: 5px; vertical-align: middle;">{req.get('상대방 기존 근무', '')} (<strong style="color:#1E8449;">{req.get('상대방', '')}</strong> 님)</td>
-                            </tr></tbody>
-                        </table>
-                        <hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 8px 0 5px 0;">
-                        <div style="text-align: right; font-size: 0.85em; color: #757575;">요청 시간: {req.get('요청일시', '')}</div>
-                    </div>
-                    """
-                else:
-                    card_html = f"""
-                    <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-                        <table style="width: 100%; border-collapse: collapse; text-align: center;">
-                            <thead><tr>
-                                <th style="font-weight: bold; color: #2E86C1; width: 50%; padding-bottom: 5px; font-size: 1.0em;">나의 근무</th>
-                                <th style="font-weight: bold; color: #28B463; width: 50%; padding-bottom: 5px; font-size: 1.0em;">교환 근무</th>
-                            </tr></thead>
-                            <tbody><tr>
-                                <td style="font-size: 1.1em; padding-top: 5px; vertical-align: middle;">{req.get('요청자 기존 근무', '')}</td>
-                                <td style="font-size: 1.1em; padding-top: 5px; vertical-align: middle;">{req.get('상대방 기존 근무', '')} (<strong style="color:#1E8449;">{req.get('상대방', '')}</strong> 님)</td>
-                            </tr></tbody>
-                        </table>
-                        <hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 8px 0 5px 0;">
-                        <div style="text-align: right; font-size: 0.85em; color: #757575;">요청 시간: {req.get('요청일시', '')}</div>
-                    </div>
-                    """
+                # '대체 근무' 요청일 경우 '나의 근무'를 '대체하여 근무'로 변경
+                from_date_str = req.get('요청자 기존 근무', '')
+                if from_date_str == "대체 근무":
+                    from_date_str = "대체하여 근무"
+                
+                card_html = HTML_CARD_TEMPLATE.format(
+                    from_date_str=from_date_str,
+                    to_date_str=req.get('상대방 기존 근무', ''),
+                    to_person_name=req.get('상대방', ''),
+                    timestamp=req.get('요청일시', '')
+                )
                 st.markdown(card_html, unsafe_allow_html=True)
             with col2:
                 st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
