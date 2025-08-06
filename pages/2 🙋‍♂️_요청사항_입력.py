@@ -152,20 +152,40 @@ with col3:
                 날짜정보 = f"{날짜범위[0].strftime('%Y-%m-%d')} ~ {날짜범위[1].strftime('%Y-%m-%d')}"
         elif 방식 == "주/요일 선택":
             선택주차 = st.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
-            선택요일 = st.multiselect("요일 선택", ["월", "화", "수", "목", "금"], key="day_select")
+            선택요일 = st.multiselect("요일 선택", ["월", "화", "수", "목", "금", "토", "일"], key="day_select") # 주말 포함
+            
+            날짜목록 = []
+            
             if 선택주차 and 선택요일:
-                주차_index, 요일_index = {"첫째주": 0, "둘째주": 1, "셋째주": 2, "넷째주": 3, "다섯째주": 4}, {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
-                날짜목록 = []
-                first_day = next_month_start
-                first_sunday_offset = (6 - first_day.weekday()) % 7
-                for i in range(last_day):
-                    current_date = first_day + datetime.timedelta(days=i)
-                    if current_date.month != next_month.month: continue
-                    week_of_month = (current_date.day + first_sunday_offset - 1) // 7
-                    if current_date.weekday() in 요일_index.values() and any(주차 == "매주" or 주차_index.get(주차) == week_of_month for 주차 in 선택주차):
-                        if current_date.weekday() in [요일_index[요일] for 요일 in 선택요일]:
-                            날짜목록.append(current_date.strftime("%Y-%m-%d"))
-                날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
+                # 달력의 첫째 주 시작 요일을 기준으로 주차 계산
+                # 4월 1일이 수요일이면 첫째 주 일~화는 3월 마지막 주
+                # calendar.Calendar(firstweekday=6) # 0:월, 6:일
+                c = calendar.Calendar(firstweekday=6) # 일요일부터 시작하는 달력 객체 생성
+                
+                # 해당 월의 모든 날짜를 주(list) 단위로 가져옴
+                month_calendar = c.monthdatescalendar(next_month.year, next_month.month)
+                
+                요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
+                선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
+
+                for i, week in enumerate(month_calendar):
+                    주차_이름 = ""
+                    if i == 0: 주차_이름 = "첫째주"
+                    elif i == 1: 주차_이름 = "둘째주"
+                    elif i == 2: 주차_이름 = "셋째주"
+                    elif i == 3: 주차_이름 = "넷째주"
+                    elif i == 4: 주차_이름 = "다섯째주"
+                    
+                    # 사용자가 선택한 주차에 해당하거나 "매주"를 선택했을 경우
+                    if "매주" in 선택주차 or 주차_이름 in 선택주차:
+                        for date in week:
+                            # 해당 날짜가 현재 월에 속하고, 선택한 요일에 해당할 경우
+                            if date.month == next_month.month and date.weekday() in 선택된_요일_인덱스:
+                                날짜목록.append(date.strftime("%Y-%m-%d"))
+
+            날짜정보 = ", ".join(날짜목록) if 날짜목록 else ""
+            if not 날짜목록 and 선택주차 and 선택요일:
+                st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
 
 with col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)

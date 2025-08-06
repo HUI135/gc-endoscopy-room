@@ -19,6 +19,8 @@ USER_PASSWORD = st.secrets["passwords"]["user"]
 ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
 ADMINISTRATOR1 = st.secrets["passwords"]["administrator1"]
 ADMINISTRATOR2 = st.secrets["passwords"]["administrator2"]
+ADMINISTRATOR3 = st.secrets["passwords"]["administrator3"]
+
 
 @st.cache_resource
 def get_gspread_client():
@@ -84,7 +86,7 @@ if not st.session_state["login_success"]:
                 st.session_state["login_success"] = True
                 st.session_state["employee_id"] = int(employee_id)
                 st.session_state["name"] = employee_name
-                st.session_state["is_admin"] = int(employee_id) in [ADMINISTRATOR1, ADMINISTRATOR2]
+                st.session_state["is_admin"] = int(employee_id) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3]
                 st.rerun()
             else:
                 st.error("사번이 매핑된 이름이 없습니다.")
