@@ -164,9 +164,9 @@ else:
 
     st.markdown("#### ✨ 스케줄 변경 요청하기")
     st.write("- 오전 근무는 오전 근무끼리, 오후 근무는 오후 근무끼리만 교환 가능합니다.")
-        
+          
     st.write(" ")
-        
+          
     # --- [변경 시작] 요청 타입 선택 기능 추가 ---
     request_type = st.radio(
         "요청 방식 선택",
@@ -174,7 +174,7 @@ else:
         key="request_type_radio",
         horizontal=True
     )
-        
+          
     # "대체하여 근무"를 선택했을 때의 안내 문구
     if request_type == "대체하여 근무":
         st.info("선택한 상대방의 근무를 나의 근무로 변경 요청합니다. 나의 기존 근무는 사라지지 않습니다.")
@@ -303,9 +303,9 @@ else:
 
     st.divider()
     st.markdown(f"#### 📝 {user_name}님의 스케줄 변경 요청 목록")
-        
+          
     my_requests = get_my_requests(MONTH_STR, employee_id)
-        
+          
     # --- [변경 시작] 요청 목록 표시 로직 변경 ---
     if not my_requests:
         st.info("현재 접수된 변경 요청이 없습니다.")
