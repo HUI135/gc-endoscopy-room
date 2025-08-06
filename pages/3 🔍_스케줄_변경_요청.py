@@ -163,7 +163,7 @@ else:
     is_step2_active = st.session_state.pending_swap is not None
 
     if not is_step2_active:
-        cols_top = st.columns([2, 2, 1])
+        cols_top = st.columns([2, 1])
         with cols_top[0]:
             selected_colleague = st.selectbox(
                 "**교환/대체 근무할 상대방 선택**",
@@ -173,9 +173,6 @@ else:
             )
         
         with cols_top[1]:
-            st.write("")
-        
-        with cols_top[2]:
             st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
             if st.button("다음 단계 ➞", use_container_width=True, disabled=(not selected_colleague)):
                 st.session_state.pending_swap = {"colleague_name": selected_colleague}
@@ -192,7 +189,7 @@ else:
                 st.rerun()
             st.stop()
 
-        cols_bottom = st.columns([2, 2, 1])
+        cols_bottom = st.columns([2, 2])
         with cols_bottom[0]:
             colleague_shift_options = {s['display_str']: s for s in colleague_shifts}
             colleague_selected_shift_str = st.selectbox(
@@ -225,7 +222,7 @@ else:
                 my_selected_shift_str = None
                 st.write("")
 
-        cols_buttons = st.columns([2, 2])
+        cols_buttons = st.columns([0.5, 0.5])
         with cols_buttons[0]:
             if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not my_selected_shift_str)):
                 colleague_shift = colleague_shift_options[colleague_selected_shift_str]
