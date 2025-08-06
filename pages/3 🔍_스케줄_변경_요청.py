@@ -208,7 +208,7 @@ else:
                 user_shifts = get_person_shifts(df_schedule, user_name)
                 
                 # '대체하여 근무' 옵션 추가
-                my_shift_options = {"대체하여 근무": {"display_str": "대체하여 근무", "shift_type": selected_shift_type}}
+                my_shift_options = {"대체하여 근무": {"display_str": "대체 근무", "shift_type": selected_shift_type}}
                 
                 # 호환되는 나의 근무 추가
                 for s in user_shifts:
@@ -225,12 +225,12 @@ else:
                 my_selected_shift_str = None
                 st.write("")
 
-        with cols_bottom[2]:
+        cols_buttons = st.columns([2, 2, 1])
+        with cols_buttons[0]:
             st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
             if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not my_selected_shift_str)):
                 colleague_shift = colleague_shift_options[colleague_selected_shift_str]
 
-                # '대체하여 근무' 요청 처리
                 if my_selected_shift_str == "대체하여 근무":
                     my_shift_data = {"display_str": "대체 근무", "shift_type": selected_shift_type}
                 else:
@@ -254,6 +254,12 @@ else:
                         st.session_state.pending_swap = None
                         st.rerun()
 
+        with cols_buttons[1]:
+            st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
+            if st.button("❌ 취소", use_container_width=True):
+                st.session_state.pending_swap = None
+                st.rerun()
+
     st.divider()
     st.markdown(f"#### 📝 {user_name}님의 스케줄 변경 요청 목록")
 
@@ -266,9 +272,7 @@ else:
             req_id = req['RequestID']
             col1, col2 = st.columns([5, 1])
             with col1:
-                # '대체하여 근무' 요청과 '근무 교환' 요청을 구분하여 표시
                 if req.get('요청자 기존 근무') == "대체 근무":
-                    # '대체하여 근무' 카드 템플릿
                     card_html = f"""
                     <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                         <table style="width: 100%; border-collapse: collapse; text-align: center;">
@@ -284,7 +288,6 @@ else:
                     </div>
                     """
                 else:
-                    # '근무 교환' 카드 템플릿
                     card_html = f"""
                     <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                         <table style="width: 100%; border-collapse: collapse; text-align: center;">
