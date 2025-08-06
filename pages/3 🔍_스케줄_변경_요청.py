@@ -124,6 +124,8 @@ def delete_request_from_sheet(request_id, month_str):
         st.error(f"요청 삭제 중 오류 발생: {e}")
         return False
 
+# ... (기존 코드 생략) ...
+
 def get_person_shifts(df, person_name):
     shifts = []
     am_cols_in_df = [col for col in AM_COLS if col in df.columns]
@@ -158,12 +160,14 @@ else:
     st.divider()
 
     st.markdown("#### ✨ 스케줄 변경 요청하기")
+    st.write("- 교환/대체할 상대방의 근무 중, 내가 근무하지 않는 날짜와 시간만 옵션에 표시됩니다.")
     st.write("- 오전 근무는 오전 근무끼리, 오후 근무는 오후 근무끼리만 교환 가능합니다.")
+    st.write(" ")
 
     is_step2_active = st.session_state.pending_swap is not None
 
     if not is_step2_active:
-        cols_top = st.columns([2, 1, 3])
+        cols_top = st.columns([2, 1, 2])
         with cols_top[0]:
             selected_colleague = st.selectbox(
                 "**교환/대체 근무할 상대방 선택**",
@@ -180,41 +184,58 @@ else:
 
     if is_step2_active:
         colleague_name = st.session_state.pending_swap["colleague_name"]
-        colleague_shifts = get_person_shifts(df_schedule, colleague_name)
+        
+        # ⚠️ 변경된 부분: 나의 근무 리스트를 미리 가져와서 상대방 근무를 필터링
+        user_shifts = get_person_shifts(df_schedule, user_name)
+        colleague_shifts_all = get_person_shifts(df_schedule, colleague_name)
+
+        # 상대방의 근무 중에서 나의 근무와 겹치지 않는 것만 선택
+        my_shift_dates = {(s['date_obj'], s['shift_type']) for s in user_shifts}
+        colleague_shifts = [
+            s for s in colleague_shifts_all
+            if (s['date_obj'], s['shift_type']) not in my_shift_dates
+        ]
 
         if not colleague_shifts:
-            st.error(f"**{colleague_name}** 님에게는 교환/대체 가능한 근무가 없습니다.")
+            st.error(f"**{colleague_name}** 님의 근무 중 교환/대체 가능한 날짜/시간대가 없습니다. (해당 일자에 본인의 근무가 없는지 확인해 주세요.)")
             st.session_state.pending_swap = None
             if st.button("이전 단계로 돌아가기"):
                 st.rerun()
             st.stop()
 
-        cols_bottom = st.columns([2, 2])
+        cols_bottom = st.columns([2, 2, 1])
         with cols_bottom[0]:
             colleague_shift_options = {s['display_str']: s for s in colleague_shifts}
             colleague_selected_shift_str = st.selectbox(
                 f"**{colleague_name} 님의 교환/대체할 근무 선택**",
                 colleague_shift_options.keys(),
+                help="내가 근무하지 않는 날짜와 시간만 옵션에 표시됩니다.",
                 index=None,
                 placeholder="상대방 근무 선택"
             )
 
         with cols_bottom[1]:
             if colleague_selected_shift_str:
-                selected_shift_type = colleague_shift_options[colleague_selected_shift_str]['shift_type']
-                user_shifts = get_person_shifts(df_schedule, user_name)
+                selected_shift_data = colleague_shift_options[colleague_selected_shift_str]
+                selected_shift_type = selected_shift_data['shift_type']
+                selected_shift_date_obj = selected_shift_data['date_obj']
                 
                 # '대체하여 근무' 옵션 추가
                 my_shift_options = {"대체하여 근무": {"display_str": "대체 근무", "shift_type": selected_shift_type}}
                 
-                # 호환되는 나의 근무 추가
+                # 호환되는 나의 근무를 추가하되, 상대방의 근무와 겹치지 않는 경우만 추가
                 for s in user_shifts:
-                    if s['shift_type'] == selected_shift_type:
+                    # 나의 근무 날짜와 시간대가 상대방의 근무와 겹치지 않는 경우에만 옵션에 추가
+                    if s['shift_type'] == selected_shift_type and s['date_obj'] != selected_shift_date_obj:
                         my_shift_options[s['display_str']] = s
                         
+                # '대체하여 근무' 옵션을 가장 위로 정렬
+                my_shift_keys = list(my_shift_options.keys())
+                my_shift_keys.sort(key=lambda x: (x != "대체하여 근무", x)) # '대체하여 근무'를 가장 먼저 정렬
+
                 my_selected_shift_str = st.selectbox(
                     f"**나의 근무 선택** ({selected_shift_type} 근무)",
-                    list(my_shift_options.keys()),
+                    my_shift_keys,
                     index=0,
                     placeholder="교환할 나의 근무 선택 또는 대체"
                 )
