@@ -163,7 +163,7 @@ else:
     is_step2_active = st.session_state.pending_swap is not None
 
     if not is_step2_active:
-        cols_top = st.columns([2, 1])
+        cols_top = st.columns([2, 1, 3])
         with cols_top[0]:
             selected_colleague = st.selectbox(
                 "**교환/대체 근무할 상대방 선택**",
