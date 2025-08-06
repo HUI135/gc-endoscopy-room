@@ -230,23 +230,46 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
         if st.button("🗑️ 삭제", use_container_width=True) and selected_items:
             sheet = gc.open_by_url(url)
             worksheet2 = sheet.worksheet(f"{month_str} 요청")
-            selected_indices = []
+            
+            # 삭제할 항목의 인덱스를 찾기 위한 새로운 로직
+            # `df_request`에서 사용자 이름과 선택한 분류, 날짜정보가 모두 일치하는 행을 찾아 인덱스를 가져옵니다.
+            rows_to_delete = []
             for item in selected_items:
-                for idx, row in df_request.iterrows():
-                    if row['이름'] == name and f"{row['분류']} - {row['날짜정보']}" == item:
-                        selected_indices.append(idx)
+                # "분류 - 날짜정보" 형식으로 된 문자열을 다시 분류와 날짜정보로 분리
+                parts = item.split(" - ", 1)
+                if len(parts) == 2:
+                    분류_str, 날짜정보_str = parts
+                    
+                    # `df_request` DataFrame에서 일치하는 행의 인덱스를 찾습니다.
+                    # `df_request`에 여러 사용자의 데이터가 있으므로 `이름`도 함께 검사해야 합니다.
+                    matching_rows = df_request[
+                        (df_request['이름'] == name) & 
+                        (df_request['분류'] == 분류_str) & 
+                        (df_request['날짜정보'] == 날짜정보_str)
+                    ]
+                    
+                    # 중복 항목이 있을 수 있으므로 모든 일치하는 인덱스를 저장합니다.
+                    rows_to_delete.extend(matching_rows.index.tolist())
             
-            df_request = df_request.drop(index=selected_indices).reset_index(drop=True)
-            if df_request[df_request["이름"] == name].empty:
-                df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
-            
-            df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-            worksheet2.clear()
-            worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
-            st.cache_data.clear()
-            st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
-            st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-            st.success("✅ 선택한 요청사항이 삭제되었습니다!")
-            st.rerun()
+            if rows_to_delete:
+                # 인덱스를 사용하여 `df_request`에서 해당 행들을 삭제합니다.
+                df_request = df_request.drop(index=rows_to_delete).reset_index(drop=True)
+                
+                # ... (기존 코드 - 요청 없음 처리) ...
+                if df_request[df_request["이름"] == name].empty:
+                    df_request = pd.concat([df_request, pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
+
+                # ... (기존 코드 - 데이터 업데이트) ...
+                df_request = df_request.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                worksheet2.clear()
+                worksheet2.update([df_request.columns.tolist()] + df_request.astype(str).values.tolist())
+                st.cache_data.clear()
+                st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
+                st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
+                st.success("✅ 선택한 요청사항이 삭제되었습니다!")
+                st.rerun()
+            else:
+                st.warning("삭제할 항목을 찾을 수 없습니다.")
+
 else:
     st.info("📍 삭제할 요청사항이 없습니다.")
