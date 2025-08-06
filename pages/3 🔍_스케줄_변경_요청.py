@@ -222,7 +222,7 @@ else:
                 my_selected_shift_str = None
                 st.write("")
 
-        cols_buttons = st.columns([0.5, 0.5])
+        cols_buttons = st.columns([1, 1, 4])
         with cols_buttons[0]:
             if st.button("➕ 요청 추가", use_container_width=True, type="primary", disabled=(not my_selected_shift_str)):
                 colleague_shift = colleague_shift_options[colleague_selected_shift_str]
