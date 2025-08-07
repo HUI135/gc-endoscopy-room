@@ -304,8 +304,8 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 st.warning(f"날짜 형식 오류로 요청을 건너뜁니다: {date_info}")
                 time.sleep(1)
                 continue
-            # 추출한 월과 일을 int()로 변환하여 0을 제거합니다.
-            swap_date = f"{int(date_match.group(1))}월 {int(date_match.group(2))}일"
+            # 추출한 월과 일을 그대로 사용합니다.
+            swap_date = f"{date_match.group(1)}월 {date_match.group(2)}일"
             
             # 해당 날짜의 행 인덱스를 찾습니다.
             target_row_indices = df_modified[df_modified['날짜'] == swap_date].index
@@ -376,7 +376,7 @@ else:
     df_room_request = st.session_state["df_room_request"]
     worksheet_room_request = st.session_state["worksheet_room_request"]
 
-st.header("� 방 배정", divider='rainbow')
+st.header("🚪 방 배정", divider='rainbow')
 
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
@@ -476,9 +476,8 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
             # FIX: 날짜 문자열을 '4월 4일' 형식으로 변환합니다.
             date_match = re.search(r'(\d+)월 (\d+)일', date_str_raw)
             if date_match:
-                # 핵심 수정: int()를 사용하여 0을 제거
-                month = int(date_match.group(1))
-                day = int(date_match.group(2))
+                month = date_match.group(1)
+                day = date_match.group(2)
                 formatted_date_part = f"{month}월 {day}일"
             else:
                 formatted_date_part = date_str_raw
@@ -1200,28 +1199,9 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
     sheet = wb.active
     sheet.title = "Schedule"
     sky_blue_fill = PatternFill(start_color="CCEEFF", end_color="CCEEFF", fill_type="solid")
-    # 변경된 인원을 위한 새로운 색상 정의 (F2DCDB)
-    changed_person_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
     duty_font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
     default_font = Font(name="맑은 고딕", size=9)
-    # swapped_set = st.session_state.get("swapped_assignments", set()) # 기존 swapped_set 로직은 변경 로그로 대체
-    # 최종 변경 로그를 기반으로 색상을 칠할 셀의 정보를 저장하는 set을 생성합니다.
-    # (날짜, 시간대, 변경 후 인원) 튜플 형태로 저장됩니다.
-    changed_log_set = set()
-    for log in st.session_state.get("final_change_log", []):
-        # '4월 4일 (금) - 오전' 형식의 날짜 문자열에서 날짜와 시간대 추출
-        log_date_info = log['날짜'].split(' - ')[0] # '4월 4일 (금)'
-        log_date_match = re.search(r'(\d+)월 (\d+)일', log_date_info)
-        if log_date_match:
-            # '4월 4일' 형식으로 재구성
-            formatted_date = f"{int(log_date_match.group(1))}월 {int(log_date_match.group(2))}일"
-            time_period = log['날짜'].split(' - ')[1] # '오전' 또는 '오후'
-            new_value = log['변경 후 인원']
-            
-            # 시간대 정보를 '오전'과 '오후'로 통일하여 저장
-            cell_shift_type = '오후' if '오후' in time_period else '오전'
-            
-            changed_log_set.add((formatted_date, cell_shift_type, new_value))
+    swapped_set = st.session_state.get("swapped_assignments", set())
 
     special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid") # 소수 근무일 '요일' 색상
     no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid") # 근무자 없는 날 색상
@@ -1256,57 +1236,52 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             
-            # --- 배경색 우선순위 로직 ---
-            # 1. 근무자 없는 날/소수 인원 근무일
             if col_idx == 1:
                 cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
             elif col_idx == 2: # '요일' 열
                 if is_no_person_day:
-                    cell.fill = no_person_day_fill
+                    cell.fill = no_person_day_fill   # 1순위: 근무자 없는 날
                 elif is_small_team_day:
-                    cell.fill = special_day_fill
+                    cell.fill = special_day_fill     # 2순위: 소수 인원 근무일
                 else:
-                    cell.fill = default_yoil_fill
-            elif is_no_person_day and col_idx >= 3:
+                    cell.fill = default_yoil_fill    # 3순위: 일반 근무일
+            elif is_no_person_day and col_idx >= 3: # 근무자 없는 날의 배정 슬롯
                 cell.fill = no_person_day_fill
 
             slot_name = columns[col_idx-1]
             
-            # 2. 변경된 인원 색상 적용 (가장 높은 우선순위)
-            # 셀의 근무 시간대를 판별
+            # [핵심 수정] 셀의 근무타입을 판별
             cell_shift_type = '오후' if '13:30' in slot_name or '온콜' in slot_name else '오전'
             
-            # 변경된 인원 정보와 일치하는 경우
-            if (current_date_str, cell_shift_type, value) in changed_log_set:
-                cell.fill = changed_person_fill
+            # 서식 적용 (배경색 -> 폰트 -> 메모 순)
+            if (current_date_str, cell_shift_type, value) in swapped_set:
+                cell.fill = sky_blue_fill
             
-            # 3. 당직 폰트 적용
             if (slot_name.endswith('_당직') or slot_name == '온콜') and value:
                 cell.font = duty_font
             else:
                 cell.font = default_font
             
-            # 4. 메모 추가
             if col_idx > 2 and value and date_cache.get(current_date_str):
                 formatted_date_for_comment = date_cache[current_date_str]
                 if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
                     cell.comment = Comment(f"배정 요청: {request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
-
+    
     # --- Stats 시트 생성 및 최종 파일 저장 (기존과 동일) ---
     stats_sheet = wb.create_sheet("Stats")
     stats_columns = stats_df.columns.tolist()
     for col_idx, header in enumerate(stats_columns, 1):
-        stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
-        cell = stats_sheet.cell(1, col_idx, header)
-        cell.font = Font(bold=True, name="맑은 고딕", size=9)
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
-        elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-        elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-        elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-        elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-
+            stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
+            cell = stats_sheet.cell(1, col_idx, header)
+            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+            elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+            elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+            elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+            elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    
     for row_idx, row in enumerate(stats_df.values, 2):
         for col_idx, value in enumerate(row, 1):
             cell = stats_sheet.cell(row_idx, col_idx, value)
@@ -1317,7 +1292,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
     output = BytesIO()
     wb.save(output)
     output.seek(0)
-
+    
     st.divider()
     st.download_button(
         label="📥 최종 방배정 다운로드",

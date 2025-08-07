@@ -328,7 +328,7 @@ def get_user_available_dates(name, df_master, month_start, month_end):
             week_of_month = (day.day - 1) // 7
             if week_of_month in weeks and day.weekday() == 요일_index.get(요일):
                 weekday_name = weekday_map[day.weekday()]
-                month_num = str(day.month).lstrip("0")
+                month_num = str(day.month)
                 day_num = f"{day.day:02d}"
                 display_date = f"{month_num}월 {day_num}일({weekday_name})"
                 save_date = day.strftime("%Y-%m-%d")
@@ -355,7 +355,7 @@ def format_date_for_display(date_info):
             time_slot = f"({time_slot_match[1]})" if len(time_slot_match) > 1 else ""
             
             dt = datetime.datetime.strptime(date_part, "%Y-%m-%d")
-            month_num = str(dt.month).lstrip("0")
+            month_num = str(dt.month)
             day = f"{dt.day:02d}"
             weekday_name = weekday_map[dt.weekday()]
             formatted_date = f"{month_num}월 {day}일({weekday_name}) {time_slot}".strip()

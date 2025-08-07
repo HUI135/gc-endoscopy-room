@@ -87,7 +87,7 @@ def load_request_data_page4():
         
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
-month_str = "2025년 04월"
+month_str = "2025년 4월"
 
 if "data_loaded" not in st.session_state:
     try:

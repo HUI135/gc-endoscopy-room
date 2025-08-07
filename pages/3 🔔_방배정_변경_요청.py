@@ -54,6 +54,7 @@ def load_room_data(month_str):
             st.error("오류: Google Sheets 시트에 '날짜' 열이 없습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)
+        # ⚠️ 이 부분은 그대로 두세요. datetime 객체는 올바르게 변환합니다.
         df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
@@ -145,7 +146,8 @@ def get_person_room_assignments(df, person_name=""):
         match = re.search(r"(\d{1,2}:\d{2})", str(col_name))
         if match:
             time_str = match.group(1)
-            return datetime.strptime(f"0{time_str}" if ':' in time_str and len(time_str.split(':')[0]) == 1 else time_str, "%H:%M").time()
+            # 24시간 형식으로 변환하여 정렬에 문제가 없도록 합니다.
+            return datetime.strptime(time_str.zfill(5), "%H:%M").time()
         if '당직' in str(col_name) or '온콜' in str(col_name):
             return datetime.strptime("23:59", "%H:%M").time()
         return datetime.max.time()
@@ -154,7 +156,10 @@ def get_person_room_assignments(df, person_name=""):
     
     for _, row in sorted_df.iterrows():
         dt = row['날짜_dt']
-        date_str = dt.strftime("%m월 %d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+        
+        # ✅ 이 부분을 아래와 같이 수정해야 합니다. f-string 포맷팅을 사용합니다.
+        date_str = f"{dt.month:02d}월 {dt.day:02d}일 ({'월화수목금토일'[dt.weekday()]})"
+        
         for col in time_cols:
             current_person = row.get(col)
             if (not person_name and current_person) or (person_name and current_person == person_name):
