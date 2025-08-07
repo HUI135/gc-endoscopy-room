@@ -70,13 +70,12 @@ def get_my_room_requests(month_str, employee_id):
         gc = get_gspread_client()
         if not gc: return []
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        headers = ['RequestID', '요청일시', '요청자', '요청자 사번', '요청 근무일', '요청자 방배정', '상대방', '상대방 방배정']
+        
         try:
             worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
-            worksheet.append_row(headers)
             return []
+            
         all_requests = worksheet.get_all_records()
         my_requests = [req for req in all_requests if str(req.get('요청자 사번')) == str(employee_id)]
         return my_requests
@@ -89,12 +88,32 @@ def add_room_request_to_sheet(request_data, month_str):
         gc = get_gspread_client()
         if not gc: return False
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
+        
+        headers = ['RequestID', '요청일시', '요청자', '요청자 사번', '변경 요청', '변경 요청한 방배정']
+        
+        try:
+            worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
+            
+            # 시트가 있지만 헤더가 없는 경우 또는 헤더가 다른 경우
+            current_headers = worksheet.row_values(1)
+            if not current_headers or current_headers != headers:
+                worksheet.update('A1:F1', [headers])
+                st.info(f"'{REQUEST_SHEET_NAME}' 시트의 헤더를 올바른 형식으로 업데이트했습니다.")
+
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
+            worksheet.append_row(headers)
+            st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
+
         row_to_add = [
-            request_data.get('RequestID'), request_data.get('요청일시'), request_data.get('요청자'),
-            request_data.get('요청자 사번'), request_data.get('요청 근무일'), request_data.get('요청자 방배정'),
-            request_data.get('상대방'), request_data.get('상대방 방배정')
+            request_data.get('RequestID'),
+            request_data.get('요청일시'),
+            request_data.get('요청자'),
+            request_data.get('요청자 사번'),
+            request_data.get('변경 요청'),
+            request_data.get('변경 요청한 방배정')
         ]
+        
         worksheet.append_row(row_to_add)
         st.cache_data.clear()
         return True
@@ -186,6 +205,23 @@ else:
     st.divider()
 
     st.subheader("✨ 방 변경 요청하기")
+    with st.expander("🔑 사용설명서"):
+        st.markdown("""  
+        **🟢 나의 방배정을 상대방과 바꾸기**  
+    
+        : 내가 맡은 방배정를 다른 사람에게 넘겨줄 때 사용합니다.
+        - **[변경을 원하는 나의 방배정 선택]**: 내가 바꾸고 싶은 방배정을 선택하세요.
+        - **[교환할 상대방 선택]**: 당월의 모든 근무자가 목록에 나타납니다.  
+        _※ 주의: 내가 선택한 방 배정의 날짜와 시간대에 이미 상대방이 근무한다면, 근무가 중복될 수 있습니다.  
+        상대방의 방배정도 함께 변경해야 합니다._
+  
+        **🔵 상대방의 방배정을 나와 바꾸기**  
+    
+        : 내가 다른 사람의 방배정을 대신 맡아줄 때 사용합니다.
+        - **[상대방 선택]**: 상대방을 선택하세요.
+        - **[상대방의 근무 선택]**: 선택한 상대방의 방배정을 나로 대체합니다.
+        """)
+
 
     # --- 나의 방배정을 상대방과 바꾸기 ---
     st.write(" ")
@@ -208,7 +244,8 @@ else:
             )
 
         with cols_my_to_them[1]:
-            # 모든 직원 목록 (나를 제외)
+            is_my_assignment_selected = my_selected_assignment_str_my is not None
+            
             if st.session_state.get('user_data', None):
                 all_employee_names = set(st.session_state.get('user_data', {}).keys())
             else:
@@ -216,12 +253,13 @@ else:
                 all_employee_names = set(df_room[time_cols_all].values.ravel()) - {''}
             
             compatible_colleague_names = sorted(list(all_employee_names - {user_name}))
-
+            
             selected_colleague_name = st.selectbox(
                 "교환할 상대방 선택",
-                compatible_colleague_names,
+                options=compatible_colleague_names,
                 index=None,
-                placeholder="상대방을 선택하세요",
+                placeholder="먼저 나의 방배정을 선택하세요" if not is_my_assignment_selected else "상대방을 선택하세요",
+                disabled=not is_my_assignment_selected,
                 key="my_to_them_colleague_select"
             )
         
@@ -230,17 +268,16 @@ else:
         if my_selected_assignment_str_my and selected_colleague_name:
             my_selected_info = assignment_options_my[my_selected_assignment_str_my]
             
-            # 내가 선택한 날짜/시간대에 상대방이 근무가 있는지 확인
             is_colleague_occupied = is_person_assigned_at_time(df_room, selected_colleague_name, my_selected_info['date_obj'], my_selected_info['column_name'])
             
             if is_colleague_occupied:
                 st.warning(f"⚠️ **{selected_colleague_name}**님이 **{my_selected_info['display_str'].split('-')[0].strip()}** ({get_shift_period(my_selected_info['column_name'])})에 이미 근무가 있습니다. 중복 배치가 되지 않도록 **{selected_colleague_name}** 님의 방배정도 변경해 주십시오.")
-            else:
-                request_disabled_my = False
+            
+            request_disabled_my = False
 
         with cols_my_to_them[2]:
             st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-            if st.button("➕ 요청 추가", key="add_my_to_them_request_button", use_container_width=True, disabled=request_disabled_my or not(my_selected_assignment_str_my and selected_colleague_name)):
+            if st.button("➕ 요청 추가", key="add_my_to_them_request_button", use_container_width=True, disabled=request_disabled_my):
                 my_assignment_info = assignment_options_my[my_selected_assignment_str_my]
                 
                 new_request = {
@@ -248,10 +285,8 @@ else:
                     "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
                     "요청자": user_name,
                     "요청자 사번": employee_id,
-                    "요청 근무일": my_assignment_info['display_str'].split('-')[0].strip(),
-                    "요청자 방배정": my_assignment_info['column_name'],
-                    "상대방": selected_colleague_name,
-                    "상대방 방배정": '근무 없음',
+                    "변경 요청": f"{user_name} -> {selected_colleague_name}",
+                    "변경 요청한 방배정": my_assignment_info['display_str'],
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
                     if add_room_request_to_sheet(new_request, MONTH_STR):
@@ -272,21 +307,14 @@ else:
         time_cols_all = [col for col in df_room.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)]
         all_colleagues_set = set(df_room[time_cols_all].values.ravel()) - {user_name, ''}
     
-    # 이 부분에서 내가 근무하지 않는 시간대라는 조건이 제거되었습니다.
     for colleague_name in sorted(list(all_colleagues_set)):
         compatible_colleague_names_them.append(colleague_name)
     
     with cols_them_to_my[0]:
-        if not compatible_colleague_names_them:
-            st.warning("교환 가능한 상대방이 없습니다.")
-            index_to_use_them = None
-        else:
-            index_to_use_them = None
-
         selected_colleague_name_them = st.selectbox(
             "상대방 선택",
             compatible_colleague_names_them,
-            index=index_to_use_them,
+            index=None,
             placeholder="상대방을 선택하세요",
             key="them_to_my_colleague_select"
         )
@@ -294,22 +322,34 @@ else:
     with cols_them_to_my[1]:
         colleague_assignment_options_them = {}
         selected_assignment_str_them = None
+        is_them_assignment_selected = selected_colleague_name_them is not None
         
         if selected_colleague_name_them:
             colleague_assignments = get_person_room_assignments(df_room, selected_colleague_name_them)
             
-            if not colleague_assignments:
-                st.warning(f"'{selected_colleague_name_them}'님의 방배정이 없습니다.")
+            user_occupied_slots = {(s['date_obj'], s['column_name']) for s in get_person_room_assignments(df_room, user_name)}
+            compatible_assignments = [
+                s for s in colleague_assignments if (s['date_obj'], s['column_name']) not in user_occupied_slots
+            ]
+
+            if not compatible_assignments:
+                st.warning(f"'{selected_colleague_name_them}'님의 근무 중 교환 가능한 날짜/시간대가 없습니다.")
+                st.selectbox(
+                    f"'{selected_colleague_name_them}'의 방배정 선택",
+                    [],
+                    disabled=True,
+                    placeholder="교환 가능한 근무 없음",
+                    key="them_to_my_assignment_select_no_option"
+                )
             else:
-                colleague_assignment_options_them = {a['display_str']: a for a in colleague_assignments}
-                
-            selected_assignment_str_them = st.selectbox(
-                f"'{selected_colleague_name_them}'의 방배정 선택",
-                colleague_assignment_options_them.keys(),
-                index=None,
-                placeholder="상대방의 방배정을 선택하세요",
-                key="them_to_my_assignment_select"
-            )
+                colleague_assignment_options_them = {a['display_str']: a for a in compatible_assignments}
+                selected_assignment_str_them = st.selectbox(
+                    f"'{selected_colleague_name_them}'의 방배정 선택",
+                    colleague_assignment_options_them.keys(),
+                    index=None,
+                    placeholder="상대방의 방배정을 선택하세요",
+                    key="them_to_my_assignment_select"
+                )
         else:
             st.selectbox("상대방의 방배정 선택", [], placeholder="먼저 상대방을 선택하세요", key="them_to_my_assignment_select_disabled")
 
@@ -323,10 +363,8 @@ else:
                 "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
                 "요청자": user_name,
                 "요청자 사번": employee_id,
-                "요청 근무일": "대체 근무",
-                "요청자 방배정": "대체 근무",
-                "상대방": colleague_assignment_info['person_name'],
-                "상대방 방배정": colleague_assignment_info['column_name'],
+                "변경 요청": f"{colleague_assignment_info['person_name']} -> {user_name}",
+                "변경 요청한 방배정": colleague_assignment_info['display_str'],
             }
             with st.spinner("요청을 기록하는 중입니다..."):
                 if add_room_request_to_sheet(new_request, MONTH_STR):
@@ -341,14 +379,12 @@ else:
         '<div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
         '<table style="width: 100%; border-collapse: collapse; text-align: center;">'
         '<thead><tr>'
-        '<th style="font-weight: bold; color: #555; width: 40%; padding-bottom: 8px; font-size: 1.0em;">일자</th>'
-        '<th style="font-weight: bold; color: #2E86C1; width: 30%; padding-bottom: 8px; font-size: 1.0em;">나의 방배정</th>'
-        '<th style="font-weight: bold; color: #28B463; width: 30%; padding-bottom: 8px; font-size: 1.0em;">교환 방배정</th>'
+        '<th style="font-weight: bold; color: #555; width: 40%; padding-bottom: 8px; font-size: 1.0em;">변경 요청</th>'
+        '<th style="font-weight: bold; color: #2E86C1; width: 60%; padding-bottom: 8px; font-size: 1.0em;">변경 요청한 방배정</th>'
         '</tr></thead>'
         '<tbody><tr>'
-        '<td style="font-size: 1.1em; padding-top: 5px;">{date_header}</td>'
-        '<td style="font-size: 1.1em; padding-top: 5px;">{my_room}</td>'
-        '<td style="font-size: 1.1em; padding-top: 5px;">{their_room} (<strong style="color:#1E8449;">{their_name}</strong> 님)</td>'
+        '<td style="font-size: 1.1em; padding-top: 5px;">{request_type}</td>'
+        '<td style="font-size: 1.1em; padding-top: 5px;">{assignment_detail}</td>'
         '</tr></tbody>'
         '</table>'
         '<hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 15px 0 10px 0;">'
@@ -363,10 +399,8 @@ else:
             col1, col2 = st.columns([5, 1])
             with col1:
                 card_html = HTML_CARD_TEMPLATE.format(
-                    date_header=req.get('요청 근무일', ''),
-                    my_room=req.get('요청자 방배정', ''),
-                    their_room=req.get('상대방 방배정', ''),
-                    their_name=req.get('상대방', ''),
+                    request_type=req.get('변경 요청', ''),
+                    assignment_detail=req.get('변경 요청한 방배정', ''),
                     timestamp=req.get('요청일시', '')
                 )
                 st.markdown(card_html, unsafe_allow_html=True)
