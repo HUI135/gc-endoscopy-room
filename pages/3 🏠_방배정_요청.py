@@ -433,9 +433,8 @@ if submit_add:
                 st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
 
                 # 💡 수정된 부분: 토스트와 success 메시지를 함께 사용
-                st.toast("요청사항이 추가되었습니다! 📅", icon="✅")
+                st.success("요청사항이 추가되었습니다!", icon="📅")
                 time.sleep(1) # 토스트가 표시될 시간을 주기 위해 잠시 대기
-                st.success("✅ 요청사항이 저장되었습니다!")
                 update_calendar_events()
                 st.rerun()
             else:
@@ -482,9 +481,8 @@ if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
                 st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
 
                 # 💡 수정된 부분: 토스트와 success 메시지를 함께 사용
-                st.toast("요청사항이 삭제되었습니다! 🗑️", icon="✅")
+                st.success("요청사항이 삭제되었습니다!", icon="🗑️")
                 time.sleep(1) # 토스트가 표시될 시간을 주기 위해 잠시 대기
-                st.success("✅ 선택한 요청사항이 삭제되었습니다!")
                 update_calendar_events()
                 st.rerun()
     elif submit_delete and not selected_items:

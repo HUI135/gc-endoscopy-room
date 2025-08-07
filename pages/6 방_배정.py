@@ -371,15 +371,14 @@ if st.button("🔄 요청사항 일괄 적용"):
     if not df_swaps.empty:
         modified_schedule = apply_schedule_swaps(st.session_state["df_schedule"], df_swaps)
         st.session_state.update({"df_schedule": modified_schedule, "df_schedule_md": create_df_schedule_md(modified_schedule)})
-        st.toast("✅ 교환 요청이 적용되었습니다. 아래 표에서 결과를 확인하고 직접 수정할 수 있습니다."); time.sleep(1); st.rerun()
     else:
-        st.toast("ℹ️ 처리할 교환 요청이 없습니다.")
+        st.info("ℹ️ 처리할 교환 요청이 없습니다.")
 edited_df_md = st.data_editor(st.session_state["df_schedule_md"], use_container_width=True, key="schedule_editor", disabled=['날짜', '요일'])
 st.write(" ")
 if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary", use_container_width=True):
     df_schedule_to_save = st.session_state["df_schedule"].copy()
     if not st.session_state["df_schedule_md"].equals(edited_df_md):
-        st.toast("ℹ️ 수작업 변경사항을 최종본에 반영합니다...")
+        st.info("ℹ️ 수작업 변경사항을 최종본에 반영합니다...")
         for md_idx, edited_row in edited_df_md.iterrows():
             original_row = st.session_state["df_schedule_md"].loc[md_idx]
             if not original_row.equals(edited_row):
@@ -396,16 +395,16 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary
                         if col_name in df_schedule_to_save.columns:
                             df_schedule_to_save.loc[target_idx, col_name] = edited_row[col_name]
     try:
-        st.toast("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
+        st.info("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
         update_sheet_with_retry(worksheet_schedule, schedule_data)
         st.session_state.update({"df_schedule": df_schedule_to_save, "df_schedule_md": create_df_schedule_md(df_schedule_to_save)})
-        st.toast("🎉 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다."); time.sleep(1); st.rerun()
+        st.success("🎉 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다."); time.sleep(1); st.rerun()
     except Exception as e:
-        st.toast(f"⚠️ Google Sheets 저장 중 오류 발생: {e}")
+        st.warning(f"⚠️ Google Sheets 저장 중 오류 발생: {e}")
 
 st.write("---")
 st.caption("📝 현재까지 기록된 변경사항 로그")

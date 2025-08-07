@@ -39,43 +39,6 @@ def get_gspread_client():
 def extract_spreadsheet_id(url):
     return url.split("/d/")[1].split("/")[0]
 
-def track_sheets_update_usage():
-    # 최근 기록 시간 체크 (30분 간격 제한)
-    last_logged = st.session_state.get("last_logged", 0)
-    now = time.time()
-    if now - last_logged < 1800:  # 30분 = 1800초
-        return
-    st.session_state["last_logged"] = now
-
-    # 사용자 이름, 타임스탬프 정의
-    user_name = st.session_state.get("name", "Unknown")
-    timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_to_sheet = True  # 로그 시트에 실제로 남길지 여부 (False로 설정 시 GCP 트리거만 수행)
-
-    try:
-        # 인증 설정
-        service_account_info = dict(st.secrets["gspread"])
-        service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
-        credentials = Credentials.from_service_account_info(service_account_info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-        service = build("sheets", "v4", credentials=credentials)
-        spreadsheet_id = st.secrets["google_sheet"]["url"].split("/d/")[1].split("/")[0]
-
-        # ✅ 1. GCP Monitoring 트리거 (쿼터 추적용)
-        service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-
-        # ✅ 2. 로그 시트 기록 (옵션)
-        if log_to_sheet:
-            service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id,
-                range="'로그'!A1",
-                valueInputOption="RAW",
-                insertDataOption="INSERT_ROWS",
-                body={"values": [[f"{timestamp} - {user_name} 스케줄 수정"]]}
-            ).execute()
-
-    except Exception as e:
-        st.warning(f"❗ 로그 기록 실패: {e}")
-
 url = st.secrets["google_sheet"]["url"]
 gc = get_gspread_client()
 sheet = gc.open_by_url(url)
@@ -98,16 +61,16 @@ def refresh_data():
 
 # ✅ 캘린더 이벤트 생성 함수
 def generate_calendar_events(df_user_master, year, month, week_labels):
-    print(f"df_user_master:\n{df_user_master}")  # df_user_master 데이터 확인
+    # print(f"df_user_master:\n{df_user_master}")  # df_user_master 데이터 확인
     master_data = {}
     요일리스트 = ["월", "화", "수", "목", "금"]
     
     # "매주" 설정이 있는지 확인
     has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
-    print(f"has_weekly: {has_weekly}")
+    # print(f"has_weekly: {has_weekly}")
     if has_weekly:
         weekly_df = df_user_master[df_user_master["주차"] == "매주"]
-        print(f"weekly_df:\n{weekly_df}")
+        # print(f"weekly_df:\n{weekly_df}")
         # 요일별 근무여부 딕셔너리 생성
         weekly_schedule = weekly_df.set_index("요일")["근무여부"].to_dict()
         # 누락된 요일이 있다면 "근무없음"으로 채우기
@@ -117,8 +80,8 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
         # 모든 주에 대해 동일한 "매주" 스케줄 적용
         for week in week_labels:
             master_data[week] = weekly_schedule
-        print(f"매주 스케줄: {weekly_schedule}")
-        print(f"master_data: {master_data}")
+        # print(f"매주 스케줄: {weekly_schedule}")
+        # print(f"master_data: {master_data}")
     else:
         for week in week_labels:
             week_df = df_user_master[df_user_master["주차"] == week]
@@ -161,7 +124,7 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
                     "end": date_obj.strftime("%Y-%m-%d"),
                     "color": status_colors.get(status, "#E0E0E0")
                 })
-    print(f"생성된 이벤트: {events}")
+    # print(f"생성된 이벤트: {events}")
     return events
 
 # ✅ 데이터 로드 및 세션 상태 초기화
@@ -290,7 +253,6 @@ with st.expander("📅 월 단위로 일괄 설정"):
         df_result = df_result.sort_values(by=["이름", "주차", "요일"])
         worksheet1.clear()
         worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
-        track_sheets_update_usage()  # ✅ 여기에 삽입
 
         st.session_state["df_master"] = df_result
         df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
@@ -337,7 +299,6 @@ with st.expander("📅 주 단위로 설정"):
         df_result = df_result.sort_values(by=["이름", "주차", "요일"])
         worksheet1.clear()
         worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
-        track_sheets_update_usage()  # ✅ 여기에 삽입
 
         st.session_state["df_master"] = df_result
         df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트

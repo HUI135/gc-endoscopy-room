@@ -306,7 +306,7 @@ def add_request_callback():
         st.session_state["df_request"] = df_to_save
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
         
-        st.toast("요청사항이 추가되었습니다! 📅", icon="✅")
+        st.toast("요청사항이 추가되었습니다!", icon="📅")
         # 콜백 함수 내에서 st.rerun() 제거
 
 with col4:
@@ -362,8 +362,7 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
                 st.session_state["df_request"] = df_to_save
                 st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
 
-                st.toast("요청사항이 삭제되었습니다! 🗑️", icon="✅")
-                st.success("✅ 선택한 요청사항이 삭제되었습니다!")
+                st.success("요청사항이 삭제되었습니다!", icon="🗑️")
             else:
                 st.warning("삭제할 항목을 찾을 수 없습니다.")
         
