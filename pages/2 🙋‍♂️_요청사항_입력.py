@@ -23,7 +23,7 @@ if not st.session_state.get("login_success", False):
     st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
     st.error("1초 후 Home 페이지로 돌아갑니다...")
     time.sleep(1)
-    st.switch_page("Home.py")  # Home 페이지로 이동
+    st.switch_page("Home.py")
     st.stop()
 
 # 전역 변수로 gspread 클라이언트 초기화
@@ -132,7 +132,6 @@ def create_calendar_events(df_master, df_request):
             if not 날짜정보 and 분류 != "요청 없음":
                 continue
             
-            # '요청 없음' 이벤트를 만들지 않도록 코드 제거
             if 분류 == "요청 없음":
                 continue
             
@@ -150,31 +149,20 @@ def create_calendar_events(df_master, df_request):
                         continue
     return events
 
-
 # --- 초기 데이터 로딩 및 세션 상태 초기화 ---
-# 페이지 로드 시에만 한 번 실행
 def initialize_data():
     """페이지에 필요한 모든 데이터를 한 번에 로드하고 세션 상태에 저장합니다."""
-    # 캐시를 비워 최신 데이터를 가져오도록 합니다.
-    st.cache_data.clear() 
-
-    # 데이터 로드
+    st.cache_data.clear()
     st.session_state["df_master"] = load_master_data(gc, url)
     st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
-
-    # 유저별 데이터 필터링
     st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
     st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
 
-# 'initial_load_done_page2'가 없으면 초기화 함수를 실행합니다.
-# 이 블록은 페이지가 로드될 때 단 한 번만 실행됩니다.
 if "initial_load_done_page2" not in st.session_state:
     with st.spinner("데이터를 불러오는 중입니다. 잠시만 기다려 주세요."):
         initialize_data()
         st.session_state["initial_load_done_page2"] = True
-    # st.rerun()을 제거하여 불필요한 재실행을 막습니다.
 
-# 항상 최신 세션 상태를 참조
 df_request = st.session_state["df_request"]
 df_user_request = st.session_state["df_user_request"]
 df_user_master = st.session_state["df_user_master"]
@@ -183,8 +171,12 @@ df_user_master = st.session_state["df_user_master"]
 def refresh_data():
     with st.spinner("데이터를 다시 불러오는 중입니다..."):
         initialize_data()
-    st.success("데이터가 새로고침되었습니다.")
-    # 콜백 함수 내에서 st.rerun() 제거
+    with header_placeholder:
+        st.success("데이터가 새로고침되었습니다.", icon="🔄")
+        time.sleep(1)
+
+# Placeholder for header success message
+header_placeholder = st.empty()
 
 st.header(f"🙋‍♂️ {name} 님의 {month_str} 요청사항", divider='rainbow')
 
@@ -237,7 +229,10 @@ with col3:
         elif 방식 == "주/요일 선택":
             st.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
             st.multiselect("요일 선택", ["월", "화", "수", "목", "금", "토", "일"], key="day_select")
-            
+
+# Placeholder for add request success message
+add_placeholder = st.empty()
+
 def add_request_callback():
     분류 = st.session_state["category_select"]
     날짜정보 = ""
@@ -278,18 +273,33 @@ def add_request_callback():
 
             날짜정보 = ", ".join(sorted(list(set(날짜목록))))
             if not 날짜목록 and 선택주차 and 선택요일:
-                st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+                with add_placeholder:
+                    st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
                 return
                 
     if not 날짜정보 and 분류 != "요청 없음":
-        st.warning("날짜 정보를 올바르게 입력해주세요.")
+        with add_placeholder:
+            st.warning("날짜 정보를 올바르게 입력해주세요.")
         return
+    
+    # Check for duplicate request
+    if 분류 != "요청 없음":
+        existing_request = st.session_state["df_request"][
+            (st.session_state["df_request"]["이름"] == name) &
+            (st.session_state["df_request"]["분류"] == 분류) &
+            (st.session_state["df_request"]["날짜정보"] == 날짜정보)
+        ]
+        if not existing_request.empty:
+            with add_placeholder:
+                st.error("⚠️ 이미 존재하는 요청사항입니다.")
+                time.sleep(1.5)
+                add_placeholder.empty()
+            return
     
     with st.spinner("요청사항을 추가 중입니다..."):
         sheet = gc.open_by_url(url)
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
         
-        # '요청 없음' 데이터가 있으면 삭제하고, 새 요청사항을 추가합니다.
         df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
         
         if 분류 == "요청 없음":
@@ -306,8 +316,10 @@ def add_request_callback():
         st.session_state["df_request"] = df_to_save
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
         
-        st.toast("요청사항이 추가되었습니다!", icon="📅")
-        # 콜백 함수 내에서 st.rerun() 제거
+        with add_placeholder:
+            st.success("요청사항이 추가되었습니다!", icon="📅")
+            time.sleep(1)
+            add_placeholder.empty()
 
 with col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
@@ -319,6 +331,10 @@ if st.session_state.get("category_select", "요청 없음") == "요청 없음":
 # 삭제 UI
 st.write(" ")
 st.markdown(f"<h6 style='font-weight:bold;'>🔴 요청사항 삭제</h6>", unsafe_allow_html=True)
+
+# Placeholder for delete request success message
+delete_placeholder = st.empty()
+
 if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 and df_user_request["분류"].unique()[0] == "요청 없음"):
     del_col1, del_col2 = st.columns([4, 0.5])
     with del_col1:
@@ -328,7 +344,8 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
     def delete_requests_callback():
         selected_items = st.session_state.get("delete_select", [])
         if not selected_items:
-            st.warning("삭제할 항목을 선택해주세요.")
+            with delete_placeholder:
+                st.warning("삭제할 항목을 선택해주세요.")
             return
 
         with st.spinner("요청사항을 삭제 중입니다..."):
@@ -350,10 +367,6 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
             if rows_to_delete_indices:
                 df_to_save = st.session_state["df_request"].drop(index=rows_to_delete_indices).reset_index(drop=True)
                 
-                # '요청 없음'을 자동으로 추가하는 코드 제거
-                # if df_to_save[df_to_save["이름"] == name].empty:
-                #     df_to_save = pd.concat([df_to_save, pd.DataFrame([{"이름": name, "분류": "요청 없음", "날짜정보": ""}])], ignore_index=True)
-                
                 df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
                 
                 worksheet2.clear()
@@ -362,12 +375,14 @@ if not df_user_request.empty and not (df_user_request["분류"].nunique() == 1 a
                 st.session_state["df_request"] = df_to_save
                 st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
 
-                st.success("요청사항이 삭제되었습니다!", icon="🗑️")
+                with delete_placeholder:
+                    st.success("요청사항이 삭제되었습니다!", icon="🗑️")
+                    time.sleep(1)
+                    delete_placeholder.empty()
             else:
-                st.warning("삭제할 항목을 찾을 수 없습니다.")
+                with delete_placeholder:
+                    st.warning("삭제할 항목을 찾을 수 없습니다.")
         
-        # 콜백 함수 내에서 st.rerun() 제거
-
     with del_col2:
         st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
         st.button("🗑️ 삭제", use_container_width=True, on_click=delete_requests_callback)

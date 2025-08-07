@@ -383,7 +383,7 @@ if 분류 != "요청 없음":
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
             def format_date(date_obj):
                 weekday = weekday_map[date_obj.weekday()]
-                return f"{date_obj.strftime('%m월 %d일')} ({weekday})"
+                return f"{date_obj.strftime('%-m월 %-d일')} ({weekday})"
             
             날짜_목록 = [
                 next_month_start + datetime.timedelta(days=i)

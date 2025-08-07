@@ -251,7 +251,7 @@ else:
             
             selected_colleague_name = st.selectbox(
                 "교환할 상대방 선택",
-                options=compatible_colleagues,
+                options=compatible_colleague_names,  # Fixed: Changed from compatible_colleagues to compatible_colleague_names
                 index=None,
                 placeholder="먼저 나의 방배정을 선택하세요" if not is_my_assignment_selected else "상대방을 선택하세요",
                 disabled=not is_my_assignment_selected,
