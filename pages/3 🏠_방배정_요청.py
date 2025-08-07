@@ -100,26 +100,25 @@ def generate_master_events(df_user_master, year, month, week_labels):
         weekday = date_obj.weekday()
         if weekday in weekday_map:
             day_name = weekday_map[weekday]
-            if first_sunday and day < first_sunday:
-                week_num = 0
-            elif first_sunday:
-                week_num = (day - first_sunday) // 7 + 1
+            # 주차 계산: 첫 번째 일요일 기준
+            if day < first_sunday:
+                week_num = 0  # 첫 번째 일요일 이전은 1주차
             else:
-                week_num = (day - 1) // 7
-            
+                week_num = (day - first_sunday) // 7 + 1  # 첫 번째 일요일 이후 주차 계산
             if week_num >= len(week_labels):
                 continue
-            
             week = week_labels[week_num]
             status = master_data.get(week, {}).get(day_name, "근무없음")
-            if status != "근무없음":
-                events.append({
-                    "title": f"{status}",
-                    "start": date_obj.strftime("%Y-%m-%d"),
-                    "end": date_obj.strftime("%Y-%m-%d"),
-                    "color": status_colors.get(status, "#E0E0E0"),
-                    "source": "master"
-                })
+            
+            # '근무없음'인 경우도 이벤트를 추가하도록 수정
+            events.append({
+                "title": f"{status}",
+                "start": date_obj.strftime("%Y-%m-%d"),
+                "end": date_obj.strftime("%Y-%m-%d"),
+                "color": status_colors.get(status, "#E0E0E0")
+            })
+
+    # print(f"생성된 이벤트: {events}")
     return events
 
 # 캘린더 이벤트 생성 함수 (df_request)
@@ -190,7 +189,7 @@ def generate_room_request_events(df_user_room_request, next_month):
                 time_slot = time_slot.rstrip(")")
                 dt = datetime.datetime.strptime(date_part, "%Y-%m-%d").date()
                 events.append({"title": label_map.get(분류, 분류), "start": dt.strftime("%Y-%m-%d"),
-                               "end": dt.strftime("%Y-%m-%d"), "color": "#273F4F",
+                               "end": dt.strftime("%Y-%m-%d"), "color": "#D6C8FF",
                                "source": "room_request", "allDay": True})
             except Exception as e:
                 continue
