@@ -290,7 +290,7 @@ else:
                     "요청자": user_name,
                     "요청자 사번": employee_id,
                     "변경 요청": f"{user_name} -> {selected_colleague_name}",
-                    "변경 요청한 스케줄": f"{my_assignment_info['display_str']} ({my_assignment_info['shift_type']})",
+                    "변경 요청한 스케줄": f"{my_assignment_info['display_str']}",
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
                     if add_request_to_sheet(new_request, MONTH_STR):
