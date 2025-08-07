@@ -376,19 +376,19 @@ else:
     my_requests = get_my_room_requests(MONTH_STR, employee_id)
 
     HTML_CARD_TEMPLATE = (
-        '<div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px; background-color: #fcfcfc; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
+        '<div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
         '<table style="width: 100%; border-collapse: collapse; text-align: center;">'
         '<thead><tr>'
-        '<th style="font-weight: bold; color: #555; width: 40%; padding-bottom: 8px; font-size: 1.0em;">변경 요청</th>'
-        '<th style="font-weight: bold; color: #2E86C1; width: 60%; padding-bottom: 8px; font-size: 1.0em;">변경 요청한 방배정</th>'
+        '<th style="font-weight: bold; color: #555; width: 40%; padding-bottom: 5px; font-size: 0.9em;">변경 요청</th>'
+        '<th style="font-weight: bold; color: #2E86C1; width: 60%; padding-bottom: 5px; font-size: 0.9em;">변경 요청한 방배정</th>'
         '</tr></thead>'
         '<tbody><tr>'
-        '<td style="font-size: 1.1em; padding-top: 5px;">{request_type}</td>'
-        '<td style="font-size: 1.1em; padding-top: 5px;">{assignment_detail}</td>'
+        '<td style="font-size: 1.0em; padding-top: 3px;">{request_type}</td>'
+        '<td style="font-size: 1.0em; padding-top: 3px;">{assignment_detail}</td>'
         '</tr></tbody>'
         '</table>'
-        '<hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 15px 0 10px 0;">'
-        '<div style="text-align: right; font-size: 0.85em; color: #757575;">요청 시간: {timestamp}</div>'
+        '<hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 8px 0 5px 0;">'
+        '<div style="text-align: right; font-size: 0.75em; color: #757575;">요청 시간: {timestamp}</div>'
         '</div>'
     )
 

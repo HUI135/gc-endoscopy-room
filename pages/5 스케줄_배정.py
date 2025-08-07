@@ -1152,7 +1152,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         
         st.write(" ")
         st.markdown(f"**➕ {next_month_str} 누적 테이블**")
-        st.dataframe(df_cumulative_next, hide_index=True)
+        st.dataframe(df_cumulative_next, use_container_width=True, hide_index=True)
         st.success(f"✅ {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
         st.divider()
         st.success(f"✅ {month_str} 스케줄 테이블이 Google Sheets에 저장되었습니다.")

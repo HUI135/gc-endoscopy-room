@@ -12,8 +12,9 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 import menu
+import numpy as np
 
-st.set_page_config(page_title="방 배정", page_icon="🚪", layout="wide")
+st.set_page_config(page_title="방 배정", page_icon="", layout="wide")
 
 import os
 st.session_state.current_page = os.path.basename(__file__)
@@ -25,7 +26,7 @@ if not st.session_state.get("login_success", False):
     st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
     st.error("1초 후 Home 페이지로 돌아갑니다...")
     time.sleep(1)
-    st.switch_page("Home.py")  # Home 페이지로 이동
+    st.switch_page("Home.py")
     st.stop()
 
 # 세션 상태 초기화
@@ -43,6 +44,17 @@ if "room_settings" not in st.session_state:
     }
 if "swapped_assignments" not in st.session_state:
     st.session_state["swapped_assignments"] = set()
+if "df_schedule_original" not in st.session_state:
+    st.session_state["df_schedule_original"] = pd.DataFrame()
+if "manual_change_log" not in st.session_state:
+    st.session_state["manual_change_log"] = []
+if "final_change_log" not in st.session_state:
+    st.session_state["final_change_log"] = []
+if "df_schedule_md_initial" not in st.session_state:
+    st.session_state["df_schedule_md_initial"] = pd.DataFrame()
+if "swapped_assignments_log" not in st.session_state:
+    st.session_state["swapped_assignments_log"] = []
+
 
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
@@ -69,32 +81,22 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
     st.error("Google Sheets 업데이트 실패: 재시도 횟수 초과")
 
 # 데이터 로드 (캐싱 사용) - 캐시 문제 방지
+@st.cache_data(show_spinner=False)
 def load_data_page6(month_str):
-    # 캐시 강제 갱신
-    st.cache_data.clear()
-    
-    # load_data_page6_no_cache 호출
-    result = load_data_page6_no_cache(month_str)
-    
-    # 반환값 디버깅
-    if len(result) != 3:
-        st.error(f"Expected 3 return values, but got {len(result)}. Returned: {result}")
-        st.stop()
-    
-    return result
+    return load_data_page6_no_cache(month_str)
 
 # 데이터 로드 (캐싱 미사용)
 def load_data_page6_no_cache(month_str):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-    
+        
     try:
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
     except Exception as e:
         st.error(f"스케줄 시트를 불러오는 데 실패: {e}")
         st.stop()
-    
+        
     try:
         worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
         df_room_request = pd.DataFrame(worksheet_room_request.get_all_records())
@@ -118,7 +120,7 @@ def load_data_page6_no_cache(month_str):
         st.warning(f"{month_str} 누적 시트가 없습니다. 빈 DataFrame으로 초기화합니다.")
         df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
 
-    # [추가된 부분] 스케줄 교환 요청 시트 불러오기
+    # 스케줄 교환 요청 시트 불러오기
     try:
         worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케줄 변경요청")
         df_swap_requests = pd.DataFrame(worksheet_swap_requests.get_all_records())
@@ -126,17 +128,21 @@ def load_data_page6_no_cache(month_str):
     except gspread.exceptions.WorksheetNotFound:
         st.warning(f"'{month_str} 스케줄 변경요청' 시트를 찾을 수 없습니다. 빈 테이블로 시작합니다.")
         st.session_state["df_swap_requests"] = pd.DataFrame(columns=[
-            "RequestID", "요청일시", "요청자", "요청자 사번", "요청자 기존 근무",
+            "RequestID", "요청일시", "요청자", "요청자 기존 근무",
             "상대방", "상대방 기존 근무", "시간대"
         ])
-
+        
+    st.session_state["df_schedule_original"] = df_schedule.copy()
     st.session_state["df_schedule"] = df_schedule
     st.session_state["df_room_request"] = df_room_request
     st.session_state["worksheet_room_request"] = worksheet_room_request
     st.session_state["df_cumulative"] = df_cumulative
     st.session_state["data_loaded"] = True
-    
-    # 반환 값은 기존과 동일하게 유지
+        
+    st.session_state["swapped_assignments_log"] = []
+    st.session_state["manual_change_log"] = []
+    st.session_state["final_change_log"] = []
+
     result = (df_schedule, df_room_request, worksheet_room_request)
     return result
 
@@ -145,7 +151,7 @@ def load_data_page6_no_cache(month_str):
 def get_user_available_dates(name, df_schedule, month_start, month_end):
     available_dates = []
     weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
-    
+        
     personnel_columns = [str(i) for i in range(1, 13)] + [f'오후{i}' for i in range(1, 5)]
     all_personnel = set()
     for col in personnel_columns:
@@ -153,7 +159,8 @@ def get_user_available_dates(name, df_schedule, month_start, month_end):
             all_personnel.add(str(val).strip())
     if name not in all_personnel:
         st.warning(f"{name}이 df_schedule의 근무자 목록에 없습니다. 데이터 확인 필요: {sorted(all_personnel)}")
-    
+        time.sleep(1)
+
     for _, row in df_schedule.iterrows():
         date_str = row['날짜']
         try:
@@ -165,19 +172,23 @@ def get_user_available_dates(name, df_schedule, month_start, month_end):
             continue
         if month_start <= date_obj <= month_end and row['요일'] not in ['토요일', '일요일']:
             morning_personnel = [str(row[str(i)]).strip() for i in range(1, 13) if pd.notna(row[str(i)]) and row[str(i)]]
-            afternoon_personnel = [str(row[f'오후{i}']).strip() for i in range(1, 5) if pd.notna(row[f'오후{i}']) and row[f'오후{i}']]
-            display_date = f"{date_obj.month}월 {date_obj.day}일({weekday_map[date_obj.weekday()]})"
+            afternoon_personnel = [str(row[f'오후{i}']).strip() for i in range(1, 4) if pd.notna(row[f'오후{i}']) and row[f'오후{i}']]
+            
+            # FIX: 날짜 형식을 '4월 4일'로 수정
+            display_date = f"{date_obj.month}월 {date_obj.day}일" + f'({weekday_map[date_obj.weekday()]})'
             save_date_am = f"{date_obj.strftime('%Y-%m-%d')} (오전)"
             save_date_pm = f"{date_obj.strftime('%Y-%m-%d')} (오후)"
+            
             if name in morning_personnel:
                 available_dates.append((date_obj, f"{display_date} 오전", save_date_am))
             if name in afternoon_personnel:
                 available_dates.append((date_obj, f"{display_date} 오후", save_date_pm))
-    
+        
     available_dates.sort(key=lambda x: x[0])
     sorted_dates = [(display_str, save_str) for _, display_str, save_str in available_dates]
     if not sorted_dates:
         st.warning(f"{name}의 근무 가능 일자가 없습니다. df_schedule 데이터를 확인하세요.")
+        time.sleep(1)
     return sorted_dates
 
 # 요청 저장 (df_room_request용)
@@ -188,12 +199,12 @@ def save_to_gsheet(name, categories, dates, month_str, worksheet):
     df = pd.DataFrame(worksheet.get_all_records())
     if "우선순위" in df.columns:
         df = df.drop(columns=["우선순위"])
-    
+        
     new_rows = []
     for date in dates:
         for cat in categories:
             new_rows.append({"이름": name, "분류": cat, "날짜정보": date})
-    
+        
     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
     update_sheet_with_retry(worksheet, [df.columns.tolist()] + df.values.tolist())
     return df
@@ -242,118 +253,150 @@ def create_df_schedule_md(df_schedule):
         afternoon_workers.extend([''] * (4 - len(afternoon_workers)))
         for i, col in enumerate(['오후1', '오후2', '오후3', '오후4'], 1):
             df_schedule_md.at[idx, col] = afternoon_workers[i-1]
-    
+        
     df_schedule_md = df_schedule_md.drop(columns=['12', '오후5'], errors='ignore')
     return df_schedule_md
 
-# 기존의 apply_schedule_swaps 함수를 아래 코드로 교체해주세요.
 def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     """
-    새로운 스케줄 변경 요청 형식(`변경 요청한 스케줄`, `변경 요청`)에 맞춰
-    스케줄을 교체하고, 변경된 내용을 기록합니다.
+    스케줄 변경 요청 시트에 있는 내용을 일괄 적용하고, 변경 내역을 로그에 저장합니다.
+    Args:
+        original_schedule_df (pd.DataFrame): 변경 전 원본 스케줄 DataFrame.
+        swap_requests_df (pd.DataFrame): 변경 요청이 담긴 DataFrame.
+    Returns:
+        pd.DataFrame: 변경이 적용된 새로운 스케줄 DataFrame.
     """
-    df = original_schedule_df.copy()
-    applied_requests_count = 0
-    
+    # 원본이 아닌, 현재 세션 상태의 스케줄을 기준으로 변경을 시작
+    df_modified = original_schedule_df.copy()
+    applied_count = 0
+        
+    # 오전 및 오후 근무 열을 정의합니다.
     am_cols = [str(i) for i in range(1, 13)]
     pm_cols = [f'오후{i}' for i in range(1, 6)]
-    
-    if "swapped_assignments_log" not in st.session_state:
-        st.session_state["swapped_assignments_log"] = []
-    
-    st.session_state["swapped_assignments_log"] = [] # 로그 초기화
-    
-    for _, row in swap_requests_df.iterrows():
+        
+    # 변경 내역을 저장할 로그 리스트입니다.
+    batch_change_log = []
+        
+    # 변경 요청 시트의 각 행을 순회합니다.
+    for _, request_row in swap_requests_df.iterrows():
         try:
-            change_request = str(row['변경 요청']).strip()
-            # 요청 형식: '이름1 -> 이름2'
-            if '->' not in change_request:
-                st.warning(f"⚠️ 변경 요청 형식이 올바르지 않습니다: '{change_request}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+            # '변경 요청' 컬럼에서 요청자와 변경자를 파싱합니다.
+            change_request_str = str(request_row.get('변경 요청', '')).strip()
+            if '->' not in change_request_str:
+                st.warning(f"⚠️ 변경 요청 형식이 올바르지 않습니다: '{change_request_str}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+                time.sleep(1)
                 continue
 
-            requester, to_person = [p.strip() for p in change_request.split('->')]
+            requester_name, new_assignee = [p.strip() for p in change_request_str.split('->')]
             
-            schedule_info = str(row['변경 요청한 스케줄']).strip()
-            # 요청 형식: '04월 22일 (화) - 오전'
-            if ' - ' not in schedule_info:
-                st.warning(f"⚠️ 스케줄 정보 형식이 올바르지 않습니다: '{schedule_info}'. '04월 22일 (화) - 오전' 형식으로 입력해주세요.")
+            # '변경 요청한 스케줄' 컬럼에서 날짜와 시간대를 파싱합니다.
+            schedule_info_str = str(request_row.get('변경 요청한 스케줄', '')).strip()
+            if ' - ' not in schedule_info_str:
+                st.warning(f"⚠️ 스케줄 정보 형식이 올바르지 않습니다: '{schedule_info_str}'. '04월 22일 (화) - 오전' 형식으로 입력해주세요.")
+                time.sleep(1)
                 continue
 
-            date_info, time_type = [p.strip() for p in schedule_info.split(' - ')]
+            date_info, time_period = [p.strip() for p in schedule_info_str.split(' - ')]
             
-            match = re.search(r'(\d+)월 (\d+)일', date_info)
-            if not match:
+            # FIX: 날짜 문자열에서 월과 일을 추출하여 '4월 22일' 형식으로 만듭니다.
+            date_match = re.search(r'(\d+)월 (\d+)일', date_info)
+            if not date_match:
                 st.warning(f"날짜 형식 오류로 요청을 건너뜁니다: {date_info}")
+                time.sleep(1)
                 continue
-            swap_date_str = f"{int(match.group(1))}월 {int(match.group(2))}일"
+            # 추출한 월과 일을 int()로 변환하여 0을 제거합니다.
+            swap_date = f"{int(date_match.group(1))}월 {int(date_match.group(2))}일"
             
-            to_row_indices = df[df['날짜'] == swap_date_str].index
-            if to_row_indices.empty:
-                st.warning(f"스케줄에서 {swap_date_str} 날짜를 찾을 수 없습니다. 요청을 건너뜁니다.")
+            # 해당 날짜의 행 인덱스를 찾습니다.
+            target_row_indices = df_modified[df_modified['날짜'] == swap_date].index
+            if target_row_indices.empty:
+                st.warning(f"스케줄에서 '{swap_date}' 날짜를 찾을 수 없습니다. 요청을 건너뜁니다.")
+                time.sleep(1)
                 continue
-            to_row_idx = to_row_indices[0]
+            target_row_idx = target_row_indices[0]
             
-            cols_to_search = am_cols if time_type == '오전' else pm_cols
+            # 시간대에 따라 검색할 컬럼 리스트를 선택합니다.
+            cols_to_search = am_cols if time_period == '오전' else pm_cols
             
-            found_and_swapped = False
+            is_swapped = False
             for col in cols_to_search:
-                if str(df.at[to_row_idx, col]).strip() == requester:
-                    df.at[to_row_idx, col] = to_person
-                    st.session_state["swapped_assignments_log"].append(
-                        {'날짜': swap_date_str, '근무타입': time_type, '변경 전 인원': requester, '변경 후 인원': to_person}
-                    )
-                    applied_requests_count += 1
-                    found_and_swapped = True
+                # 변경 요청자의 이름이 해당 셀에 있는지 확인합니다.
+                if str(df_modified.at[target_row_idx, col]).strip() == requester_name:
+                    old_value = df_modified.at[target_row_idx, col]
+                    df_modified.at[target_row_idx, col] = new_assignee # 값 변경
+                    
+                    # FIX: 변경 로그에 추가할 때, 날짜 정보 형식을 '4월 22일 (화) - 오전'으로 통일
+                    weekday = df_modified.at[target_row_idx, '요일'].replace('요일', '')
+                    formatted_date_str = f"{swap_date} ({weekday}) - {time_period}"
+                    
+                    batch_change_log.append({
+                        '날짜': formatted_date_str,
+                        '변경 전 인원': str(old_value),
+                        '변경 후 인원': new_assignee,
+                    })
+                    applied_count += 1
+                    is_swapped = True
                     break
             
-            if not found_and_swapped:
-                st.error(f"❌ 적용 실패: '{swap_date_str}' {time_type}의 스케줄에 '{requester}'를 찾을 수 없습니다.")
+            if not is_swapped:
+                st.error(f"❌ 적용 실패: '{swap_date}'의 '{time_period}' 스케줄에서 '{requester_name}'를 찾을 수 없습니다.")
+                time.sleep(1)
         
         except Exception as e:
             st.error(f"요청 처리 중 오류 발생: {str(e)}")
+            time.sleep(1)
             continue
             
-    if applied_requests_count > 0:
-        st.success(f"✅ 총 {applied_requests_count}건의 스케줄 변경 요청이 성공적으로 반영되었습니다. 🔄")
+    if applied_count > 0:
+        st.success(f"✅ 총 {applied_count}건의 스케줄 변경 요청이 성공적으로 반영되었습니다.")
+        time.sleep(1.5)
+        st.session_state["swapped_assignments_log"] = batch_change_log
     else:
         st.info("새롭게 적용할 스케줄 변경 요청이 없습니다.")
-    
-    return df
-            
-
+        time.sleep(1)
+        
+    return df_modified
+        
 # 메인
 month_str = "2025년 04월"
 next_month_start = date(2025, 4, 1)
 next_month_end = date(2025, 4, 30)
 
 # 데이터 로드 호출
-df_schedule, df_room_request, worksheet_room_request = load_data_page6(month_str)
-st.session_state["df_room_request"] = df_room_request
-st.session_state["worksheet_room_request"] = worksheet_room_request
-
-# df_schedule_md 초기화
-if "df_schedule_md" not in st.session_state:
+if "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
+    df_schedule, df_room_request, worksheet_room_request = load_data_page6_no_cache(month_str)
+    st.session_state["df_room_request"] = df_room_request
+    st.session_state["worksheet_room_request"] = worksheet_room_request
     st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
+    st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+    st.session_state["swapped_assignments_log"] = [] # Added to ensure it's cleared on first load
+    st.session_state["data_loaded"] = True
+else:
+    df_schedule = st.session_state["df_schedule"]
+    df_room_request = st.session_state["df_room_request"]
+    worksheet_room_request = st.session_state["worksheet_room_request"]
 
-st.header("🚪 방 배정", divider='rainbow')
+st.header("� 방 배정", divider='rainbow')
 
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
-    df_schedule, df_room_request, worksheet_room_request = load_data_page6_no_cache(month_str)
-    st.session_state["df_schedule"] = df_schedule
-    st.session_state["df_room_request"] = df_room_request
-    st.session_state["worksheet_room_request"] = worksheet_room_request
-    st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
+    df_schedule_new, df_room_request_new, worksheet_room_request_new = load_data_page6_no_cache(month_str)
+    st.session_state["df_schedule_original"] = df_schedule_new.copy()
+    st.session_state["df_schedule"] = df_schedule_new
+    st.session_state["df_room_request"] = df_room_request_new
+    st.session_state["worksheet_room_request"] = worksheet_room_request_new
+    st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_new)
+    st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+    st.session_state["swapped_assignments_log"] = []
+    st.session_state["manual_change_log"] = []
+    st.session_state["final_change_log"] = []
     st.success("데이터가 새로고침되었습니다.")
     st.rerun()
 
 # 근무자 명단 수정
 st.write(" ")
-st.subheader("📝 근무자 명단 수정")
-st.write(" ")
-st.write("**📋 스케줄 변경 요청 목록**")
-st.write("- 아래 변경 요청 목록을 확인하고, 스케줄을 수정 후 저장하세요.")
+st.subheader("📋 스케줄 변경 요청 목록")
 df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
 if not df_swaps_raw.empty:
     cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '변경 요청': '변경 요청', '변경 요청한 스케줄': '변경 요청한 스케줄'}
@@ -363,60 +406,146 @@ if not df_swaps_raw.empty:
 else:
     st.info("표시할 교환 요청 데이터가 없습니다.")
 
-st.write(" ")
-st.write("**✍️ 스케줄 수정**")
-st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
-if st.button("🔄 요청사항 일괄 적용"):
-    df_swaps = st.session_state.get("df_swap_requests", pd.DataFrame())
-    if not df_swaps.empty:
-        modified_schedule = apply_schedule_swaps(st.session_state["df_schedule"], df_swaps)
-        st.session_state.update({"df_schedule": modified_schedule, "df_schedule_md": create_df_schedule_md(modified_schedule)})
-    else:
-        st.info("ℹ️ 처리할 교환 요청이 없습니다.")
+st.divider()
+st.subheader("✍️ 스케줄 수정")
+st.write("- 요청사항을 **일괄 적용/취소**하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
+
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("🔄 요청사항 일괄 적용"):
+        df_swaps = st.session_state.get("df_swap_requests", pd.DataFrame())
+        if not df_swaps.empty:
+            modified_schedule = apply_schedule_swaps(st.session_state["df_schedule_original"], df_swaps)
+            st.session_state["df_schedule"] = modified_schedule
+            st.session_state["df_schedule_md"] = create_df_schedule_md(modified_schedule)
+            # 일괄 적용 후 초기 상태도 업데이트하여, 이후 수동 변경사항만 로그에 남도록 함
+            st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+            st.rerun()
+        else:
+            st.info("ℹ️ 처리할 교환 요청이 없습니다.")
+
+with col2:
+    if st.button("⏪ 적용 취소"):
+        st.session_state["df_schedule"] = st.session_state["df_schedule_original"].copy()
+        st.session_state["df_schedule_md"] = create_df_schedule_md(st.session_state["df_schedule_original"])
+        st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+        st.session_state["swapped_assignments_log"] = [] # 일괄 적용 로그도 초기화
+        st.info("변경사항이 취소되고 원본 스케줄로 돌아갑니다.")
+        st.rerun()
+
 edited_df_md = st.data_editor(st.session_state["df_schedule_md"], use_container_width=True, key="schedule_editor", disabled=['날짜', '요일'])
 st.write(" ")
-if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary", use_container_width=True):
+
+if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True):
+    # 핵심 수정: 두 DataFrame 모두 비어있는지, 크기가 같은지 확인
+    if edited_df_md.empty or st.session_state["df_schedule_md_initial"].empty:
+        st.warning("⚠️ 저장할 데이터 또는 비교 대상 데이터가 비어있습니다. 새로고침 후 다시 시도하거나, 데이터가 있는 시트를 사용해주세요.")
+        st.stop()
+        
+    if edited_df_md.shape != st.session_state["df_schedule_md_initial"].shape:
+        st.warning("⚠️ 편집된 데이터와 원본 데이터의 크기가 일치하지 않아 변경사항을 저장할 수 없습니다. 새로고침 후 다시 시도해주세요.")
+        st.stop()
+        
+    # --- 핵심 수정 부분 시작 ---
+    # 수동으로 변경된 사항을 감지하여 로그에 기록
+    manual_change_log = []
+        
+    # 원본 데이터와 편집기(st.data_editor)의 최종 상태를 비교하여 모든 변경사항 감지
+    if not edited_df_md.equals(st.session_state["df_schedule_md_initial"]):
+        st.info("ℹ️ 수동 변경사항을 감지하고 로그에 기록합니다...")
+        
+        # 변경된 셀의 인덱스를 찾아내는 더 안전한 방식 사용
+        diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
+        
+        for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
+            date_str_raw = edited_df_md.iloc[row_idx, 0] # '날짜' 컬럼. 예: '4월 4일'
+            col_name = edited_df_md.columns[col_idx]
+            old_value = st.session_state["df_schedule_md_initial"].iloc[row_idx, col_idx]
+            new_value = edited_df_md.iloc[row_idx, col_idx]
+
+            # '요일' 정보를 가져오기 위해 원본 DataFrame에서 해당 행을 찾습니다.
+            original_row = st.session_state["df_schedule_original"][st.session_state["df_schedule_original"]['날짜'] == date_str_raw].iloc[0]
+            weekday = original_row['요일']
+            
+            # 컬럼 이름을 바탕으로 시간대('오전'/'오후')를 결정합니다.
+            if col_name.startswith('오후'):
+                time_period = '오후'
+            else:
+                time_period = '오전'
+            
+            # FIX: 날짜 문자열을 '4월 4일' 형식으로 변환합니다.
+            date_match = re.search(r'(\d+)월 (\d+)일', date_str_raw)
+            if date_match:
+                # 핵심 수정: int()를 사용하여 0을 제거
+                month = int(date_match.group(1))
+                day = int(date_match.group(2))
+                formatted_date_part = f"{month}월 {day}일"
+            else:
+                formatted_date_part = date_str_raw
+            
+            # 요청된 형식에 맞춰 날짜 문자열을 생성합니다.
+            formatted_date_str = f"{formatted_date_part} ({weekday.replace('요일', '')}) - {time_period}"
+
+            manual_change_log.append({
+                '날짜': formatted_date_str,
+                '변경 전 인원': str(old_value),
+                '변경 후 인원': str(new_value),
+            })
+        
+    # 일괄 적용 로그와 수동 변경 로그를 합침
+    final_change_log = st.session_state["swapped_assignments_log"] + manual_change_log
+    # --- 핵심 수정 부분 끝 ---
+        
+    # 변경된 df_schedule_md 내용을 df_schedule에 반영
+    # BUG FIX: df_schedule_to_save를 원본이 아닌,
+    # '요청사항 일괄 적용'이 반영된 st.session_state["df_schedule"]에서 복사
     df_schedule_to_save = st.session_state["df_schedule"].copy()
-    if not st.session_state["df_schedule_md"].equals(edited_df_md):
-        st.info("ℹ️ 수작업 변경사항을 최종본에 반영합니다...")
-        for md_idx, edited_row in edited_df_md.iterrows():
-            original_row = st.session_state["df_schedule_md"].loc[md_idx]
-            if not original_row.equals(edited_row):
-                date_str = edited_row['날짜']
-                for col_name, new_value in edited_row.items():
-                    if original_row[col_name] != new_value and new_value and isinstance(new_value, str) and new_value.strip():
-                        # [핵심 수정] 수작업 시에도 근무타입을 판별하여 (날짜, 근무타입, 이름)의 3개짜리 데이터로 기록
-                        shift_type = '오후' if '오후' in col_name or '13:30' in col_name else '오전'
-                        st.session_state["swapped_assignments"].add((date_str, shift_type, new_value))
-                target_row_indices = df_schedule_to_save[df_schedule_to_save['날짜'] == date_str].index
-                if not target_row_indices.empty:
-                    target_idx = target_row_indices[0]
-                    for col_name in edited_df_md.columns:
-                        if col_name in df_schedule_to_save.columns:
-                            df_schedule_to_save.loc[target_idx, col_name] = edited_row[col_name]
+        
+    for row_idx, row in edited_df_md.iterrows():
+        # df_schedule_to_save와 edited_df_md의 '날짜' 컬럼을 기준으로 병합
+        date_str = row['날짜']
+        original_row_idx_list = df_schedule_to_save[df_schedule_to_save['날짜'] == date_str].index
+        
+        if not original_row_idx_list.empty:
+            original_row_idx = original_row_idx_list[0]
+            for col in edited_df_md.columns:
+                if col in df_schedule_to_save.columns:
+                    # edited_df_md의 값을 df_schedule_to_save에 복사
+                    df_schedule_to_save.at[original_row_idx, col] = row[col]
+
     try:
+        # Google Sheets에 저장
         st.info("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
+        
+        # '12'와 '오후5' 열이 df_schedule_to_save에 있어야 하므로, columns를 정확히 확인
+        columns_to_save = st.session_state["df_schedule_original"].columns.tolist()
+        df_schedule_to_save = df_schedule_to_save[columns_to_save]
+        
         schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
         update_sheet_with_retry(worksheet_schedule, schedule_data)
-        st.session_state.update({"df_schedule": df_schedule_to_save, "df_schedule_md": create_df_schedule_md(df_schedule_to_save)})
-        st.success("🎉 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다."); time.sleep(1); st.rerun()
+        
+        # ===> 핵심 수정: Google Sheets 저장 후, 세션 상태를 최신 데이터로 완벽하게 업데이트
+        st.session_state["final_change_log"] = final_change_log
+        st.session_state["df_schedule"] = df_schedule_to_save.copy() # 최신 DataFrame으로 업데이트
+        st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_to_save) # md 버전도 업데이트
+        st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy() # 초기 상태도 최신으로 업데이트
+
+        st.success("🎉 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다. 방 배정 로직에 반영됩니다."); time.sleep(1); st.rerun()
     except Exception as e:
         st.warning(f"⚠️ Google Sheets 저장 중 오류 발생: {e}")
 
 st.write("---")
 st.caption("📝 현재까지 기록된 변경사항 로그")
-# 변경된 세션 상태 변수를 사용하여 로그 출력
-change_log_list = st.session_state.get("swapped_assignments_log", [])
-if change_log_list:
-    log_df = pd.DataFrame(change_log_list)
-    log_df = log_df.sort_values(by=['날짜', '근무타입']).reset_index(drop=True)
+final_log_list = st.session_state.get("final_change_log", [])
+if final_log_list:
+    log_df = pd.DataFrame(final_log_list)
     st.dataframe(log_df, use_container_width=True, hide_index=True)
 else:
     st.info("기록된 변경사항이 없습니다.")
-
+    
 # 방 설정 UI
 st.divider()
 st.subheader("📋 방 설정")
@@ -667,7 +796,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
                     elif slot.startswith('13:30') and slot.endswith('_당직'):
                         daily_stats['afternoon_duty'][person] += 1
                 else:
-                    st.warning(f"배정 요청 무시: {person}은 {slot} 시간대({'오전' if slot in morning_slots else '오후'})에 근무 불가")
+                    st.warning(f"배정 요청 무시: {person}님은 {slot} 시간대({'오전' if slot in morning_slots else '오후'})에 근무 불가")
             else:
                 st.warning(f"배정 요청 충돌: {person}을 {slot}에 배정할 수 없음. 이미 배정됨: {assignment[slot_idx]}")
 
@@ -1071,9 +1200,28 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
     sheet = wb.active
     sheet.title = "Schedule"
     sky_blue_fill = PatternFill(start_color="CCEEFF", end_color="CCEEFF", fill_type="solid")
+    # 변경된 인원을 위한 새로운 색상 정의 (F2DCDB)
+    changed_person_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
     duty_font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
     default_font = Font(name="맑은 고딕", size=9)
-    swapped_set = st.session_state.get("swapped_assignments", set())
+    # swapped_set = st.session_state.get("swapped_assignments", set()) # 기존 swapped_set 로직은 변경 로그로 대체
+    # 최종 변경 로그를 기반으로 색상을 칠할 셀의 정보를 저장하는 set을 생성합니다.
+    # (날짜, 시간대, 변경 후 인원) 튜플 형태로 저장됩니다.
+    changed_log_set = set()
+    for log in st.session_state.get("final_change_log", []):
+        # '4월 4일 (금) - 오전' 형식의 날짜 문자열에서 날짜와 시간대 추출
+        log_date_info = log['날짜'].split(' - ')[0] # '4월 4일 (금)'
+        log_date_match = re.search(r'(\d+)월 (\d+)일', log_date_info)
+        if log_date_match:
+            # '4월 4일' 형식으로 재구성
+            formatted_date = f"{int(log_date_match.group(1))}월 {int(log_date_match.group(2))}일"
+            time_period = log['날짜'].split(' - ')[1] # '오전' 또는 '오후'
+            new_value = log['변경 후 인원']
+            
+            # 시간대 정보를 '오전'과 '오후'로 통일하여 저장
+            cell_shift_type = '오후' if '오후' in time_period else '오전'
+            
+            changed_log_set.add((formatted_date, cell_shift_type, new_value))
 
     special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid") # 소수 근무일 '요일' 색상
     no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid") # 근무자 없는 날 색상
@@ -1108,52 +1256,57 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             
+            # --- 배경색 우선순위 로직 ---
+            # 1. 근무자 없는 날/소수 인원 근무일
             if col_idx == 1:
                 cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
             elif col_idx == 2: # '요일' 열
                 if is_no_person_day:
-                    cell.fill = no_person_day_fill   # 1순위: 근무자 없는 날
+                    cell.fill = no_person_day_fill
                 elif is_small_team_day:
-                    cell.fill = special_day_fill     # 2순위: 소수 인원 근무일
+                    cell.fill = special_day_fill
                 else:
-                    cell.fill = default_yoil_fill    # 3순위: 일반 근무일
-            elif is_no_person_day and col_idx >= 3: # 근무자 없는 날의 배정 슬롯
+                    cell.fill = default_yoil_fill
+            elif is_no_person_day and col_idx >= 3:
                 cell.fill = no_person_day_fill
 
             slot_name = columns[col_idx-1]
             
-            # [핵심 수정] 셀의 근무타입을 판별
+            # 2. 변경된 인원 색상 적용 (가장 높은 우선순위)
+            # 셀의 근무 시간대를 판별
             cell_shift_type = '오후' if '13:30' in slot_name or '온콜' in slot_name else '오전'
             
-            # 서식 적용 (배경색 -> 폰트 -> 메모 순)
-            if (current_date_str, cell_shift_type, value) in swapped_set:
-                cell.fill = sky_blue_fill
+            # 변경된 인원 정보와 일치하는 경우
+            if (current_date_str, cell_shift_type, value) in changed_log_set:
+                cell.fill = changed_person_fill
             
+            # 3. 당직 폰트 적용
             if (slot_name.endswith('_당직') or slot_name == '온콜') and value:
                 cell.font = duty_font
             else:
                 cell.font = default_font
             
+            # 4. 메모 추가
             if col_idx > 2 and value and date_cache.get(current_date_str):
                 formatted_date_for_comment = date_cache[current_date_str]
                 if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
                     cell.comment = Comment(f"배정 요청: {request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
-    
+
     # --- Stats 시트 생성 및 최종 파일 저장 (기존과 동일) ---
     stats_sheet = wb.create_sheet("Stats")
     stats_columns = stats_df.columns.tolist()
     for col_idx, header in enumerate(stats_columns, 1):
-            stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
-            cell = stats_sheet.cell(1, col_idx, header)
-            cell.font = Font(bold=True, name="맑은 고딕", size=9)
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
-            elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-            elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-            elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-            elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-    
+        stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
+        cell = stats_sheet.cell(1, col_idx, header)
+        cell.font = Font(bold=True, name="맑은 고딕", size=9)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+        elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+        elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+        elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+        elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
     for row_idx, row in enumerate(stats_df.values, 2):
         for col_idx, value in enumerate(row, 1):
             cell = stats_sheet.cell(row_idx, col_idx, value)
@@ -1164,7 +1317,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
     output = BytesIO()
     wb.save(output)
     output.seek(0)
-    
+
     st.divider()
     st.download_button(
         label="📥 최종 방배정 다운로드",

@@ -38,7 +38,15 @@ if "df_final_assignment" not in st.session_state:
 if "df_change_requests" not in st.session_state:
     st.session_state["df_change_requests"] = pd.DataFrame()
 if "changed_cells_log" not in st.session_state:
-    st.session_state["changed_cells_log"] = set()
+    st.session_state["changed_cells_log"] = []
+if "df_before_apply" not in st.session_state:
+    st.session_state["df_before_apply"] = pd.DataFrame()
+if "has_changes_to_revert" not in st.session_state:
+    st.session_state["has_changes_to_revert"] = False
+if 'download_file' not in st.session_state:
+    st.session_state.download_file = None
+if 'download_filename' not in st.session_state:
+    st.session_state.download_filename = None
 
 # --- Google Sheets 연동 함수 (기존 코드 재사용) ---
 def get_gspread_client():
@@ -84,89 +92,97 @@ def load_data_for_change_page(month_str):
         df_req = pd.DataFrame(worksheet_req.get_all_records())
     except gspread.exceptions.WorksheetNotFound:
         st.warning(f"'{month_str} 방배정 변경요청' 시트가 없습니다. 빈 테이블로 시작합니다.")
+        time.sleep(1)
         df_req = pd.DataFrame(columns=['RequestID', '요청일시', '요청자', '요청자 사번', '요청 근무일', '요청자 방배정', '상대방', '상대방 방배정'])
 
     return df_final, df_req
 
 # --- 방배정 변경사항 적용 함수 ---
-# 기존의 apply_assignment_swaps 함수를 아래 코드로 교체해주세요.
-# 기존의 apply_assignment_swaps 함수를 아래 코드로 교체해주세요.
 def apply_assignment_swaps(df_assignment, df_requests):
     df_modified = df_assignment.copy()
-    changed_log = set()
+    changed_log = []
     applied_count = 0
     error_found = False
 
     for _, req in df_requests.iterrows():
         try:
-            # 1. 변경 요청 데이터 파싱
             swap_request_str = str(req.get('변경 요청', '')).strip()
             raw_slot_info = str(req.get('변경 요청한 방배정', '')).strip()
             
             if not swap_request_str or not raw_slot_info:
                 st.warning(f"⚠️ 요청 처리 불가: '변경 요청' 또는 '변경 요청한 방배정' 컬럼이 비어 있습니다.")
+                time.sleep(1)
                 continue
             
-            # '강승주 -> 서지연'에서 변경 전/후 인원 추출
             if '->' not in swap_request_str:
                 st.warning(f"⚠️ '변경 요청' 형식이 올바르지 않습니다: '{swap_request_str}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+                time.sleep(1)
                 continue
             
             old_person, new_person = [p.strip() for p in swap_request_str.split('->')]
 
-            # '04월 04일 (금) - 8:30(1)_당직'에서 날짜와 슬롯 추출
             slot_info_parts = raw_slot_info.split(' - ')
             if len(slot_info_parts) != 2:
                 st.warning(f"⚠️ '변경 요청한 방배정' 형식이 올바르지 않습니다: '{raw_slot_info}'. '04월 04일 (금) - 8:30(1)_당직' 형식으로 입력해주세요.")
+                time.sleep(1)
                 continue
             
             date_part, slot_part = slot_info_parts
             date_match = re.search(r'(\d+)월\s*(\d+)일', date_part)
             if not date_match:
                 st.warning(f"⚠️ 날짜 정보 '{date_part}'를 찾을 수 없습니다.")
+                time.sleep(1)
                 continue
             
             target_date_str = f"{int(date_match.group(1))}월 {int(date_match.group(2))}일"
             target_slot = slot_part
             
-            # 2. 방배정표에서 해당 날짜의 행과 슬롯 찾기
             row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
             if not row_indices:
                 st.warning(f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
+                time.sleep(1)
                 continue
             
             target_row_idx = row_indices[0]
             
             if target_slot not in df_modified.columns:
-                 st.error(f"❌ 적용 실패: 슬롯 '{target_slot}'을(를) 방 배정표에서 찾을 수 없습니다.")
-                 error_found = True
-                 continue
+                st.error(f"❌ 적용 실패: 방배정 '{target_slot}'을(를) 방 배정표에서 찾을 수 없습니다.")
+                time.sleep(1)
+                error_found = True
+                continue
 
-            # 3. 방배정 교체 로직
-            #    `target_slot`에 `old_person`이 있는지 확인하고 `new_person`으로 교체
             current_assigned_person = str(df_modified.at[target_row_idx, target_slot]).strip()
             if current_assigned_person == old_person:
-                df_modified.at[target_row_idx, target_slot] = new_person
+                # 변경 전후 인원을 로그에 저장 (딕셔너리 형식)
+                changed_log.append({
+                    '날짜': target_date_str,
+                    '방배정': target_slot,
+                    '변경 전 인원': old_person,
+                    '변경 후 인원': new_person
+                })
                 
-                changed_log.add((target_date_str, target_slot, new_person))
+                df_modified.at[target_row_idx, target_slot] = new_person
                 applied_count += 1
             else:
                 st.error(f"❌ 적용 실패: {target_date_str}의 '{target_slot}'에 '{old_person}'이(가) 배정되어 있지 않습니다. 현재 배정된 인원: '{current_assigned_person}'")
+                time.sleep(1)
                 error_found = True
         
         except KeyError as e:
             st.error(f"⚠️ 요청 처리 중 오류 발생: 시트에 '{e}' 컬럼이 없습니다. (요청 정보: {req.to_dict()})")
+            time.sleep(1)
             error_found = True
         except Exception as e:
             st.error(f"⚠️ 요청 처리 중 시스템 오류 발생: {e} (요청 정보: {req.to_dict()})")
+            time.sleep(1)
             error_found = True
 
     if applied_count > 0:
-        st.toast(f"✅ 총 {applied_count}건의 변경 요청이 반영되었습니다.", icon="🎉")
-    if error_found:
-        st.toast("⚠️ 일부 요청 적용에 실패했습니다. 메시지를 확인하세요.", icon="🚨")
+        st.success(f"🎉 총 {applied_count}건의 변경 요청이 반영되었습니다.")
+        time.sleep(1.5)
     elif applied_count == 0 and not df_requests.empty:
-        st.toast("ℹ️ 새롭게 반영할 유효한 변경 요청이 없습니다.", icon="🧐")
+        st.info("ℹ️ 새롭게 반영할 유효한 변경 요청이 없습니다.")
+        time.sleep(1)
 
     return df_modified, changed_log
 def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
@@ -228,15 +244,13 @@ if not st.session_state.change_data_loaded:
     df_final, df_req = load_data_for_change_page(month_str)
     st.session_state.df_final_assignment = df_final
     st.session_state.df_change_requests = df_req
-    st.session_state.changed_cells_log = set()
+    st.session_state.changed_cells_log = []
+    st.session_state.df_before_apply = df_final.copy()
+    st.session_state.has_changes_to_revert = False
     st.session_state.change_data_loaded = True
 
 st.write(" ")
-st.subheader(f"✅ {month_str} 방배정 변경 및 최종 확정")
-
-st.write(" ")
-st.write("**📋 방배정 변경 요청 목록**")
-st.write("- 아래 변경 요청 목록을 확인하고, 스케줄을 수정 후 저장하세요.")
+st.subheader("📋 방배정 변경 요청 목록")
 if not st.session_state.df_change_requests.empty:
     df_display = st.session_state.df_change_requests.copy()
     if 'RequestID' in df_display.columns:
@@ -247,21 +261,39 @@ if not st.session_state.df_change_requests.empty:
 else:
     st.info("접수된 변경 요청이 없습니다.")
 
-st.write(" ")
-st.write("**✍️ 방배정 최종 수정**")
-st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
+st.divider()
+st.subheader("✍️ 방배정 최종 수정")
+st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장**하세요.")
 
-if st.button("🔄 요청사항 일괄 적용"):
-    if not st.session_state.df_change_requests.empty:
-        current_df = st.session_state.df_final_assignment
-        requests_df = st.session_state.df_change_requests
-        modified_df, changes = apply_assignment_swaps(current_df, requests_df)
-        st.session_state.df_final_assignment = modified_df
-        st.session_state.changed_cells_log.update(changes)
-    else:
-        st.toast("ℹ️ 처리할 변경 요청이 없습니다.", icon="🧐")
+col1, col2 = st.columns(2)
 
-# Data Editor와 변경사항 감지
+with col1:
+    if st.button("🔄 요청사항 일괄 적용"):
+        if not st.session_state.df_change_requests.empty:
+            current_df = st.session_state.df_final_assignment
+            requests_df = st.session_state.df_change_requests
+            
+            st.session_state.df_before_apply = current_df.copy()
+            
+            modified_df, new_changes = apply_assignment_swaps(current_df, requests_df)
+            st.session_state.df_final_assignment = modified_df
+            
+            if not isinstance(st.session_state.changed_cells_log, list):
+                st.session_state.changed_cells_log = list(st.session_state.changed_cells_log)
+            
+            st.session_state.changed_cells_log.extend(new_changes)
+            st.session_state.has_changes_to_revert = True
+        else:
+            st.info("ℹ️ 처리할 변경 요청이 없습니다.")
+
+with col2:
+    if st.button("⏪ 적용 취소", disabled=not st.session_state.has_changes_to_revert):
+        st.session_state.df_final_assignment = st.session_state.df_before_apply.copy()
+        st.session_state.changed_cells_log = []
+        st.session_state.has_changes_to_revert = False
+        st.success("✅ 변경사항이 취소되었습니다.")
+        st.rerun()
+
 edited_df = st.data_editor(
     st.session_state.df_final_assignment,
     use_container_width=True,
@@ -270,9 +302,13 @@ edited_df = st.data_editor(
     hide_index=True
 )
 
-# 실시간 수동 변경 감지 및 로깅
 if not edited_df.equals(st.session_state.df_final_assignment):
+    st.session_state.df_before_apply = st.session_state.df_final_assignment.copy()
+    
     diff_mask = (edited_df != st.session_state.df_final_assignment) & (edited_df.notna() | st.session_state.df_final_assignment.notna())
+    
+    current_log = st.session_state.changed_cells_log
+    
     for col in diff_mask.columns:
         if diff_mask[col].any():
             for idx in diff_mask.index[diff_mask[col]]:
@@ -280,25 +316,77 @@ if not edited_df.equals(st.session_state.df_final_assignment):
                 new_val = edited_df.at[idx, col]
                 old_val = st.session_state.df_final_assignment.at[idx, col]
                 
-                # 로그 추가 (새로운 값 기준)
-                st.session_state.changed_cells_log.add((date_val, col, new_val))
-                # 이전 값에 대한 로그는 제거 (A->B->C로 바뀔 때 B의 하이라이트는 제거)
-                st.session_state.changed_cells_log.discard((date_val, col, old_val))
+                # 기존 로그에서 동일 위치의 변경사항 제거
+                current_log = [
+                    log for log in current_log if not (
+                        log['날짜'] == date_val and 
+                        log['방배정'] == col
+                    )
+                ]
+                
+                # 새로운 변경사항 로그 추가
+                if new_val != old_val:
+                    current_log.append({
+                        '날짜': date_val,
+                        '방배정': col,
+                        '변경 전 인원': old_val,
+                        '변경 후 인원': new_val
+                    })
 
+    st.session_state.changed_cells_log = current_log
     st.session_state.df_final_assignment = edited_df.copy()
+    st.session_state.has_changes_to_revert = True
+
 
 st.divider()
 st.caption("📝 현재까지 기록된 변경사항 로그")
 if st.session_state.changed_cells_log:
-    log_df = pd.DataFrame(list(st.session_state.changed_cells_log), columns=['날짜', '슬롯', '변경된 인원'])
-    st.dataframe(log_df.sort_values(by=['날짜', '슬롯']).reset_index(drop=True), use_container_width=True, hide_index=True)
+    # 변경 로그에서 딕셔너리의 키 개수가 4개인 유효한 항목만 필터링합니다.
+    valid_logs = [log for log in st.session_state.changed_cells_log if len(log) == 4]
+    
+    if valid_logs:
+        # 컬럼이 정의된 데이터프레임 생성
+        log_df = pd.DataFrame(valid_logs, columns=['날짜', '방배정', '변경 전 인원', '변경 후 인원'])
+        
+        # NaN 값을 빈 문자열로 대체하여 정렬 오류 방지
+        log_df = log_df.fillna('')
+        
+        st.dataframe(log_df.sort_values(by=['날짜', '방배정']).reset_index(drop=True), use_container_width=True, hide_index=True)
+    else:
+        st.info("기록된 변경사항이 없습니다.")
 else:
     st.info("기록된 변경사항이 없습니다.")
 
-if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 수행", type="primary", use_container_width=True):
+col_final1, col_final2 = st.columns(2)
+
+with col_final1:
+    if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True):
+        final_df_to_save = st.session_state.df_final_assignment
+        with st.spinner("Google Sheets에 저장 중..."):
+            try:
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+                worksheet_final = sheet.worksheet(f"{month_str} 방배정")
+                
+                final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
+                update_sheet_with_retry(worksheet_final, final_data_list)
+                st.success("✅ Google Sheets에 최종 방배정표가 성공적으로 저장되었습니다.")
+            except Exception as e:
+                st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+
+# '방배정 수행' 버튼은 col2에 그대로 두고, 버튼 클릭 시 실행되는 코드를 밖으로 뺐습니다.
+with col_final2:
+    if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
+        st.session_state['show_final_results'] = True
+    else:
+        st.session_state['show_final_results'] = False
+
+# '방배정 수행' 버튼이 눌렸을 때만 최종 결과를 전체 화면에 표시합니다.
+if st.session_state.get('show_final_results', False):
+    st.divider()
+    
     final_df_to_save = st.session_state.df_final_assignment
 
-    st.write(" ")
     st.subheader(f"💡 {month_str} 최종 방배정 결과", divider='rainbow')
     
     st.markdown("**✅ 통합 배치 결과**")
@@ -308,21 +396,6 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 �
     st.markdown("**☑️ 인원별 통계**")
     st.dataframe(stats_df, use_container_width=True, hide_index=True)
 
-    # 1. Google Sheets에 저장
-    with st.spinner("Google Sheets에 저장 중..."):
-        try:
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-            worksheet_final = sheet.worksheet(f"{month_str} 방배정")
-            
-            final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
-            update_sheet_with_retry(worksheet_final, final_data_list)
-            st.success("✅ Google Sheets에 최종 방배정표가 성공적으로 저장되었습니다.")
-        except Exception as e:
-            st.error(f"Google Sheets 저장 중 오류 발생: {e}")
-            st.stop()
-
-    # 2. Excel 파일 생성
     with st.spinner("Excel 파일을 생성 중입니다..."):
         wb = openpyxl.Workbook()
         sheet = wb.active
@@ -347,6 +420,11 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 �
             elif header.startswith('10:00'): cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
             elif header.startswith('13:30'): cell.fill = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
 
+        # 변경된 셀을 빠르게 찾기 위한 Set 생성
+        changed_cells_set = set()
+        for log in st.session_state.changed_cells_log:
+            changed_cells_set.add((log['날짜'], log['방배정'], log['변경 후 인원']))
+
         # 데이터 렌더링
         for row_idx, row_data in enumerate(final_df_to_save.itertuples(index=False), 2):
             has_person = any(val for val in row_data[2:] if val)
@@ -358,7 +436,6 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 �
             SMALL_TEAM_THRESHOLD_FORMAT = 15
             is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT)
             
-            current_date_str = row_data[0]
             for col_idx, value in enumerate(row_data, 1):
                 cell = sheet.cell(row_idx, col_idx, value if value else None)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -374,16 +451,16 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 �
                     if is_no_person_day:
                         cell.fill = no_person_day_fill   # 1순위: 근무자 없는 날
                     elif is_small_team_day:
-                        cell.fill = special_day_fill     # 2순위: 소수 인원 근무일
+                        cell.fill = special_day_fill      # 2순위: 소수 인원 근무일
                     else:
                         cell.fill = default_yoil_fill    # 3순위: 일반 근무일
-                elif is_no_person_day and col_idx >= 3: # 근무자 없는 날의 배정 슬롯
+                elif is_no_person_day and col_idx >= 3: # 근무자 없는 날의 배정 방배정
                     cell.fill = no_person_day_fill
 
                 slot_name = columns[col_idx-1]
                 
-                # 변경사항 하이라이트
-                if (current_date_str, slot_name, str(value)) in st.session_state.changed_cells_log:
+                # 변경사항 하이라이트 (수정된 부분)
+                if (current_date_str, slot_name, str(value)) in changed_cells_set:
                     cell.fill = highlight_fill
                 
                 # 당직 폰트
@@ -395,16 +472,16 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 �
         stats_sheet = wb.create_sheet("Stats")
         stats_columns = stats_df.columns.tolist()
         for col_idx, header in enumerate(stats_columns, 1):
-             stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
-             cell = stats_sheet.cell(1, col_idx, header)
-             cell.font = Font(bold=True, name="맑은 고딕", size=9)
-             cell.alignment = Alignment(horizontal='center', vertical='center')
-             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-             if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
-             elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-             elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-             elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-             elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+            stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
+            cell = stats_sheet.cell(1, col_idx, header)
+            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+            elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+            elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+            elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+            elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
         
         for row_idx, row in enumerate(stats_df.values, 2):
             for col_idx, value in enumerate(row, 1):
@@ -420,7 +497,6 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장 및 방배정 �
         st.session_state.download_file = output
         st.session_state.download_filename = f"{month_str} 방배정_최종확정.xlsx"
 
-st.divider()
 # 다운로드 버튼 표시
 if 'download_file' in st.session_state and st.session_state.download_file:
     st.download_button(
