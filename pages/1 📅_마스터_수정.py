@@ -1,4 +1,3 @@
-
 from googleapiclient.discovery import build
 import time
 import numpy as np
@@ -39,43 +38,6 @@ def get_gspread_client():
 
 def extract_spreadsheet_id(url):
     return url.split("/d/")[1].split("/")[0]
-
-def track_sheets_update_usage():
-    # 최근 기록 시간 체크 (30분 간격 제한)
-    last_logged = st.session_state.get("last_logged", 0)
-    now = time.time()
-    if now - last_logged < 1800:  # 30분 = 1800초
-        return
-    st.session_state["last_logged"] = now
-
-    # 사용자 이름, 타임스탬프 정의
-    user_name = st.session_state.get("name", "Unknown")
-    timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_to_sheet = True  # 로그 시트에 실제로 남길지 여부 (False로 설정 시 GCP 트리거만 수행)
-
-    try:
-        # 인증 설정
-        service_account_info = dict(st.secrets["gspread"])
-        service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
-        credentials = Credentials.from_service_account_info(service_account_info, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-        service = build("sheets", "v4", credentials=credentials)
-        spreadsheet_id = st.secrets["google_sheet"]["url"].split("/d/")[1].split("/")[0]
-
-        # ✅ 1. GCP Monitoring 트리거 (쿼터 추적용)
-        service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-
-        # ✅ 2. 로그 시트 기록 (옵션)
-        if log_to_sheet:
-            service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id,
-                range="'로그'!A1",
-                valueInputOption="RAW",
-                insertDataOption="INSERT_ROWS",
-                body={"values": [[f"{timestamp} - {user_name} 스케줄 수정"]]}
-            ).execute()
-
-    except Exception as e:
-        st.warning(f"❗ 로그 기록 실패: {e}")
 
 url = st.secrets["google_sheet"]["url"]
 gc = get_gspread_client()
@@ -193,7 +155,7 @@ next_month = today.replace(day=1) + pd.DateOffset(months=1)
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 dates = pd.date_range(start=next_month, end=next_month.replace(day=last_day))
 week_nums = sorted(set(d.isocalendar()[1] for d in dates))
-month_str = next_month.strftime("%Y년 %m월")
+month_str = next_month.strftime("%Y년 %-m월")
 
 st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
 
@@ -291,7 +253,6 @@ with st.expander("📅 월 단위로 일괄 설정"):
         df_result = df_result.sort_values(by=["이름", "주차", "요일"])
         worksheet1.clear()
         worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
-        track_sheets_update_usage()  # ✅ 여기에 삽입
 
         st.session_state["df_master"] = df_result
         df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
@@ -338,7 +299,6 @@ with st.expander("📅 주 단위로 설정"):
         df_result = df_result.sort_values(by=["이름", "주차", "요일"])
         worksheet1.clear()
         worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
-        track_sheets_update_usage()  # ✅ 여기에 삽입
 
         st.session_state["df_master"] = df_result
         df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트

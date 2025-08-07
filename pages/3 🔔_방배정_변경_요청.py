@@ -54,7 +54,6 @@ def load_room_data(month_str):
             st.error("오류: Google Sheets 시트에 '날짜' 열이 없습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)
-        # ⚠️ 이 부분은 그대로 두세요. datetime 객체는 올바르게 변환합니다.
         df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
@@ -71,12 +70,10 @@ def get_my_room_requests(month_str, employee_id):
         gc = get_gspread_client()
         if not gc: return []
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        
         try:
             worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
         except gspread.exceptions.WorksheetNotFound:
             return []
-            
         all_requests = worksheet.get_all_records()
         my_requests = [req for req in all_requests if str(req.get('요청자 사번')) == str(employee_id)]
         return my_requests
@@ -89,23 +86,17 @@ def add_room_request_to_sheet(request_data, month_str):
         gc = get_gspread_client()
         if not gc: return False
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        
         headers = ['RequestID', '요청일시', '요청자', '요청자 사번', '변경 요청', '변경 요청한 방배정']
-        
         try:
             worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
-            
-            # 시트가 있지만 헤더가 없는 경우 또는 헤더가 다른 경우
             current_headers = worksheet.row_values(1)
             if not current_headers or current_headers != headers:
                 worksheet.update('A1:F1', [headers])
                 st.info(f"'{REQUEST_SHEET_NAME}' 시트의 헤더를 올바른 형식으로 업데이트했습니다.")
-
         except gspread.exceptions.WorksheetNotFound:
             worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
             worksheet.append_row(headers)
             st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
-
         row_to_add = [
             request_data.get('RequestID'),
             request_data.get('요청일시'),
@@ -114,7 +105,6 @@ def add_room_request_to_sheet(request_data, month_str):
             request_data.get('변경 요청'),
             request_data.get('변경 요청한 방배정')
         ]
-        
         worksheet.append_row(row_to_add)
         st.cache_data.clear()
         return True
@@ -146,24 +136,27 @@ def get_person_room_assignments(df, person_name=""):
         match = re.search(r"(\d{1,2}:\d{2})", str(col_name))
         if match:
             time_str = match.group(1)
-            # 24시간 형식으로 변환하여 정렬에 문제가 없도록 합니다.
             return datetime.strptime(time_str.zfill(5), "%H:%M").time()
         if '당직' in str(col_name) or '온콜' in str(col_name):
             return datetime.strptime("23:59", "%H:%M").time()
         return datetime.max.time()
-
     time_cols = sorted([col for col in df.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)], key=sort_key)
-    
     for _, row in sorted_df.iterrows():
         dt = row['날짜_dt']
-        
-        # ✅ 이 부분을 아래와 같이 수정해야 합니다. f-string 포맷팅을 사용합니다.
-        date_str = f"{dt.month:02d}월 {dt.day:02d}일 ({'월화수목금토일'[dt.weekday()]})"
-        
+        # 수정: UI에 표시할 날짜 형식을 "4월 2일 (수)"로, Google Sheets 저장용 형식을 "2025-04-02"로 생성
+        display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+        sheet_date_str = dt.strftime("%Y-%m-%d")
         for col in time_cols:
             current_person = row.get(col)
             if (not person_name and current_person) or (person_name and current_person == person_name):
-                assignments.append({'date_obj': dt.date(), 'column_name': str(col), 'person_name': current_person, 'display_str': f"{date_str} - {col}"})
+                # 수정: display_str은 UI용, sheet_str은 Google Sheets용
+                assignments.append({
+                    'date_obj': dt.date(),
+                    'column_name': str(col),
+                    'person_name': current_person,
+                    'display_str': f"{display_date_str} - {col}",
+                    'sheet_str': f"{sheet_date_str} ({col})"
+                })
     return assignments
 
 def get_shift_period(column_name):
@@ -174,17 +167,14 @@ def get_shift_period(column_name):
             return "오전"
         elif 13 <= hour <= 18:
             return "오후"
-    
     if '당직' in str(column_name) or '온콜' in str(column_name):
         return "기타"
-        
     return "기타"
 
 def is_person_assigned_at_time(df, person_name, date_obj, column_name):
     row_data = df[df['날짜_dt'].dt.date == date_obj]
     if row_data.empty:
         return False
-    
     row_dict = row_data.iloc[0].to_dict()
     for col, assigned_person in row_dict.items():
         if get_shift_period(col) == get_shift_period(column_name) and assigned_person == person_name:
@@ -211,22 +201,21 @@ else:
 
     st.subheader("✨ 방 변경 요청하기")
     with st.expander("🔑 사용설명서"):
-        st.markdown("""  
-        **🟢 나의 방배정을 상대방과 바꾸기**  
-    
+        st.markdown("""
+        **🟢 나의 방배정을 상대방과 바꾸기**
+
         : 내가 맡은 방배정를 다른 사람에게 넘겨줄 때 사용합니다.
         - **[변경을 원하는 나의 방배정 선택]**: 내가 바꾸고 싶은 방배정을 선택하세요.
-        - **[교환할 상대방 선택]**: 당월의 모든 근무자가 목록에 나타납니다.  
-        _※ 주의: 내가 선택한 방 배정의 날짜와 시간대에 이미 상대방이 근무한다면, 근무가 중복될 수 있습니다.  
+        - **[교환할 상대방 선택]**: 당월의 모든 근무자가 목록에 나타납니다.
+        _※ 주의: 내가 선택한 방 배정의 날짜와 시간대에 이미 상대방이 근무한다면, 근무가 중복될 수 있습니다.
         상대방의 방배정도 함께 변경해야 합니다._
-  
-        **🔵 상대방의 방배정을 나와 바꾸기**  
-    
+
+        **🔵 상대방의 방배정을 나와 바꾸기**
+
         : 내가 다른 사람의 방배정을 대신 맡아줄 때 사용합니다.
         - **[상대방 선택]**: 상대방을 선택하세요.
         - **[상대방의 근무 선택]**: 선택한 상대방의 방배정을 나로 대체합니다.
         """)
-
 
     # --- 나의 방배정을 상대방과 바꾸기 ---
     st.write(" ")
@@ -291,7 +280,8 @@ else:
                     "요청자": user_name,
                     "요청자 사번": employee_id,
                     "변경 요청": f"{user_name} -> {selected_colleague_name}",
-                    "변경 요청한 방배정": my_assignment_info['display_str'],
+                    # 수정: Google Sheets에 저장할 때 sheet_str 사용
+                    "변경 요청한 방배정": my_assignment_info['sheet_str'],
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
                     if add_room_request_to_sheet(new_request, MONTH_STR):
@@ -369,7 +359,8 @@ else:
                 "요청자": user_name,
                 "요청자 사번": employee_id,
                 "변경 요청": f"{colleague_assignment_info['person_name']} -> {user_name}",
-                "변경 요청한 방배정": colleague_assignment_info['display_str'],
+                # 수정: Google Sheets에 저장할 때 sheet_str 사용
+                "변경 요청한 방배정": colleague_assignment_info['sheet_str'],
             }
             with st.spinner("요청을 기록하는 중입니다..."):
                 if add_room_request_to_sheet(new_request, MONTH_STR):
@@ -388,8 +379,9 @@ else:
         '<th style="font-weight: bold; color: #2E86C1; width: 60%; padding-bottom: 5px; font-size: 0.9em;">변경 요청한 방배정</th>'
         '</tr></thead>'
         '<tbody><tr>'
-        '<td style="font-size: 1.0em; padding-top: 3px;">{request_type}</td>'
-        '<td style="font-size: 1.0em; padding-top: 3px;">{assignment_detail}</td>'
+        '<td style="font-size: 1.0em; color: #555; padding-top: 3px;">{request_type}</td>'
+        # 수정: Google Sheets의 날짜 형식을 UI용으로 변환
+        '<td style="font-size: 1.0em; color: #555; padding-top: 3px;">{assignment_detail_display}</td>'
         '</tr></tbody>'
         '</table>'
         '<hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 8px 0 5px 0;">'
@@ -403,9 +395,18 @@ else:
         for req in my_requests:
             col1, col2 = st.columns([5, 1])
             with col1:
+                # 수정: Google Sheets의 "YYYY-MM-DD (시간)" 형식을 "M월 D일 (요일) - 시간"으로 변환
+                assignment_detail = req.get('변경 요청한 방배정', '')
+                if re.match(r'\d{4}-\d{2}-\d{2} \(.+\)', assignment_detail):
+                    date_part, time_part = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', assignment_detail).groups()
+                    dt = datetime.strptime(date_part, '%Y-%m-%d')
+                    display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+                    assignment_detail_display = f"{display_date_str} - {time_part}"
+                else:
+                    assignment_detail_display = assignment_detail
                 card_html = HTML_CARD_TEMPLATE.format(
                     request_type=req.get('변경 요청', ''),
-                    assignment_detail=req.get('변경 요청한 방배정', ''),
+                    assignment_detail_display=assignment_detail_display,
                     timestamp=req.get('요청일시', '')
                 )
                 st.markdown(card_html, unsafe_allow_html=True)

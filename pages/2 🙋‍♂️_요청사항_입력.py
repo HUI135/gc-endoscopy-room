@@ -60,7 +60,7 @@ name = st.session_state["name"]
 today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
 
 next_month = today.replace(day=1) + relativedelta(months=1)
-month_str = next_month.strftime("%Y년 %m월")
+month_str = next_month.strftime("%Y년 %-m월")
 next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
@@ -230,7 +230,7 @@ with col3:
         if 방식 == "일자 선택":
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
             def format_date(date_obj):
-                return f"{date_obj.strftime('%m월 %d일')} ({weekday_map[date_obj.weekday()]})"
+                return f"{date_obj.strftime('%-m월 %-d일')} ({weekday_map[date_obj.weekday()]})"
             st.multiselect("요청 일자", [next_month_start + datetime.timedelta(days=i) for i in range((next_month_end - next_month_start).days + 1)], format_func=format_date, key="date_multiselect")
         elif 방식 == "기간 선택":
             st.date_input("요청 기간", value=(next_month_start, next_month_start + datetime.timedelta(days=1)), min_value=next_month_start, max_value=next_month_end, key="date_range")

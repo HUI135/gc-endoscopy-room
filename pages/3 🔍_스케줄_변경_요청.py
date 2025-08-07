@@ -156,7 +156,7 @@ def get_person_shifts(df, person_name):
 
     for _, row in df.iterrows():
         dt = row['날짜_dt']
-        date_str = dt.strftime("%m월 %d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+        date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
         
         for col in am_cols_in_df:
             if row[col] == person_name:
@@ -213,15 +213,15 @@ else:
 
     st.subheader("✨ 스케줄 변경 요청하기")
     with st.expander("🔑 사용설명서"):
-        st.markdown("""  
-        **🟢 나의 스케줄을 상대방과 바꾸기**  
-    
+        st.markdown("""
+        **🟢 나의 스케줄을 상대방과 바꾸기**
+
         : 내가 맡은 근무를 다른 사람에게 넘겨줄 때 사용합니다.
         - **[변경을 원하는 나의 스케줄 선택]**: 내가 바꾸고 싶은 근무를 선택하세요.
-        - **[교환할 상대방 선택]**: 그 날짜와 시간대에 **근무가 비어있는 사람**만 목록에 나타납니다.  
-  
-        **🔵 상대방의 스케줄을 나와 바꾸기**  
-    
+        - **[교환할 상대방 선택]**: 그 날짜와 시간대에 **근무가 비어있는 사람**만 목록에 나타납니다.
+
+        **🔵 상대방의 스케줄을 나와 바꾸기**
+
         : 내가 다른 사람의 근무를 대신 맡아줄 때 사용합니다.
         - **[상대방 선택]**: 상대방을 선택하세요.
         - **[상대방의 근무 선택]**: 선택한 상대방의 근무 중에서 **내가 이미 근무하고 있지 않은 날짜와 시간대**만 목록에 나타납니다.
@@ -290,7 +290,8 @@ else:
                     "요청자": user_name,
                     "요청자 사번": employee_id,
                     "변경 요청": f"{user_name} -> {selected_colleague_name}",
-                    "변경 요청한 스케줄": f"{my_assignment_info['display_str']}",
+                    # 수정된 부분: Google Sheets 저장 형식을 변경
+                    "변경 요청한 스케줄": f"{my_assignment_info['date_obj'].strftime('%Y-%m-%d')} ({my_assignment_info['shift_type']})",
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
                     if add_request_to_sheet(new_request, MONTH_STR):
@@ -361,7 +362,8 @@ else:
                 "요청자": user_name,
                 "요청자 사번": employee_id,
                 "변경 요청": f"{colleague_assignment_info['person_name']} -> {user_name}",
-                "변경 요청한 스케줄": f"{colleague_assignment_info['display_str']} ({colleague_assignment_info['shift_type']})",
+                # 수정된 부분: Google Sheets 저장 형식을 변경
+                "변경 요청한 스케줄": f"{colleague_assignment_info['date_obj'].strftime('%Y-%m-%d')} ({colleague_assignment_info['shift_type']})",
             }
             with st.spinner("요청을 기록하는 중입니다..."):
                 if add_request_to_sheet(new_request, MONTH_STR):
@@ -371,24 +373,37 @@ else:
     st.divider()
     st.markdown(f"#### 📝 {user_name}님의 스케줄 변경 요청 목록")
 
+    def format_schedule_for_display(schedule_str):
+        """Google Sheets에 저장된 'YYYY-MM-DD (오전)' 형식을 'M월 D일 (요일) - 오전'으로 변환"""
+        match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_str)
+        if match:
+            date_part, shift_part = match.groups()
+            try:
+                dt_obj = datetime.strptime(date_part, '%Y-%m-%d').date()
+                weekday_str = ['월', '화', '수', '목', '금', '토', '일'][dt_obj.weekday()]
+                return f"{dt_obj.month}월 {dt_obj.day}일 ({weekday_str}) - {shift_part}"
+            except ValueError:
+                return schedule_str # 변환 실패 시 원본 문자열 반환
+        return schedule_str # 형식 불일치 시 원본 문자열 반환
+
     my_requests = get_my_requests(MONTH_STR, employee_id)
     
     if not my_requests:
         st.info("현재 접수된 변경 요청이 없습니다.")
     else:
         HTML_CARD_TEMPLATE = (
-            '<div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
+            '<div style="border: 1px solid #555; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
             '<table style="width: 100%; border-collapse: collapse; text-align: center;">'
             '<thead><tr>'
             '<th style="font-weight: bold; color: #555; width: 40%; padding-bottom: 5px; font-size: 0.9em;">변경 요청</th>'
             '<th style="font-weight: bold; color: #D9534F; width: 60%; padding-bottom: 5px; font-size: 0.9em;">변경 요청한 스케줄</th>'
             '</tr></thead>'
             '<tbody><tr>'
-            '<td style="font-size: 1.0em; padding-top: 3px;">{request_type}</td>'
-            '<td style="font-size: 1.0em; padding-top: 3px;">{assignment_detail}</td>'
+            '<td style="font-size: 1.0em; color: #555; padding-top: 3px;">{request_type}</td>'
+            '<td style="font-size: 1.0em; color: #555; padding-top: 3px;">{assignment_detail}</td>'
             '</tr></tbody>'
             '</table>'
-            '<hr style="border: none; border-top: 1px dotted #bdbdbd; margin: 8px 0 5px 0;">'
+            '<hr style="border: none; border-top: 1px dotted #555; margin: 8px 0 5px 0;">'
             '<div style="text-align: right; font-size: 0.75em; color: #757575;">요청 시간: {timestamp}</div>'
             '</div>'
         )
@@ -397,9 +412,11 @@ else:
             req_id = req.get('RequestID')
             col1, col2 = st.columns([5, 1])
             with col1:
+                # 변경된 부분: Google Sheets에서 읽어온 문자열을 표시 형식에 맞게 변환
+                display_schedule = format_schedule_for_display(req.get('변경 요청한 스케줄', ''))
                 card_html = HTML_CARD_TEMPLATE.format(
                     request_type=req.get('변경 요청', ''),
-                    assignment_detail=req.get('변경 요청한 스케줄', ''),
+                    assignment_detail=display_schedule,
                     timestamp=req.get('요청일시', '')
                 )
                 st.markdown(card_html, unsafe_allow_html=True)

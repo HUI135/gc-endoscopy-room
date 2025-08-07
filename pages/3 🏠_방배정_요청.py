@@ -248,7 +248,7 @@ url = st.secrets["google_sheet"]["url"]
 name = st.session_state["name"]
 today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
 next_month = today.replace(day=1) + relativedelta(months=1)
-month_str = next_month.strftime("%Y년 %m월")
+month_str = next_month.strftime("%Y년 %-m월")
 next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
@@ -328,8 +328,9 @@ def get_user_available_dates(name, df_master, month_start, month_end):
             week_of_month = (day.day - 1) // 7
             if week_of_month in weeks and day.weekday() == 요일_index.get(요일):
                 weekday_name = weekday_map[day.weekday()]
-                month_num = str(day.month)
-                day_num = f"{day.day:02d}"
+                month_num = day.month
+                day_num = day.day
+                # 수정된 부분: f-string에서 02d 형식을 제거하여 1자리 숫자를 그대로 표시
                 display_date = f"{month_num}월 {day_num}일({weekday_name})"
                 save_date = day.strftime("%Y-%m-%d")
                 if 근무여부 == "오전 & 오후":
@@ -355,9 +356,10 @@ def format_date_for_display(date_info):
             time_slot = f"({time_slot_match[1]})" if len(time_slot_match) > 1 else ""
             
             dt = datetime.datetime.strptime(date_part, "%Y-%m-%d")
-            month_num = str(dt.month)
-            day = f"{dt.day:02d}"
+            month_num = dt.month
+            day = dt.day
             weekday_name = weekday_map[dt.weekday()]
+            # 수정된 부분: f-string에서 02d 형식을 제거하여 1자리 숫자를 그대로 표시
             formatted_date = f"{month_num}월 {day}일({weekday_name}) {time_slot}".strip()
             formatted_dates.append(formatted_date)
         return ", ".join(formatted_dates)
