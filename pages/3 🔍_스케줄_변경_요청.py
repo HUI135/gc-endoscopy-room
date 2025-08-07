@@ -24,12 +24,11 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-MONTH_STR = "2025년 04월"
+MONTH_STR = "2025년 4월"
 YEAR_STR = MONTH_STR.split('년')[0]
 AM_COLS = [str(i) for i in range(1, 13)] + ['온콜']
 PM_COLS = [f'오후{i}' for i in range(1, 6)]
 REQUEST_SHEET_NAME = f"{MONTH_STR} 스케줄 변경요청"
-
 
 # --- 함수 정의 ---
 def get_gspread_client():
@@ -47,23 +46,30 @@ def get_gspread_client():
 def load_schedule_data(month_str):
     try:
         gc = get_gspread_client()
-        if not gc: return pd.DataFrame()
+        if not gc:
+            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
+            return pd.DataFrame()
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(f"{month_str} 스케줄")
         records = worksheet.get_all_records()
-        if not records: return pd.DataFrame()
+        if not records:
+            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
+            return pd.DataFrame()
         df = pd.DataFrame(records)
         if '오전당직(온콜)' in df.columns:
             df.rename(columns={'오전당직(온콜)': '온콜'}, inplace=True)
         if '날짜' not in df.columns:
-            st.error("오류: Google Sheets 시트에 '날짜' 열이 없습니다.")
+            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)
         df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
+    except gspread.exceptions.WorksheetNotFound:
+        st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
+        return pd.DataFrame()
     except Exception as e:
-        st.error(f"스케줄 데이터 로딩 중 오류 발생: {e}")
+        st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
         return pd.DataFrame()
 
 @st.cache_data(ttl=30)
@@ -205,7 +211,6 @@ if st.button("🔄 새로고침 (R)"):
 df_schedule = load_schedule_data(MONTH_STR)
 
 if df_schedule.empty:
-    st.warning("스케줄 데이터를 불러올 수 없습니다.")
     st.stop()
 else:
     st.dataframe(df_schedule.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)

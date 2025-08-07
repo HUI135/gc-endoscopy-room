@@ -376,7 +376,7 @@ def format_date_str_to_display(date_str, weekday, time_period):
     return f"{date_str} ({weekday}) - {time_period}"
 
 # 메인
-month_str = "2025년 04월"
+month_str = "2025년 4월"
 next_month_start = date(2025, 4, 1)
 next_month_end = date(2025, 4, 30)
 

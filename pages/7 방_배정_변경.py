@@ -196,7 +196,7 @@ def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(stats_data)
 
 # --- UI 및 데이터 핸들링 ---
-month_str = "2025년 04월"
+month_str = "2025년 4월"
 st.header("🔄 스케줄 배정", divider='rainbow')
 if st.button("🔄 새로고침(R)"):
     st.cache_data.clear()

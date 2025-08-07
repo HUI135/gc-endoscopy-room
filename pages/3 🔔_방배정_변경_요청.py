@@ -24,7 +24,7 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-MONTH_STR = "2025년 04월"
+MONTH_STR = "2025년 4월"
 YEAR_STR = MONTH_STR.split('년')[0]
 REQUEST_SHEET_NAME = f"{MONTH_STR} 방배정 변경요청"
 
@@ -44,24 +44,28 @@ def get_gspread_client():
 def load_room_data(month_str):
     try:
         gc = get_gspread_client()
-        if not gc: return pd.DataFrame()
+        if not gc:
+            st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
+            return pd.DataFrame()
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(f"{month_str} 방배정")
         records = worksheet.get_all_records()
-        if not records: return pd.DataFrame()
+        if not records:
+            st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
+            return pd.DataFrame()
         df = pd.DataFrame(records)
         if '날짜' not in df.columns:
-            st.error("오류: Google Sheets 시트에 '날짜' 열이 없습니다.")
+            st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)
         df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
     except gspread.exceptions.WorksheetNotFound:
-        st.error(f"'{month_str} 방배정' 시트를 찾을 수 없습니다.")
+        st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"방 데이터 로딩 중 오류 발생: {e}")
+        st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
         return pd.DataFrame()
 
 def get_my_room_requests(month_str, employee_id):
@@ -143,13 +147,11 @@ def get_person_room_assignments(df, person_name=""):
     time_cols = sorted([col for col in df.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)], key=sort_key)
     for _, row in sorted_df.iterrows():
         dt = row['날짜_dt']
-        # 수정: UI에 표시할 날짜 형식을 "4월 2일 (수)"로, Google Sheets 저장용 형식을 "2025-04-02"로 생성
         display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
         sheet_date_str = dt.strftime("%Y-%m-%d")
         for col in time_cols:
             current_person = row.get(col)
             if (not person_name and current_person) or (person_name and current_person == person_name):
-                # 수정: display_str은 UI용, sheet_str은 Google Sheets용
                 assignments.append({
                     'date_obj': dt.date(),
                     'column_name': str(col),
@@ -193,7 +195,6 @@ if st.button("🔄 새로고침 (R)"):
 
 df_room = load_room_data(MONTH_STR)
 if df_room.empty:
-    st.warning("방 데이터를 불러올 수 없거나 데이터가 비어있습니다.")
     st.stop()
 else:
     st.dataframe(df_room.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)
@@ -204,7 +205,7 @@ else:
         st.markdown("""
         **🟢 나의 방배정을 상대방과 바꾸기**
 
-        : 내가 맡은 방배정를 다른 사람에게 넘겨줄 때 사용합니다.
+        : 내가 맡은 방배정을 다른 사람에게 넘겨줄 때 사용합니다.
         - **[변경을 원하는 나의 방배정 선택]**: 내가 바꾸고 싶은 방배정을 선택하세요.
         - **[교환할 상대방 선택]**: 당월의 모든 근무자가 목록에 나타납니다.
         _※ 주의: 내가 선택한 방 배정의 날짜와 시간대에 이미 상대방이 근무한다면, 근무가 중복될 수 있습니다.
@@ -250,7 +251,7 @@ else:
             
             selected_colleague_name = st.selectbox(
                 "교환할 상대방 선택",
-                options=compatible_colleague_names,
+                options=compatible_colleagues,
                 index=None,
                 placeholder="먼저 나의 방배정을 선택하세요" if not is_my_assignment_selected else "상대방을 선택하세요",
                 disabled=not is_my_assignment_selected,
@@ -280,7 +281,6 @@ else:
                     "요청자": user_name,
                     "요청자 사번": employee_id,
                     "변경 요청": f"{user_name} -> {selected_colleague_name}",
-                    # 수정: Google Sheets에 저장할 때 sheet_str 사용
                     "변경 요청한 방배정": my_assignment_info['sheet_str'],
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
@@ -359,7 +359,6 @@ else:
                 "요청자": user_name,
                 "요청자 사번": employee_id,
                 "변경 요청": f"{colleague_assignment_info['person_name']} -> {user_name}",
-                # 수정: Google Sheets에 저장할 때 sheet_str 사용
                 "변경 요청한 방배정": colleague_assignment_info['sheet_str'],
             }
             with st.spinner("요청을 기록하는 중입니다..."):
@@ -380,7 +379,6 @@ else:
         '</tr></thead>'
         '<tbody><tr>'
         '<td style="font-size: 1.0em; color: #555; padding-top: 3px;">{request_type}</td>'
-        # 수정: Google Sheets의 날짜 형식을 UI용으로 변환
         '<td style="font-size: 1.0em; color: #555; padding-top: 3px;">{assignment_detail_display}</td>'
         '</tr></tbody>'
         '</table>'
@@ -395,7 +393,6 @@ else:
         for req in my_requests:
             col1, col2 = st.columns([5, 1])
             with col1:
-                # 수정: Google Sheets의 "YYYY-MM-DD (시간)" 형식을 "M월 D일 (요일) - 시간"으로 변환
                 assignment_detail = req.get('변경 요청한 방배정', '')
                 if re.match(r'\d{4}-\d{2}-\d{2} \(.+\)', assignment_detail):
                     date_part, time_part = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', assignment_detail).groups()

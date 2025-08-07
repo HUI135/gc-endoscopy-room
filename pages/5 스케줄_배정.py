@@ -36,7 +36,7 @@ if not st.session_state.get("login_success", False):
 
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
-month_str = "2025년 04월"
+month_str = "2025년 4월"
 
 # Google Sheets 클라이언트 초기화
 @st.cache_resource # 이 함수 자체를 캐싱하여 불필요한 초기화 반복 방지
