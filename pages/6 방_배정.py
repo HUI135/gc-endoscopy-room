@@ -246,90 +246,80 @@ def create_df_schedule_md(df_schedule):
     df_schedule_md = df_schedule_md.drop(columns=['12', '오후5'], errors='ignore')
     return df_schedule_md
 
-# (기존 apply_schedule_swaps 함수 전체를 아래 코드로 교체)
-
+# 기존의 apply_schedule_swaps 함수를 아래 코드로 교체해주세요.
 def apply_schedule_swaps(original_schedule_df, swap_requests_df):
-    """스케줄 교환 요청을 적용하고, 변경된 (날짜, 근무타입, 인원)을 기록합니다."""
-
-    def parse_swap_date(date_str):
-        match = re.search(r'(\d+)월 (\d+)일', date_str)
-        return f"{int(match.group(1))}월 {int(match.group(2))}일" if match else None
-
+    """
+    새로운 스케줄 변경 요청 형식(`변경 요청한 스케줄`, `변경 요청`)에 맞춰
+    스케줄을 교체하고, 변경된 내용을 기록합니다.
+    """
     df = original_schedule_df.copy()
-    applied_requests = 0
-
-    # 오전 근무와 오후 근무 컬럼 정의
+    applied_requests_count = 0
+    
     am_cols = [str(i) for i in range(1, 13)]
     pm_cols = [f'오후{i}' for i in range(1, 6)]
     
-    # 변경사항 로그를 저장할 새로운 세션 상태 변수 초기화
     if "swapped_assignments_log" not in st.session_state:
         st.session_state["swapped_assignments_log"] = []
-
+    
+    st.session_state["swapped_assignments_log"] = [] # 로그 초기화
+    
     for _, row in swap_requests_df.iterrows():
-        requester_shift_str = row['요청자 기존 근무']
-        to_date_str = parse_swap_date(row['상대방 기존 근무'])
-        shift_type = row['시간대']  # '오전' 또는 '오후'
-        requester = str(row['요청자']).strip()
-        to_person = str(row['상대방']).strip()
+        try:
+            change_request = str(row['변경 요청']).strip()
+            # 요청 형식: '이름1 -> 이름2'
+            if '->' not in change_request:
+                st.warning(f"⚠️ 변경 요청 형식이 올바르지 않습니다: '{change_request}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+                continue
 
-        is_replacement_request = (requester_shift_str == '대체 근무')
+            requester, to_person = [p.strip() for p in change_request.split('->')]
+            
+            schedule_info = str(row['변경 요청한 스케줄']).strip()
+            # 요청 형식: '04월 22일 (화) - 오전'
+            if ' - ' not in schedule_info:
+                st.warning(f"⚠️ 스케줄 정보 형식이 올바르지 않습니다: '{schedule_info}'. '04월 22일 (화) - 오전' 형식으로 입력해주세요.")
+                continue
 
-        if not all([to_date_str, shift_type, requester, to_person]):
-            st.warning(f"정보가 부족하여 교환 요청을 건너뜁니다: RequestID {row.get('RequestID', 'N/A')}")
-            continue
-
-        cols_to_search = am_cols if shift_type == '오전' else pm_cols
-        to_row = df[df['날짜'] == to_date_str]
-
-        if to_row.empty:
-            continue
-
-        to_row_idx = to_row.index[0]
-        to_col = next((col for col in cols_to_search if str(df.at[to_row_idx, col]).strip() == to_person), None)
-
-        if to_col:
-            if is_replacement_request:
-                # 변경 전 인원 (to_person)과 변경 후 인원 (requester) 로그 기록
-                st.session_state["swapped_assignments_log"].append(
-                    {'날짜': to_date_str, '근무타입': shift_type, '변경 전 인원': to_person, '변경 후 인원': requester}
-                )
-                df.at[to_row_idx, to_col] = requester
-                applied_requests += 1
-
-            else:
-                from_date_str = parse_swap_date(requester_shift_str)
-                from_row = df[df['날짜'] == from_date_str]
-                if from_row.empty:
-                    continue
-
-                from_row_idx = from_row.index[0]
-                from_col = next((col for col in cols_to_search if str(df.at[from_row_idx, col]).strip() == requester), None)
-
-                if from_col:
-                    # 두 근무자의 스케줄 교체
-                    # 변경 전 인원 (requester)과 변경 후 인원 (to_person) 로그 기록
+            date_info, time_type = [p.strip() for p in schedule_info.split(' - ')]
+            
+            match = re.search(r'(\d+)월 (\d+)일', date_info)
+            if not match:
+                st.warning(f"날짜 형식 오류로 요청을 건너뜁니다: {date_info}")
+                continue
+            swap_date_str = f"{int(match.group(1))}월 {int(match.group(2))}일"
+            
+            to_row_indices = df[df['날짜'] == swap_date_str].index
+            if to_row_indices.empty:
+                st.warning(f"스케줄에서 {swap_date_str} 날짜를 찾을 수 없습니다. 요청을 건너뜁니다.")
+                continue
+            to_row_idx = to_row_indices[0]
+            
+            cols_to_search = am_cols if time_type == '오전' else pm_cols
+            
+            found_and_swapped = False
+            for col in cols_to_search:
+                if str(df.at[to_row_idx, col]).strip() == requester:
+                    df.at[to_row_idx, col] = to_person
                     st.session_state["swapped_assignments_log"].append(
-                        {'날짜': from_date_str, '근무타입': shift_type, '변경 전 인원': requester, '변경 후 인원': to_person}
+                        {'날짜': swap_date_str, '근무타입': time_type, '변경 전 인원': requester, '변경 후 인원': to_person}
                     )
-                    st.session_state["swapped_assignments_log"].append(
-                        {'날짜': to_date_str, '근무타입': shift_type, '변경 전 인원': to_person, '변경 후 인원': requester}
-                    )
-
-                    df.at[from_row_idx, from_col] = to_person
-                    df.at[to_row_idx, to_col] = requester
-                    applied_requests += 1
-                else:
-                    st.error(f"적용 실패: {from_date_str}의 '{requester}'을(를) 스케줄에서 찾을 수 없습니다.")
-        else:
-            st.error(f"적용 실패: {to_date_str}의 '{to_person}'을(를) 스케줄에서 찾을 수 없습니다.")
-
-    if applied_requests > 0:
-        st.success(f"총 {applied_requests}건의 스케줄 변경 요청이 성공적으로 반영되었습니다.")
+                    applied_requests_count += 1
+                    found_and_swapped = True
+                    break
+            
+            if not found_and_swapped:
+                st.error(f"❌ 적용 실패: '{swap_date_str}' {time_type}의 스케줄에 '{requester}'를 찾을 수 없습니다.")
+        
+        except Exception as e:
+            st.error(f"요청 처리 중 오류 발생: {str(e)}")
+            continue
+            
+    if applied_requests_count > 0:
+        st.success(f"✅ 총 {applied_requests_count}건의 스케줄 변경 요청이 성공적으로 반영되었습니다. 🔄")
     else:
         st.info("새롭게 적용할 스케줄 변경 요청이 없습니다.")
-
+    
     return df
+            
 
 # 메인
 month_str = "2025년 04월"
@@ -366,7 +356,7 @@ st.write("**📋 스케줄 변경 요청 목록**")
 st.write("- 아래 변경 요청 목록을 확인하고, 스케줄을 수정 후 저장하세요.")
 df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
 if not df_swaps_raw.empty:
-    cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '요청자 기존 근무': '요청자 기존 근무', '상대방': '상대방', '상대방 기존 근무': '상대방 기존 근무'}
+    cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '변경 요청': '변경 요청', '변경 요청한 스케줄': '변경 요청한 스케줄'}
     existing_cols = [col for col in cols_to_display.keys() if col in df_swaps_raw.columns]
     df_swaps_display = df_swaps_raw[existing_cols].rename(columns=cols_to_display)
     st.dataframe(df_swaps_display, use_container_width=True, hide_index=True)
@@ -381,16 +371,15 @@ if st.button("🔄 요청사항 일괄 적용"):
     if not df_swaps.empty:
         modified_schedule = apply_schedule_swaps(st.session_state["df_schedule"], df_swaps)
         st.session_state.update({"df_schedule": modified_schedule, "df_schedule_md": create_df_schedule_md(modified_schedule)})
-        st.info("교환 요청이 적용되었습니다. 아래 표에서 결과를 확인하고 직접 수정할 수 있습니다.")
-        time.sleep(1); st.rerun()
+        st.toast("✅ 교환 요청이 적용되었습니다. 아래 표에서 결과를 확인하고 직접 수정할 수 있습니다."); time.sleep(1); st.rerun()
     else:
-        st.info("처리할 교환 요청이 없습니다.")
+        st.toast("ℹ️ 처리할 교환 요청이 없습니다.")
 edited_df_md = st.data_editor(st.session_state["df_schedule_md"], use_container_width=True, key="schedule_editor", disabled=['날짜', '요일'])
 st.write(" ")
 if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary", use_container_width=True):
     df_schedule_to_save = st.session_state["df_schedule"].copy()
     if not st.session_state["df_schedule_md"].equals(edited_df_md):
-        st.info("수작업 변경사항을 최종본에 반영합니다...")
+        st.toast("ℹ️ 수작업 변경사항을 최종본에 반영합니다...")
         for md_idx, edited_row in edited_df_md.iterrows():
             original_row = st.session_state["df_schedule_md"].loc[md_idx]
             if not original_row.equals(edited_row):
@@ -407,16 +396,16 @@ if st.button("✍️ 최종 변경사항 Google Sheets에 저장", type="primary
                         if col_name in df_schedule_to_save.columns:
                             df_schedule_to_save.loc[target_idx, col_name] = edited_row[col_name]
     try:
-        st.info("최종 스케줄을 Google Sheets에 저장합니다...")
+        st.toast("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
         update_sheet_with_retry(worksheet_schedule, schedule_data)
         st.session_state.update({"df_schedule": df_schedule_to_save, "df_schedule_md": create_df_schedule_md(df_schedule_to_save)})
-        st.success("✅ 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다."); time.sleep(1); st.rerun()
+        st.toast("🎉 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다."); time.sleep(1); st.rerun()
     except Exception as e:
-        st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+        st.toast(f"⚠️ Google Sheets 저장 중 오류 발생: {e}")
 
 st.write("---")
 st.caption("📝 현재까지 기록된 변경사항 로그")
@@ -432,7 +421,7 @@ else:
 # 방 설정 UI
 st.divider()
 st.subheader("📋 방 설정")
-st.write("시간대별 탭을 클릭하여 운영할 방의 개수와 번호를 설정하세요.")
+st.write("- 시간대별 탭을 클릭하여 운영할 방의 개수와 번호를 설정하세요.")
 room_options = [str(i) for i in range(1, 13)]
 
 tab830, tab900, tab930, tab1000, tab1330 = st.tabs([
@@ -528,7 +517,7 @@ all_selected_rooms = (st.session_state["room_settings"]["830_room_select"] + st.
 st.divider()
 st.subheader("📋 배정 요청 관리")
 # ... (배정 요청 UI 코드는 모두 동일하게 유지) ...
-st.write("- 모든 인원의 배정 요청(고정 및 우선)을 추가 및 수정할 수 있습니다.")
+st.write("- 모든 인원의 배정 요청(고정 및 우선)을 추가 및 수정할 수 있습니다.\n - 인원별 시간대, 방, 당직 배정 균형을 위해, 일부 요청사항이 무시될 수 있습니다.")
 요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방", "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "오후 당직 제외"]
 st.write(" ")
 st.markdown("**🟢 방 배정 요청 추가**")

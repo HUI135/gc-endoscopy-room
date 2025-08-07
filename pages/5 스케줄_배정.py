@@ -978,42 +978,56 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
                         workers_padded = workers[:10] + [''] * (10 - len(workers[:10]))
                         for i in range(1, 11): df_excel.at[idx, str(i)] = workers_padded[i-1]
         
-        oncall_counts = df_cumulative.set_index('이름')['오전당직 (온콜)'].to_dict()
-        oncall_assignments = {worker: int(count) if count else 0 for worker, count in oncall_counts.items()}
-        oncall = {}
-        afternoon_counts = df_final_unique[(df_final_unique['시간대'] == '오후') & (df_final_unique['상태'].isin(['근무', '보충', '추가보충']))]['근무자'].value_counts().to_dict()
-        workers_priority = sorted(oncall_assignments.items(), key=lambda x: (-x[1], afternoon_counts.get(x[0], 0)))
-        all_dates = df_final_unique['날짜'].unique().tolist()
-        remaining_dates = set(all_dates)
+            oncall_counts = df_cumulative.set_index('이름')['오전당직 (온콜)'].to_dict()
+            oncall_assignments = {worker: int(count) if count else 0 for worker, count in oncall_counts.items()}
+            oncall = {}
+            afternoon_counts = df_final_unique[(df_final_unique['시간대'] == '오후') & (df_final_unique['상태'].isin(['근무', '보충', '추가보충']))]['근무자'].value_counts().to_dict()
+            workers_priority = sorted(oncall_assignments.items(), key=lambda x: (-x[1], afternoon_counts.get(x[0], 0)))
+            all_dates = df_final_unique['날짜'].unique().tolist()
+            remaining_dates = set(all_dates)
+            
+        # 토요/휴일 스케줄 날짜 목록을 미리 준비합니다.
+        special_schedule_dates_set = {s[0] for s in special_schedules}
+
         for worker, count in workers_priority:
             if count <= 0: continue
             eligible_dates = df_final_unique[(df_final_unique['시간대'] == '오후') & (df_final_unique['근무자'] == worker) & (df_final_unique['상태'].isin(['근무', '보충', '추가보충']))]['날짜'].unique()
-            eligible_dates = [d for d in eligible_dates if d in remaining_dates]
+                
+            # 토요/휴일 스케줄은 오전당직(온콜) 배정 대상에서 제외합니다.
+            eligible_dates = [d for d in eligible_dates if d in remaining_dates and d not in special_schedule_dates_set]
+        
             if not eligible_dates: continue
+            
             selected_dates = random.sample(eligible_dates, min(count, len(eligible_dates)))
             for selected_date in selected_dates:
                 oncall[selected_date] = worker
                 remaining_dates.remove(selected_date)
-        if remaining_dates:
-            for date in remaining_dates:
-                afternoon_workers_df = df_final_unique[(df_final_unique['날짜'] == date) & (df_final_unique['시간대'] == '오후') & (df_final_unique['상태'].isin(['근무', '보충', '추가보충']))]
-                afternoon_workers = afternoon_workers_df['근무자'].tolist()
-                if afternoon_workers:
-                    selected_worker = random.choice(afternoon_workers)
-                    oncall[date] = selected_worker
-                else:
-                    date_obj = datetime.datetime.strptime(date, '%Y-%m-%d')
-                    formatted_date = date_obj.strftime('%-m월 %-d일')
-                    st.warning(f"⚠️ {formatted_date}에는 오후 근무자가 없어 오전당직(온콜)을 배정할 수 없습니다.")
+        
+        # 남아있는 날짜 중 토요/휴일 스케줄이 아닌 날짜에 대해서만 경고를 출력합니다.
+        for date in remaining_dates:
+            if date in special_schedule_dates_set:
+                # 토요/휴일은 경고를 출력하지 않고 건너뜁니다.
+                continue
+                
+            afternoon_workers_df = df_final_unique[(df_final_unique['날짜'] == date) & (df_final_unique['시간대'] == '오후') & (df_final_unique['상태'].isin(['근무', '보충', '추가보충']))]
+            afternoon_workers = afternoon_workers_df['근무자'].tolist()
+            if afternoon_workers:
+                selected_worker = random.choice(afternoon_workers)
+                oncall[date] = selected_worker
+            else:
+                date_obj = datetime.datetime.strptime(date, '%Y-%m-%d')
+                formatted_date = date_obj.strftime('%-m월 %-d일')
+                st.warning(f"⚠️ {formatted_date}에는 오후 근무자가 없어 오전당직(온콜)을 배정할 수 없습니다.")
+
         for idx, row in df_schedule.iterrows():
-            date = row['날짜']
-            df_excel.at[idx, '오전당직(온콜)'] = oncall.get(date, '')
+                date = row['날짜']
+                df_excel.at[idx, '오전당직(온콜)'] = oncall.get(date, '')
         actual_oncall_counts = {}
         for date, worker in oncall.items(): actual_oncall_counts[worker] = actual_oncall_counts.get(worker, 0) + 1
         for worker, actual_count in actual_oncall_counts.items():
-            max_count = oncall_assignments.get(worker, 0)
-            if actual_count > max_count: st.info(f"오전당직(온콜) 횟수 제한 한계로, {worker} 님이 최대 배치 {max_count}회가 아닌 {actual_count}회 배치되었습니다.")
-        
+                max_count = oncall_assignments.get(worker, 0)
+                if actual_count > max_count: st.info(f"오전당직(온콜) 횟수 제한 한계로, {worker} 님이 최대 배치 {max_count}회가 아닌 {actual_count}회 배치되었습니다.")
+
         wb = Workbook()
         ws = wb.active
         ws.title = "스케줄"

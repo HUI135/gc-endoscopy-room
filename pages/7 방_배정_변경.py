@@ -89,6 +89,8 @@ def load_data_for_change_page(month_str):
     return df_final, df_req
 
 # --- 방배정 변경사항 적용 함수 ---
+# 기존의 apply_assignment_swaps 함수를 아래 코드로 교체해주세요.
+# 기존의 apply_assignment_swaps 함수를 아래 코드로 교체해주세요.
 def apply_assignment_swaps(df_assignment, df_requests):
     df_modified = df_assignment.copy()
     changed_log = set()
@@ -97,62 +99,76 @@ def apply_assignment_swaps(df_assignment, df_requests):
 
     for _, req in df_requests.iterrows():
         try:
-            req_person = str(req['요청자']).strip()
+            # 1. 변경 요청 데이터 파싱
+            swap_request_str = str(req.get('변경 요청', '')).strip()
+            raw_slot_info = str(req.get('변경 요청한 방배정', '')).strip()
             
-            raw_date_str = str(req['요청 근무일']).strip()
-            date_match = re.search(r'(\d+)월\s*(\d+)일', raw_date_str)
+            if not swap_request_str or not raw_slot_info:
+                st.warning(f"⚠️ 요청 처리 불가: '변경 요청' 또는 '변경 요청한 방배정' 컬럼이 비어 있습니다.")
+                continue
+            
+            # '강승주 -> 서지연'에서 변경 전/후 인원 추출
+            if '->' not in swap_request_str:
+                st.warning(f"⚠️ '변경 요청' 형식이 올바르지 않습니다: '{swap_request_str}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+                continue
+            
+            old_person, new_person = [p.strip() for p in swap_request_str.split('->')]
+
+            # '04월 04일 (금) - 8:30(1)_당직'에서 날짜와 슬롯 추출
+            slot_info_parts = raw_slot_info.split(' - ')
+            if len(slot_info_parts) != 2:
+                st.warning(f"⚠️ '변경 요청한 방배정' 형식이 올바르지 않습니다: '{raw_slot_info}'. '04월 04일 (금) - 8:30(1)_당직' 형식으로 입력해주세요.")
+                continue
+            
+            date_part, slot_part = slot_info_parts
+            date_match = re.search(r'(\d+)월\s*(\d+)일', date_part)
             if not date_match:
-                st.warning(f"요청 처리 불가: '{raw_date_str}'에서 날짜 정보를 찾을 수 없습니다.")
+                st.warning(f"⚠️ 날짜 정보 '{date_part}'를 찾을 수 없습니다.")
                 continue
             
-            req_date = f"{int(date_match.group(1))}월 {int(date_match.group(2))}일"
-            other_date = req_date
-
-            req_slot = str(req['요청자 방배정']).strip()
-            other_person = str(req['상대방']).strip()
-            other_slot = str(req['상대방 방배정']).strip()
-
-            req_row_idx_list = df_modified.index[df_modified['날짜'] == req_date].tolist()
-
-            if not req_row_idx_list:
-                st.warning(f"요청 처리 불가: 방배정 표에서 날짜 '{req_date}'를 찾을 수 없습니다.")
+            target_date_str = f"{int(date_match.group(1))}월 {int(date_match.group(2))}일"
+            target_slot = slot_part
+            
+            # 2. 방배정표에서 해당 날짜의 행과 슬롯 찾기
+            row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
+            if not row_indices:
+                st.warning(f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
                 continue
-
-            req_idx = req_row_idx_list[0]
-            other_idx = req_idx
-
-            if req_slot not in df_modified.columns or other_slot not in df_modified.columns:
-                 st.error(f"적용 실패: 슬롯 '{req_slot}' 또는 '{other_slot}'을(를) 방 배정표에서 찾을 수 없습니다.")
+            
+            target_row_idx = row_indices[0]
+            
+            if target_slot not in df_modified.columns:
+                 st.error(f"❌ 적용 실패: 슬롯 '{target_slot}'을(를) 방 배정표에서 찾을 수 없습니다.")
                  error_found = True
                  continue
 
-            if df_modified.at[req_idx, req_slot] == req_person and df_modified.at[other_idx, other_slot] == other_person:
-                df_modified.at[req_idx, req_slot] = other_person
-                df_modified.at[other_idx, other_slot] = req_person
+            # 3. 방배정 교체 로직
+            #    `target_slot`에 `old_person`이 있는지 확인하고 `new_person`으로 교체
+            current_assigned_person = str(df_modified.at[target_row_idx, target_slot]).strip()
+            if current_assigned_person == old_person:
+                df_modified.at[target_row_idx, target_slot] = new_person
                 
-                changed_log.add((req_date, req_slot, other_person))
-                changed_log.add((other_date, other_slot, req_person))
+                changed_log.add((target_date_str, target_slot, new_person))
                 applied_count += 1
             else:
-                st.error(f"적용 실패: {req_date}의 '{req_person}' 또는 {other_date}의 '{other_person}'을 방 배정에서 찾을 수 없습니다.")
+                st.error(f"❌ 적용 실패: {target_date_str}의 '{target_slot}'에 '{old_person}'이(가) 배정되어 있지 않습니다. 현재 배정된 인원: '{current_assigned_person}'")
                 error_found = True
-
+        
         except KeyError as e:
-            st.error(f"요청 처리 중 오류 발생: 시트에 '{e}' 컬럼이 없습니다. (요청 정보: {req.to_dict()})")
+            st.error(f"⚠️ 요청 처리 중 오류 발생: 시트에 '{e}' 컬럼이 없습니다. (요청 정보: {req.to_dict()})")
             error_found = True
         except Exception as e:
-            st.error(f"요청 처리 중 시스템 오류 발생: {e} (요청 정보: {req.to_dict()})")
+            st.error(f"⚠️ 요청 처리 중 시스템 오류 발생: {e} (요청 정보: {req.to_dict()})")
             error_found = True
 
     if applied_count > 0:
         st.toast(f"✅ 총 {applied_count}건의 변경 요청이 반영되었습니다.", icon="🎉")
     if error_found:
         st.toast("⚠️ 일부 요청 적용에 실패했습니다. 메시지를 확인하세요.", icon="🚨")
-    elif applied_count == 0 and not df_requests.empty and not error_found:
+    elif applied_count == 0 and not df_requests.empty:
         st.toast("ℹ️ 새롭게 반영할 유효한 변경 요청이 없습니다.", icon="🧐")
 
     return df_modified, changed_log
-
 def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
     """최종 방배정 결과 DataFrame을 바탕으로 인원별 통계를 계산합니다."""
     total_stats = {
