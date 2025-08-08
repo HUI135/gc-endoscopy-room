@@ -231,6 +231,7 @@ def split_column_to_multiple(df, column_name, prefix):
     # 줄바꿈(\n)을 쉼표로 변환
     if column_name not in df.columns:
         st.warning(f"⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.stop()
         return df
     
     # 쉼표로 분리하여 리스트로 변환
