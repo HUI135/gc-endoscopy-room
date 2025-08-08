@@ -92,7 +92,6 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 def load_data_page6(month_str):
     return load_data_page6_no_cache(month_str)
 
-# 데이터 로드 (캐싱 미사용)
 def load_data_page6_no_cache(month_str):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
@@ -100,6 +99,9 @@ def load_data_page6_no_cache(month_str):
     try:
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
+    except gspread.exceptions.WorksheetNotFound as e:
+        st.error(f"스케줄 시트를 불러오는 데 실패: {e}")
+        st.stop()
     except Exception as e:
         st.error(f"스케줄 시트를 불러오는 데 실패: {e}")
         st.stop()
@@ -109,6 +111,10 @@ def load_data_page6_no_cache(month_str):
         df_room_request = pd.DataFrame(worksheet_room_request.get_all_records())
         if "우선순위" in df_room_request.columns:
             df_room_request = df_room_request.drop(columns=["우선순위"])
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet_room_request = sheet.add_worksheet(f"{month_str} 방배정 요청", rows=100, cols=3)
+        worksheet_room_request.append_row(["이름", "분류", "날짜정보"])
+        df_room_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
     except:
         worksheet_room_request = sheet.add_worksheet(f"{month_str} 방배정 요청", rows=100, cols=3)
         worksheet_room_request.append_row(["이름", "분류", "날짜정보"])
@@ -131,28 +137,15 @@ def load_data_page6_no_cache(month_str):
     try:
         worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케줄 변경요청")
         df_swap_requests = pd.DataFrame(worksheet_swap_requests.get_all_records())
-        st.session_state["df_swap_requests"] = df_swap_requests
     except gspread.exceptions.WorksheetNotFound:
         st.warning(f"'{month_str} 스케줄 변경요청' 시트를 찾을 수 없습니다. 빈 테이블로 시작합니다.")
-        st.session_state["df_swap_requests"] = pd.DataFrame(columns=[
+        df_swap_requests = pd.DataFrame(columns=[
             "RequestID", "요청일시", "요청자", "요청자 기존 근무",
             "상대방", "상대방 기존 근무", "시간대"
         ])
-        
-    st.session_state["df_schedule_original"] = df_schedule.copy()
-    st.session_state["df_schedule"] = df_schedule
-    st.session_state["df_room_request"] = df_room_request
-    st.session_state["worksheet_room_request"] = worksheet_room_request
-    st.session_state["df_cumulative"] = df_cumulative
-    st.session_state["data_loaded"] = True
-        
-    st.session_state["swapped_assignments_log"] = []
-    st.session_state["swapped_assignments"] = set()
-    st.session_state["manual_change_log"] = []
-    st.session_state["final_change_log"] = []
-
-    result = (df_schedule, df_room_request, worksheet_room_request)
-    return result
+    
+    # 여러 DataFrame과 worksheet 객체를 튜플로 묶어 반환
+    return df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests
 
 # 근무 가능 일자 계산
 @st.cache_data
@@ -386,41 +379,34 @@ month_str = "2025년 4월"
 next_month_start = date(2025, 4, 1)
 next_month_end = date(2025, 4, 30)
 
-# 데이터 로드 호출
-if "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
-    df_schedule, df_room_request, worksheet_room_request = load_data_page6_no_cache(month_str)
-    if "df_schedule" not in st.session_state:
-        st.error("df_schedule 세션 상태 초기화 실패, 데이터를 다시 로드합니다.")
+f "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
+    with st.spinner("데이터를 로드하고 있습니다..."):
+        # 이제 캐싱 함수를 호출합니다.
+        df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = load_data_page6_no_cache(month_str)
+
+        st.session_state["df_schedule_original"] = df_schedule.copy()
         st.session_state["df_schedule"] = df_schedule
-    st.session_state["df_room_request"] = df_room_request
-    st.session_state["worksheet_room_request"] = worksheet_room_request
-    st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
-    st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-    st.session_state["swapped_assignments_log"] = [] # Added to ensure it's cleared on first load
-    st.session_state["data_loaded"] = True
+        st.session_state["df_room_request"] = df_room_request
+        st.session_state["worksheet_room_request"] = worksheet_room_request
+        st.session_state["df_cumulative"] = df_cumulative
+        st.session_state["df_swap_requests"] = df_swap_requests
+        st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
+        st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+        
+        st.session_state["swapped_assignments_log"] = []
+        st.session_state["swapped_assignments"] = set()
+        st.session_state["manual_change_log"] = []
+        st.session_state["final_change_log"] = []
+        st.session_state["data_loaded"] = True
 else:
     df_schedule = st.session_state["df_schedule"]
     df_room_request = st.session_state["df_room_request"]
-    worksheet_room_request = st.session_state["worksheet_room_request"]
-
-st.header("🚪 방 배정", divider='rainbow')
 
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    df_schedule_new, df_room_request_new, worksheet_room_request_new = load_data_page6_no_cache(month_str)
-    st.session_state["df_schedule_original"] = df_schedule_new.copy()
-    st.session_state["df_schedule"] = df_schedule_new
-    st.session_state["df_room_request"] = df_room_request_new
-    st.session_state["worksheet_room_request"] = worksheet_room_request_new
-    st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_new)
-    st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-    st.session_state["swapped_assignments_log"] = []
-    st.session_state["swapped_assignments"] = set()
-    st.session_state["manual_change_log"] = []
-    st.session_state["final_change_log"] = []
-    st.success("데이터가 새로고침되었습니다.")
-    st.rerun()
+    st.cache_data.clear()  # 캐시 삭제
+    st.session_state["data_loaded"] = False # 상태 플래그 초기화
+    st.rerun() # 앱을 다시 실행하여 새 데이터를 불러옴
 
 # 근무자 명단 수정
 st.write(" ")
