@@ -54,6 +54,8 @@ if "manual_change_log" not in st.session_state:
     st.session_state["manual_change_log"] = []
 if "final_change_log" not in st.session_state:
     st.session_state["final_change_log"] = []
+if "df_schedule_md" not in st.session_state:
+    st.session_state["df_schedule_md"] = pd.DataFrame()
 if "df_schedule_md_initial" not in st.session_state:
     st.session_state["df_schedule_md_initial"] = pd.DataFrame()
 if "swapped_assignments_log" not in st.session_state:
