@@ -145,8 +145,7 @@ def load_data_page6_no_cache(month_str):
     st.session_state["manual_change_log"] = []
     st.session_state["final_change_log"] = []
 
-    result = (df_schedule, df_room_request, worksheet_room_request)
-    return result
+    return (df_schedule, df_room_request, worksheet_room_request, df_cumulative, st.session_state["df_swap_requests"])
 
 # 근무 가능 일자 계산
 @st.cache_data
@@ -422,7 +421,7 @@ if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()  # 캐시 삭제
     st.session_state["data_loaded"] = False # 상태 플래그 초기화
     st.rerun()
-    
+
 # 근무자 명단 수정
 st.write(" ")
 st.subheader("📋 스케줄 변경 요청 목록")
