@@ -44,18 +44,12 @@ if "room_settings" not in st.session_state:
     }
 if "swapped_assignments" not in st.session_state:
     st.session_state["swapped_assignments"] = set()
-if "df_schedule" not in st.session_state:
-    st.session_state["df_schedule"] = pd.DataFrame()
-if "worksheet_room_request" not in st.session_state:
-    st.session_state["worksheet_room_request"] = pd.DataFrame()
 if "df_schedule_original" not in st.session_state:
     st.session_state["df_schedule_original"] = pd.DataFrame()
 if "manual_change_log" not in st.session_state:
     st.session_state["manual_change_log"] = []
 if "final_change_log" not in st.session_state:
     st.session_state["final_change_log"] = []
-if "df_schedule_md" not in st.session_state:
-    st.session_state["df_schedule_md"] = pd.DataFrame()
 if "df_schedule_md_initial" not in st.session_state:
     st.session_state["df_schedule_md_initial"] = pd.DataFrame()
 if "swapped_assignments_log" not in st.session_state:
@@ -92,7 +86,7 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 def load_data_page6(month_str):
     return load_data_page6_no_cache(month_str)
 
-# 데이터 로드 (캐싱 미사용)
+@st.cache_data(ttl=600, show_spinner=False) 
 def load_data_page6_no_cache(month_str):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
@@ -389,20 +383,24 @@ next_month_end = date(2025, 4, 30)
 # 데이터 로드 호출
 if "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
     with st.spinner("데이터를 로드하고 있습니다..."):
-        df_schedule, df_room_request, worksheet_room_request = load_data_page6_no_cache(month_str)
+        # 이제 캐싱이 적용된 함수를 호출합니다.
+        # 함수가 반환하는 모든 객체를 받도록 변수를 지정해야 합니다.
+        df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = load_data_page6_no_cache(month_str)
 
         # 🚨 데이터가 비어있을 경우 자동 리로드 로직 추가
         if df_schedule.empty:
             st.warning("⚠️ 로드된 스케줄 데이터가 비어있습니다. 3초 후 자동으로 다시 시도합니다.")
             time.sleep(3)
-            st.session_state["data_loaded"] = False # 상태 초기화
-            st.rerun() # 재실행
+            st.session_state["data_loaded"] = False  # 상태 초기화
+            st.rerun()  # 재실행
 
-        # 데이터가 정상적으로 로드된 경우
+        # 데이터가 정상적으로 로드된 경우, 모든 세션 상태를 업데이트합니다.
+        st.session_state["df_schedule_original"] = df_schedule.copy()
         st.session_state["df_schedule"] = df_schedule
         st.session_state["df_room_request"] = df_room_request
         st.session_state["worksheet_room_request"] = worksheet_room_request
-        st.session_state["df_schedule_original"] = df_schedule.copy()
+        st.session_state["df_cumulative"] = df_cumulative
+        st.session_state["df_swap_requests"] = df_swap_requests # 추가된 반환값
         st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
         st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
         st.session_state["swapped_assignments_log"] = []
@@ -414,24 +412,17 @@ else:
     df_schedule = st.session_state["df_schedule"]
     df_room_request = st.session_state["df_room_request"]
     worksheet_room_request = st.session_state["worksheet_room_request"]
-    
+    df_cumulative = st.session_state["df_cumulative"]
+    df_swap_requests = st.session_state["df_swap_requests"]
+
+st.header("🚪 방 배정", divider='rainbow')
+
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    df_schedule_new, df_room_request_new, worksheet_room_request_new = load_data_page6_no_cache(month_str)
-    st.session_state["df_schedule_original"] = df_schedule_new.copy()
-    st.session_state["df_schedule"] = df_schedule_new
-    st.session_state["df_room_request"] = df_room_request_new
-    st.session_state["worksheet_room_request"] = worksheet_room_request_new
-    st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_new)
-    st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-    st.session_state["swapped_assignments_log"] = []
-    st.session_state["swapped_assignments"] = set()
-    st.session_state["manual_change_log"] = []
-    st.session_state["final_change_log"] = []
-    st.success("데이터가 새로고침되었습니다.")
+    st.cache_data.clear()  # 캐시 삭제
+    st.session_state["data_loaded"] = False # 상태 플래그 초기화
     st.rerun()
-
+    
 # 근무자 명단 수정
 st.write(" ")
 st.subheader("📋 스케줄 변경 요청 목록")
