@@ -44,6 +44,8 @@ if "room_settings" not in st.session_state:
     }
 if "swapped_assignments" not in st.session_state:
     st.session_state["swapped_assignments"] = set()
+if "df_schedule" not in st.session_state:
+    st.session_state["df_schedule"] = pd.DataFrame()
 if "df_schedule_original" not in st.session_state:
     st.session_state["df_schedule_original"] = pd.DataFrame()
 if "manual_change_log" not in st.session_state:
