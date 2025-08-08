@@ -425,6 +425,9 @@ if st.button("🔄 새로고침 (R)"):
 # 근무자 명단 수정
 st.write(" ")
 st.subheader("📋 스케줄 변경 요청 목록")
+if "df_schedule_md" not in st.session_state:
+    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+    st.stop()
 df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
 if not df_swaps_raw.empty:
     cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '변경 요청': '변경 요청', '변경 요청한 스케줄': '변경 요청한 스케줄'}
