@@ -379,7 +379,7 @@ month_str = "2025년 4월"
 next_month_start = date(2025, 4, 1)
 next_month_end = date(2025, 4, 30)
 
-f "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
+if "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
     with st.spinner("데이터를 로드하고 있습니다..."):
         # 이제 캐싱 함수를 호출합니다.
         df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = load_data_page6_no_cache(month_str)
