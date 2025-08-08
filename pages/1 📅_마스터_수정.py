@@ -61,16 +61,13 @@ def refresh_data():
 
 # ✅ 캘린더 이벤트 생성 함수
 def generate_calendar_events(df_user_master, year, month, week_labels):
-    print(f"df_user_master:\n{df_user_master}")  # df_user_master 데이터 확인
     master_data = {}
     요일리스트 = ["월", "화", "수", "목", "금"]
     
     # "매주" 설정이 있는지 확인
     has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
-    print(f"has_weekly: {has_weekly}")
     if has_weekly:
         weekly_df = df_user_master[df_user_master["주차"] == "매주"]
-        print(f"weekly_df:\n{weekly_df}")
         # 요일별 근무여부 딕셔너리 생성
         weekly_schedule = weekly_df.set_index("요일")["근무여부"].to_dict()
         # 누락된 요일이 있다면 "근무없음"으로 채우기
@@ -80,8 +77,6 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
         # 모든 주에 대해 동일한 "매주" 스케줄 적용
         for week in week_labels:
             master_data[week] = weekly_schedule
-        print(f"매주 스케줄: {weekly_schedule}")
-        print(f"master_data: {master_data}")
     else:
         for week in week_labels:
             week_df = df_user_master[df_user_master["주차"] == week]
@@ -124,7 +119,6 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
                     "end": date_obj.strftime("%Y-%m-%d"),
                     "color": status_colors.get(status, "#E0E0E0")
                 })
-    print(f"생성된 이벤트: {events}")
     return events
 
 # ✅ 데이터 로드 및 세션 상태 초기화

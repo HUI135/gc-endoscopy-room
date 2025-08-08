@@ -12,8 +12,6 @@ from gspread.exceptions import WorksheetNotFound
 import menu
 
 # 💡 디버깅을 위한 출력문 추가: 스크립트가 실행될 때마다 콘솔에 표시됩니다.
-print("--- Streamlit Script is running ---")
-
 st.set_page_config(page_title="방배정 요청", page_icon="🏠", layout="wide")
 
 import os

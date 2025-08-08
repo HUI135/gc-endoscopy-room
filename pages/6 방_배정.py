@@ -383,6 +383,9 @@ next_month_end = date(2025, 4, 30)
 # 데이터 로드 호출
 if "data_loaded" not in st.session_state or not st.session_state["data_loaded"]:
     df_schedule, df_room_request, worksheet_room_request = load_data_page6_no_cache(month_str)
+    if "df_schedule" not in st.session_state:
+        st.error("df_schedule 세션 상태 초기화 실패, 데이터를 다시 로드합니다.")
+        st.session_state["df_schedule"] = df_schedule
     st.session_state["df_room_request"] = df_room_request
     st.session_state["worksheet_room_request"] = worksheet_room_request
     st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
