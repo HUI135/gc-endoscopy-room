@@ -45,12 +45,34 @@ if 'download_filename' not in st.session_state:
     st.session_state.download_filename = None
 
 # --- Google Sheets 연동 함수 ---
+@st.cache_resource
 def get_gspread_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    service_account_info = dict(st.secrets["gspread"])
-    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
-    credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
-    return gspread.authorize(credentials)
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+    sa = dict(st.secrets["gspread"])
+    pk = sa.get("private_key", "")
+    if "\\n" in pk and "\n" not in pk:
+        sa["private_key"] = pk.replace("\\n", "\n")
+    creds = Credentials.from_service_account_info(sa, scopes=scope)
+    return gspread.authorize(creds)
+
+def open_sheet_with_retry(gc, url, retries=5, base_delay=0.8):
+    last_err = None
+    for i in range(retries):
+        try:
+            return gc.open_by_url(url)
+        except gspread.exceptions.APIError as e:
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            # 429/5xx는 재시도, 403/404는 즉시 실패
+            if code in (429, 500, 502, 503, 504) or code is None:
+                time.sleep(base_delay * (2**i))
+                last_err = e
+                continue
+            raise
+    # 재시도 초과
+    raise last_err or Exception("open_by_url failed repeatedly")
 
 def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
     for attempt in range(retries):
@@ -71,7 +93,8 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 @st.cache_data(ttl=600)
 def load_data_for_change_page(month_str):
     gc = get_gspread_client()
-    sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+    url = st.secrets["google_sheet"]["url"].strip()
+    sheet = open_sheet_with_retry(gc, url)
     try:
         worksheet_final = sheet.worksheet(f"{month_str} 방배정")
         df_final = pd.DataFrame(worksheet_final.get_all_records())
