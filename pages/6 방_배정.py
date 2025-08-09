@@ -461,7 +461,9 @@ with col1:
             st.info("ℹ️ 처리할 교환 요청이 없습니다.")
 
 with col2:
-    if st.button("⏪ 적용 취소"):
+    # "요청사항 일괄 적용"이 실행되었는지 확인하기 위해 swapped_assignments_log 사용
+    is_batch_applied = len(st.session_state.get("swapped_assignments_log", [])) > 0
+    if st.button("⏪ 적용 취소", disabled=not is_batch_applied):
         st.session_state["df_schedule"] = st.session_state["df_schedule_original"].copy()
         st.session_state["df_schedule_md"] = create_df_schedule_md(st.session_state["df_schedule_original"])
         st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
