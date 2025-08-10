@@ -36,6 +36,10 @@ def get_gspread_client():
         service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
         return gspread.authorize(credentials)
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (클라이언트 초기화): {str(e)}")
+        st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"Google Sheets 클라이언트 초기화 중 오류 발생: {str(e)}")
@@ -49,7 +53,7 @@ def load_master_data_page3(_gc, url):
         worksheet_master = sheet.worksheet("마스터")
         return pd.DataFrame(worksheet_master.get_all_records())
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (마스터 데이터): {str(e)}")
         st.stop()
     except Exception as e:
@@ -69,7 +73,7 @@ def load_request_data_page3(_gc, url, sheet_name):
         data = worksheet.get_all_records()
         return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (요청 데이터): {str(e)}")
         st.stop()
     except Exception as e:
@@ -89,7 +93,7 @@ def load_room_request_data_page3(_gc, url, sheet_name):
         data = worksheet.get_all_records()
         return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (방배정 요청 데이터): {str(e)}")
         st.stop()
     except Exception as e:
@@ -241,13 +245,18 @@ def initialize_and_sync_data(gc, url, name):
             initial_df = pd.DataFrame(initial_rows)
             
             sheet = gc.open_by_url(url)
-            worksheet1 = sheet.worksheet("마스터")
-            df_master_all = pd.DataFrame(worksheet1.get_all_records())
-            df_master_all = pd.concat([df_master_all, initial_df], ignore_index=True)
-            worksheet1.clear()
-            worksheet1.update([df_master_all.columns.tolist()] + df_master_all.values.tolist())
-            st.session_state["df_user_master"] = initial_df
-            st.session_state["df_master"] = df_master_all
+            try:
+                worksheet1 = sheet.worksheet("마스터")
+                df_master_all = pd.DataFrame(worksheet1.get_all_records())
+                df_master_all = pd.concat([df_master_all, initial_df], ignore_index=True)
+                worksheet1.clear()
+                worksheet1.update([df_master_all.columns.tolist()] + df_master_all.values.tolist())
+                st.session_state["df_user_master"] = initial_df
+                st.session_state["df_master"] = df_master_all
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (마스터 데이터 업데이트): {str(e)}")
+                st.stop()
 
         # 주차별 근무 일정이 모두 같으면 "매주"로 변환
         has_weekly = "매주" in st.session_state["df_user_master"]["주차"].values if not st.session_state["df_user_master"].empty else False
@@ -266,10 +275,15 @@ def initialize_and_sync_data(gc, url, name):
                     df_master_all = st.session_state["df_master"][st.session_state["df_master"]["이름"] != name]
                     df_master_all = pd.concat([df_master_all, st.session_state["df_user_master"]], ignore_index=True)
                     sheet = gc.open_by_url(url)
-                    worksheet1 = sheet.worksheet("마스터")
-                    worksheet1.clear()
-                    worksheet1.update([df_master_all.columns.tolist()] + df_master_all.values.tolist())
-                    st.session_state["df_master"] = df_master_all
+                    try:
+                        worksheet1 = sheet.worksheet("마스터")
+                        worksheet1.clear()
+                        worksheet1.update([df_master_all.columns.tolist()] + df_master_all.values.tolist())
+                        st.session_state["df_master"] = df_master_all
+                    except gspread.exceptions.APIError as e:
+                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                        st.error(f"Google Sheets API 오류 (마스터 데이터 업데이트): {str(e)}")
+                        st.stop()
             except KeyError as e:
                 pass
     except NameError as e:
@@ -316,6 +330,10 @@ if "initial_load_done" not in st.session_state:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (초기 데이터 로드): {str(e)}")
+        st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
@@ -332,6 +350,10 @@ if st.button("🔄 새로고침 (R)"):
     except NameError as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
@@ -496,8 +518,13 @@ if submit_add:
                     df_room_request_temp = pd.concat([df_room_request_temp, new_request_df], ignore_index=True)
                     df_room_request_temp = df_room_request_temp.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
                     
-                    worksheet2.clear()
-                    worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
+                    try:
+                        worksheet2.clear()
+                        worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
+                    except gspread.exceptions.APIError as e:
+                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                        st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+                        st.stop()
                     
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
@@ -509,7 +536,7 @@ if submit_add:
         else:
             st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.")
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
         st.stop()
     except Exception as e:
@@ -550,8 +577,13 @@ if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
                 if selected_indices:
                     df_room_request_temp = df_room_request_temp.drop(index=selected_indices)
                     df_room_request_temp = df_room_request_temp.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-                    worksheet2.clear()
-                    worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
+                    try:
+                        worksheet2.clear()
+                        worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
+                    except gspread.exceptions.APIError as e:
+                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                        st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
+                        st.stop()
                     
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
@@ -561,7 +593,7 @@ if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
                 else:
                     st.info("ℹ️ 삭제할 항목을 찾을 수 없습니다.")
         except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
             st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
             st.stop()
         except Exception as e:

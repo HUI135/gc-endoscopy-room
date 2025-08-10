@@ -29,11 +29,20 @@ if not st.session_state.get("login_success", False):
 # 전역 변수로 gspread 클라이언트 초기화
 @st.cache_resource
 def get_gspread_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    service_account_info = dict(st.secrets["gspread"])
-    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
-    credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
-    return gspread.authorize(credentials)
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets"]
+        service_account_info = dict(st.secrets["gspread"])
+        service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+        credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
+        return gspread.authorize(credentials)
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (클라이언트 초기화): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets 클라이언트 초기화 중 오류 발생: {str(e)}")
+        st.stop()
 
 # 데이터 로드 함수 (캐싱 적용, 필요 시 무효화)
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -43,10 +52,11 @@ def load_master_data(_gc, url):
         worksheet_master = sheet.worksheet("마스터")
         return pd.DataFrame(worksheet_master.get_all_records())
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"Google Sheets API 오류: {str(e)}")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (마스터 데이터): {str(e)}")
         st.stop()
     except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"마스터 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
@@ -62,10 +72,11 @@ def load_request_data_page2(_gc, url, month_str):
         data = worksheet.get_all_records()
         return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"Google Sheets API 오류: {str(e)}")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (요청 데이터): {str(e)}")
         st.stop()
     except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"요청사항 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
@@ -89,6 +100,7 @@ except NameError as e:
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 except Exception as e:
+    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 
@@ -190,7 +202,12 @@ def initialize_data():
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
         st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (데이터 초기화): {str(e)}")
+        st.stop()
     except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
         st.stop()
 
@@ -208,7 +225,12 @@ def refresh_and_update():
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+        st.stop()
     except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
@@ -274,26 +296,45 @@ def add_request_callback():
 
     with add_placeholder.container():
         with st.spinner("요청사항을 추가 중입니다..."):
-            sheet = gc.open_by_url(url)
-            worksheet2 = sheet.worksheet(f"{month_str} 요청")
-            
-            # "요청 없음"일 경우 해당 사용자의 모든 요청사항 제거
-            if 분류 == "요청 없음":
-                df_to_save = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name].copy()
-                df_to_save = pd.concat([df_to_save, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
-            else:
-                # 다른 요청사항 추가: 기존 "요청 없음" 레코드 제거 후 새 요청 추가
-                df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
-                new_request_data = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
-                df_to_save = pd.concat([df_to_save, pd.DataFrame([new_request_data])], ignore_index=True)
+            try:
+                sheet = gc.open_by_url(url)
+                try:
+                    worksheet2 = sheet.worksheet(f"{month_str} 요청")
+                except WorksheetNotFound:
+                    worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
+                    worksheet2.append_row(["이름", "분류", "날짜정보"])
+                
+                # "요청 없음"일 경우 해당 사용자의 모든 요청사항 제거
+                if 분류 == "요청 없음":
+                    df_to_save = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name].copy()
+                    df_to_save = pd.concat([df_to_save, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
+                else:
+                    # 다른 요청사항 추가: 기존 "요청 없음" 레코드 제거 후 새 요청 추가
+                    df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
+                    new_request_data = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
+                    df_to_save = pd.concat([df_to_save, pd.DataFrame([new_request_data])], ignore_index=True)
 
-            df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                
+                try:
+                    worksheet2.clear()
+                    worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
+                except gspread.exceptions.APIError as e:
+                    st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                    st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+                    st.stop()
+                
+                st.session_state["df_request"] = df_to_save
+                st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
             
-            worksheet2.clear()
-            worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
-            
-            st.session_state["df_request"] = df_to_save
-            st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"요청 추가 중 오류 발생: {str(e)}")
+                st.stop()
         
         st.success("요청사항이 추가되었습니다!", icon="📅")
         time.sleep(1)
@@ -308,34 +349,53 @@ def delete_requests_callback():
 
     with delete_placeholder.container():
         with st.spinner("요청사항을 삭제 중입니다..."):
-            sheet = gc.open_by_url(url)
-            worksheet2 = sheet.worksheet(f"{month_str} 요청")
+            try:
+                sheet = gc.open_by_url(url)
+                try:
+                    worksheet2 = sheet.worksheet(f"{month_str} 요청")
+                except WorksheetNotFound:
+                    st.error("요청사항이 저장된 시트를 찾을 수 없습니다.")
+                    st.stop()
+                
+                rows_to_delete_indices = []
+                for item in selected_items:
+                    parts = item.split(" - ", 1)
+                    if len(parts) == 2:
+                        분류_str, 날짜정보_str = parts
+                        matching_rows = st.session_state["df_request"][
+                            (st.session_state["df_request"]['이름'] == name) &
+                            (st.session_state["df_request"]['분류'] == 분류_str) &
+                            (st.session_state["df_request"]['날짜정보'] == 날짜정보_str)
+                        ]
+                        rows_to_delete_indices.extend(matching_rows.index.tolist())
+                
+                if rows_to_delete_indices:
+                    df_to_save = st.session_state["df_request"].drop(index=rows_to_delete_indices).reset_index(drop=True)
+                    
+                    df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                    
+                    try:
+                        worksheet2.clear()
+                        worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
+                    except gspread.exceptions.APIError as e:
+                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                        st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
+                        st.stop()
+                    
+                    st.session_state["df_request"] = df_to_save
+                    st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
+                else:
+                    st.warning("삭제할 항목을 찾을 수 없습니다.")
+                    return
             
-            rows_to_delete_indices = []
-            for item in selected_items:
-                parts = item.split(" - ", 1)
-                if len(parts) == 2:
-                    분류_str, 날짜정보_str = parts
-                    matching_rows = st.session_state["df_request"][
-                        (st.session_state["df_request"]['이름'] == name) &
-                        (st.session_state["df_request"]['분류'] == 분류_str) &
-                        (st.session_state["df_request"]['날짜정보'] == 날짜정보_str)
-                    ]
-                    rows_to_delete_indices.extend(matching_rows.index.tolist())
-            
-            if rows_to_delete_indices:
-                df_to_save = st.session_state["df_request"].drop(index=rows_to_delete_indices).reset_index(drop=True)
-                
-                df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-                
-                worksheet2.clear()
-                worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
-                
-                st.session_state["df_request"] = df_to_save
-                st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
-            else:
-                st.warning("삭제할 항목을 찾을 수 없습니다.")
-                return
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"요청 삭제 중 오류 발생: {str(e)}")
+                st.stop()
         
         st.success("요청사항이 삭제되었습니다!", icon="🗑️")
         time.sleep(1)
@@ -352,7 +412,12 @@ if "initial_load_done_page2" not in st.session_state:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (초기 데이터 로드): {str(e)}")
+        st.stop()
     except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
