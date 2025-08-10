@@ -61,6 +61,8 @@ def initialize_session_state():
         st.session_state["df_swap_requests"] = pd.DataFrame(columns=[
             "RequestID", "요청일시", "요청자", "변경 요청", "변경 요청한 스케줄"
         ])
+    if "worksheet_room_request" not in st.session_state:
+        st.session_state["worksheet_room_request"] = None
 
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
@@ -107,7 +109,13 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
                 raise Exception(f"{month_str} 스케줄 시트가 비어 있습니다.")
 
             # 방배정 요청 시트
-            worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
+            try:
+                worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
+            except gspread.exceptions.WorksheetNotFound:
+                st.warning(f"{month_str} 방배정 요청 시트가 없습니다. 새 시트를 생성합니다.")
+                worksheet_room_request = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows=100, cols=10)
+                worksheet_room_request.update('A1', [["이름", "분류", "날짜정보"]])
+            
             df_room_request = pd.DataFrame(worksheet_room_request.get_all_records())
             if "우선순위" in df_room_request.columns:
                 df_room_request = df_room_request.drop(columns=["우선순위"])
@@ -183,6 +191,9 @@ def get_user_available_dates(name, df_schedule, month_start, month_end):
 
 # 요청 저장 (df_room_request용)
 def save_to_gsheet(name, categories, dates, month_str, worksheet):
+    if worksheet is None:
+        st.error("방 배정 요청 시트가 초기화되지 않았습니다. 새로고침 후 다시 시도해주세요.")
+        return None
     try:
         gc = get_gspread_client()
         if gc is None:
@@ -358,6 +369,26 @@ else:
     worksheet_room_request = st.session_state["worksheet_room_request"]
     df_cumulative = st.session_state["df_cumulative"]
     df_swap_requests = st.session_state["df_swap_requests"]
+
+    # worksheet_room_request가 None인지 확인하고 복구 시도
+    if worksheet_room_request is None:
+        st.warning("⚠️ 방 배정 요청 시트가 로드되지 않았습니다. 복구를 시도합니다...")
+        try:
+            gc = get_gspread_client()
+            if gc is None:
+                raise Exception("Failed to initialize gspread client")
+            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+            try:
+                worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
+            except gspread.exceptions.WorksheetNotFound:
+                st.warning(f"{month_str} 방배정 요청 시트가 없습니다. 새 시트를 생성합니다.")
+                worksheet_room_request = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows=100, cols=10)
+                worksheet_room_request.update('A1', [["이름", "분류", "날짜정보"]])
+            st.session_state["worksheet_room_request"] = worksheet_room_request
+            st.success("방 배정 요청 시트 복구 완료!")
+        except Exception as e:
+            st.error(f"방 배정 요청 시트 복구 실패: {type(e).__name__} - {e}")
+            st.stop()
 
 st.header("🚪 방 배정", divider='rainbow')
 
@@ -687,7 +718,6 @@ if st.session_state["df_room_request"].empty:
 else:
     st.dataframe(st.session_state["df_room_request"], use_container_width=True, hide_index=True)
 
-# 날짜정보 파싱 함수
 def parse_date_info(date_info):
     try:
         date_part = date_info.split('(')[0].strip()
