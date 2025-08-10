@@ -394,8 +394,7 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     swapped_assignments = set()
     
     am_cols = [str(i) for i in range(1, 13)]
-    pm_cols = [f'오후{i}' for i in range(1, 6)]
-    
+    pm_cols = [f'오후{i}' for i in range(1, 6)] + ['오전당직(온콜)']  # 오전당직(온콜)을 오후 컬럼에 추가    
     batch_change_log = []
     
     for _, request_row in swap_requests_df.iterrows():
