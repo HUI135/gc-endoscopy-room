@@ -261,7 +261,7 @@ def initialize_and_sync_data(gc, url, name):
         # 주차별 근무 일정이 모두 같으면 "매주"로 변환
         has_weekly = "매주" in st.session_state["df_user_master"]["주차"].values if not st.session_state["df_user_master"].empty else False
         if not st.session_state["df_user_master"].empty and not has_weekly:
-            week_nums_count = len(sorted(set(d.isocalendar()[1] for d in pd.date_range(start=next_month, end=next_month.replace(day=last_day))))
+            week_nums_count = len(sorted(set(d.isocalendar()[1] for d in pd.date_range(start=next_month, end=next_month.replace(day=last_day)))))
             week_labels = [f"{i+1}주" for i in range(week_nums_count)]
             
             try:
