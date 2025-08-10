@@ -352,7 +352,7 @@ else:
                     "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
                     "요청자": user_name,
                     "요청자 사번": employee_id,
-                    "변경 요청": f"{user_name} -> {selected_colleague_name}",
+                    "변경 요청": f"{user_name} ➡️ {selected_colleague_name}",
                     "변경 요청한 방배정": my_assignment_info['sheet_str'],
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
@@ -430,7 +430,7 @@ else:
                 "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
                 "요청자": user_name,
                 "요청자 사번": employee_id,
-                "변경 요청": f"{colleague_assignment_info['person_name']} -> {user_name}",
+                "변경 요청": f"{colleague_assignment_info['person_name']} ➡️ {user_name}",
                 "변경 요청한 방배정": colleague_assignment_info['sheet_str'],
             }
             with st.spinner("요청을 기록하는 중입니다..."):

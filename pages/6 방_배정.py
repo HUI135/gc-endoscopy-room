@@ -401,12 +401,12 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     for _, request_row in swap_requests_df.iterrows():
         try:
             change_request_str = str(request_row.get('변경 요청', '')).strip()
-            if '->' not in change_request_str:
-                st.warning(f"⚠️ 변경 요청 형식이 올바르지 않습니다: '{change_request_str}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+            if '➡️' not in change_request_str:
+                st.warning(f"⚠️ 변경 요청 형식이 올바르지 않습니다: '{change_request_str}'. '이름1 ➡️ 이름2' 형식으로 입력해주세요.")
                 time.sleep(1)
                 continue
 
-            requester_name, new_assignee = [p.strip() for p in change_request_str.split('->')]
+            requester_name, new_assignee = [p.strip() for p in change_request_str.split('➡️')]
             
             # '변경 요청한 스케줄' 컬럼에서 날짜와 시간대를 파싱합니다.
             schedule_info_str = str(request_row.get('변경 요청한 스케줄', '')).strip()

@@ -82,20 +82,15 @@ def load_request_data_page4():
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
         mapping_values = mapping.get_all_values()  # 원시 데이터 가져오기
-        st.write(f"DEBUG: load_request_data_page4 mapping_values = {mapping_values}")  # 디버깅 로그
         if not mapping_values:
-            st.write("DEBUG: 매핑 시트가 완전히 비어 있습니다.")
             df_map = pd.DataFrame(columns=["이름", "사번"])
         elif len(mapping_values) == 1:
-            st.write("DEBUG: 매핑 시트에 헤더만 존재합니다.")
             df_map = pd.DataFrame(columns=["이름", "사번"])
         else:
             # 첫 번째 행을 헤더로 사용
             headers = mapping_values[0]
             data = mapping_values[1:]
-            st.write(f"DEBUG: Headers = {headers}, Data rows = {len(data)}")
             if not data or all(not row for row in data):
-                st.write("DEBUG: 매핑 시트에 데이터 행이 없습니다.")
                 df_map = pd.DataFrame(columns=["이름", "사번"])
             else:
                 df_map = pd.DataFrame(data, columns=headers)
@@ -103,10 +98,7 @@ def load_request_data_page4():
                 if "이름" in df_map.columns and "사번" in df_map.columns:
                     df_map = df_map[["이름", "사번"]]
                 else:
-                    st.write("DEBUG: 매핑 시트에 '이름' 또는 '사번' 열이 없습니다.")
                     df_map = pd.DataFrame(columns=["이름", "사번"])
-        
-        st.write(f"DEBUG: load_request_data_page4 df_map shape = {df_map.shape}, is_empty = {df_map.empty}")
         
         # 매핑 시트가 비어 있는 경우 경고 표시
         if df_map.empty:

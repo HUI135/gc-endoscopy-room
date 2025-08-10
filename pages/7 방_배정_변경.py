@@ -156,11 +156,11 @@ def apply_assignment_swaps(df_assignment, df_requests):
                 st.warning(f"⚠️ 요청 처리 불가: '변경 요청' 또는 '변경 요청한 방배정' 컬럼이 비어 있습니다.")
                 time.sleep(1)
                 continue
-            if '->' not in swap_request_str:
-                st.warning(f"⚠️ '변경 요청' 형식이 올바르지 않습니다: '{swap_request_str}'. '이름1 -> 이름2' 형식으로 입력해주세요.")
+            if '➡️' not in swap_request_str:
+                st.warning(f"⚠️ '변경 요청' 형식이 올바르지 않습니다: '{swap_request_str}'. '이름1 ➡️ 이름2' 형식으로 입력해주세요.")
                 time.sleep(1)
                 continue
-            old_person, new_person = [p.strip() for p in swap_request_str.split('->')]
+            old_person, new_person = [p.strip() for p in swap_request_str.split('➡️')]
             # Google Sheets의 '2025-04-02 (13:30(3))' 형식 파싱
             slot_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', raw_slot_info)
             if not slot_match:
@@ -213,7 +213,7 @@ def apply_assignment_swaps(df_assignment, df_requests):
     return df_modified, changed_log
 
 # --- 통계 계산 함수 ---
-def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
+def calculate_statistics(result_df: pd.DataFrame) ➡️ pd.DataFrame:
     total_stats = {
         'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(),
         'rooms': {str(i): Counter() for i in range(1, 13)}

@@ -434,7 +434,6 @@ def parse_date_range(date_str):
                 if parsed_date.weekday() < 5:
                     result.append(single_date)
             except ValueError:
-                # st.write(f"잘못된 날짜 형식 무시됨: {single_date}") # DEBUG 메시지로 변경
                 pass # 이 메시지는 너무 많이 나올 수 있어 주석 처리
         return result
     if '~' in date_str:
@@ -447,7 +446,6 @@ def parse_date_range(date_str):
             date_list = pd.date_range(start=start, end=end)
             return [d.strftime('%Y-%m-%d') for d in date_list if d.weekday() < 5]
         except ValueError as e:
-            # st.write(f"잘못된 날짜 범위 무시됨: {date_str}, 에러: {e}") # DEBUG 메시지로 변경
             pass # 이 메시지는 너무 많이 나올 수 있어 주석 처리
             return []
     try:
@@ -456,7 +454,6 @@ def parse_date_range(date_str):
             return [date_str]
         return []
     except ValueError:
-        # st.write(f"잘못된 날짜 형식 무시됨: {date_str}") # DEBUG 메시지로 변경
         pass # 이 메시지는 너무 많이 나올 수 있어 주석 처리
         return []
 
