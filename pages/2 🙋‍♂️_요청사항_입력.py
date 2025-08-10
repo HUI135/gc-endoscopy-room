@@ -151,25 +151,6 @@ def create_calendar_events(df_master, df_request):
 
 
 # --- 초기 데이터 로딩 및 세션 상태 초기화 ---
-def initialize_data():
-    """페이지에 필요한 모든 데이터를 한 번에 로드하고 세션 상태에 저장합니다."""
-    st.session_state["df_master"] = load_master_data(gc, url)
-    st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
-    st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy()
-    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
-
-# 데이터 새로고침 및 스피너 로직을 통합
-def refresh_and_update():
-    """데이터를 새로고침하고 UI를 업데이트합니다."""
-    with st.spinner("데이터를 다시 불러오는 중입니다..."):
-        st.cache_data.clear() # 캐시 지우기
-        initialize_data()
-    st.success("데이터가 새로고침되었습니다.", icon="🔄")
-    time.sleep(1)
-    st.rerun() # 새로고침 후 UI 전체를 다시 그립니다.
-
-# --- 콜백 함수 정의 ---
-# 요청사항 추가 콜백 함수
 def add_request_callback():
     분류 = st.session_state["category_select"]
     날짜정보 = ""
@@ -233,11 +214,13 @@ def add_request_callback():
             sheet = gc.open_by_url(url)
             worksheet2 = sheet.worksheet(f"{month_str} 요청")
             
-            df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
-            
+            # "요청 없음"일 경우 해당 사용자의 모든 요청사항 제거
             if 분류 == "요청 없음":
+                df_to_save = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name].copy()
                 df_to_save = pd.concat([df_to_save, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
             else:
+                # 다른 요청사항 추가: 기존 "요청 없음" 레코드 제거 후 새 요청 추가
+                df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
                 new_request_data = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
                 df_to_save = pd.concat([df_to_save, pd.DataFrame([new_request_data])], ignore_index=True)
 
