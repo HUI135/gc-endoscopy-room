@@ -145,16 +145,54 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
     st.error("데이터 로드 실패: 재시도 횟수 초과")
     return None, None, None, None, None
 
-# df_schedule_md 생성 함수
+# df_schedule_md 생성
 def create_df_schedule_md(df_schedule):
-    display_cols = ['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4']
-    available_cols = [col for col in display_cols if col in df_schedule.columns]
-    if len(available_cols) < len(display_cols):
-        missing_cols = [col for col in display_cols if col not in df_schedule.columns]
-        st.warning(f"다음 컬럼이 df_schedule에 없습니다: {missing_cols}. 누락된 컬럼은 빈 값으로 채웁니다.")
-        for col in missing_cols:
-            df_schedule[col] = ''
-    return df_schedule[available_cols].copy()
+    df_schedule_md = df_schedule.copy().fillna('')
+    for idx, row in df_schedule_md.iterrows():
+        date_str = row['날짜']
+        oncall_worker = row['오전당직(온콜)']
+        
+        try:
+            if isinstance(date_str, (float, int)):
+                date_str = str(int(date_str))
+            date_obj = datetime.strptime(date_str, '%m월 %d일').replace(year=2025) if "월" in date_str else datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError as e:
+            st.error(f"날짜 파싱 오류: {date_str}, 오류: {str(e)}")
+            continue
+        
+        afternoon_cols = ['오후1', '오후2', '오후3', '오후4', '오후5']
+        if all(row[col] == '' for col in afternoon_cols):
+            df_schedule_md.at[idx, '오전당직(온콜)'] = ''
+            continue
+        
+        if pd.isna(oncall_worker) or oncall_worker == '':
+            oncall_worker = ''
+            df_schedule_md.at[idx, '오전당직(온콜)'] = ''
+        
+        if oncall_worker:
+            morning_cols = [str(i) for i in range(1, 13)]
+            for col in morning_cols + afternoon_cols:
+                if row[col] == oncall_worker:
+                    df_schedule_md.at[idx, col] = ''
+        
+        morning_cols = [str(i) for i in range(1, 13)]
+        morning_workers = [row[col] for col in morning_cols if row[col]]
+        if len(morning_workers) > 11:
+            morning_workers = morning_workers[:11]
+        morning_workers.extend([''] * (11 - len(morning_workers)))
+        for i, col in enumerate([str(i) for i in range(1, 12)], 1):
+            df_schedule_md.at[idx, col] = morning_workers[i-1]
+        
+        afternoon_workers = [row[col] for col in afternoon_cols if row[col]]
+        if len(afternoon_workers) > 4:
+            afternoon_workers = afternoon_workers[:4]
+        afternoon_workers.extend([''] * (4 - len(afternoon_workers)))
+        for i, col in enumerate(['오후1', '오후2', '오후3', '오후4'], 1):
+            df_schedule_md.at[idx, col] = afternoon_workers[i-1]
+        
+    df_schedule_md = df_schedule_md.drop(columns=['12', '오후5'], errors='ignore')
+    return df_schedule_md
+
 
 # 근무 가능 일자 계산
 @st.cache_data
