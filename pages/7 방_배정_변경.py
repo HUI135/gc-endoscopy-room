@@ -47,10 +47,23 @@ if 'download_filename' not in st.session_state:
 # --- Google Sheets 연동 함수 ---
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    service_account_info = dict(st.secrets["gspread"])
-    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
-    credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
-    return gspread.authorize(credentials)
+    try:
+        service_account_info = dict(st.secrets["gspread"])
+        service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+        credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
+        return gspread.authorize(credentials)
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (클라이언트 초기화): {e.response.status_code} - {e.response.text}")
+        st.stop()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets 인증 정보 로드 중 오류: {type(e).__name__} - {e}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets 클라이언트 초기화 또는 인증 실패: {type(e).__name__} - {e}")
+        st.stop()
 
 def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
     for attempt in range(retries):
@@ -69,25 +82,65 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 
 # --- 데이터 로드 함수 ---
 @st.cache_data(ttl=600)
+@st.cache_data(ttl=600)
 def load_data_for_change_page(month_str):
-    gc = get_gspread_client()
     try:
+        gc = get_gspread_client()
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (스프레드시트 열기): {e.response.status_code} - {e.response.text}")
+        st.stop()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"스프레드시트 URL 로드 중 오류: {type(e).__name__} - {e}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"스프레드시트 열기 실패: {type(e).__name__} - {e}")
+        st.stop()
+        
+    try:
         worksheet_final = sheet.worksheet(f"{month_str} 방배정")
         df_final = pd.DataFrame(worksheet_final.get_all_records())
         df_final = df_final.fillna('')
-        try:
-            worksheet_req = sheet.worksheet(f"{month_str} 방배정 변경요청")
-            df_req = pd.DataFrame(worksheet_req.get_all_records())
-        except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"'{month_str} 방배정 변경요청' 시트가 없습니다. 빈 테이블로 시작합니다.")
-            time.sleep(1)
-            df_req = pd.DataFrame(columns=['RequestID', '요청일시', '요청자', '요청자 사번', '변경 요청', '변경 요청한 방배정'])
-        return df_final, df_req
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"오류: {str(e)}")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 로드): {e.response.status_code} - {e.response.text}")
         st.stop()
+    except gspread.exceptions.WorksheetNotFound:
+        st.warning(f"'{month_str} 방배정' 시트가 없습니다. 빈 DataFrame으로 초기화합니다.")
+        df_final = pd.DataFrame()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"'{month_str} 방배정' 시트 로드 중 오류: {type(e).__name__} - {e}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
+        st.stop()
+        
+    try:
+        worksheet_req = sheet.worksheet(f"{month_str} 방배정 변경요청")
+        df_req = pd.DataFrame(worksheet_req.get_all_records())
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 ('{month_str} 방배정 변경요청' 시트 로드): {e.response.status_code} - {e.response.text}")
+        st.stop()
+    except gspread.exceptions.WorksheetNotFound:
+        st.warning(f"'{month_str} 방배정 변경요청' 시트가 없습니다. 빈 테이블로 시작합니다.")
+        time.sleep(1)
+        df_req = pd.DataFrame(columns=['RequestID', '요청일시', '요청자', '요청자 사번', '변경 요청', '변경 요청한 방배정'])
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"'{month_str} 방배정 변경요청' 시트 로드 중 오류: {type(e).__name__} - {e}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"'{month_str} 방배정 변경요청' 시트 로드 실패: {type(e).__name__} - {e}")
+        st.stop()
+        
+    return df_final, df_req
 
 # --- 방배정 변경사항 적용 함수 ---
 def apply_assignment_swaps(df_assignment, df_requests):
@@ -199,10 +252,33 @@ def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
 # --- UI 및 데이터 핸들링 ---
 month_str = "2025년 4월"
 st.header("🔄 스케줄 배정", divider='rainbow')
+
 if st.button("🔄 새로고침(R)"):
-    st.cache_data.clear()
-    st.session_state.change_data_loaded = False
-    st.rerun()
+    try:
+        st.cache_data.clear()
+        st.session_state.change_data_loaded = False
+        df_final, df_req = load_data_for_change_page(month_str)
+        st.session_state.df_final_assignment = df_final
+        st.session_state.df_change_requests = df_req
+        st.session_state.changed_cells_log = []
+        st.session_state.df_before_apply = df_final.copy()
+        st.session_state.has_changes_to_revert = False
+        st.session_state.change_data_loaded = True
+        st.success("데이터가 새로고침되었습니다.")
+        st.rerun()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {e.response.status_code} - {e.response.text}")
+        st.stop()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
+        st.stop()
+
 if not st.session_state.change_data_loaded:
     df_final, df_req = load_data_for_change_page(month_str)
     st.session_state.df_final_assignment = df_final
@@ -316,12 +392,41 @@ with col_final1:
             try:
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-                worksheet_final = sheet.worksheet(f"{month_str} 방배정")
-                final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
-                update_sheet_with_retry(worksheet_final, final_data_list)
-                st.success("✅ Google Sheets에 최종 방배정표가 성공적으로 저장되었습니다.")
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (연결 단계): {e.response.status_code} - {e.response.text}")
+                st.stop()
+            except NameError as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
+                st.stop()
             except Exception as e:
-                st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
+                st.stop()
+                
+            try:
+                worksheet_final = sheet.worksheet(f"{month_str} 방배정")
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 로드): {e.response.status_code} - {e.response.text}")
+                st.stop()
+            except gspread.exceptions.WorksheetNotFound:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"'{month_str} 방배정' 시트를 찾을 수 없습니다. 시트 이름을 확인해주세요.")
+                st.stop()
+            except NameError as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"'{month_str} 방배정' 시트 로드 중 오류: {type(e).__name__} - {e}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
+                st.stop()
+                
+            final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
+            update_sheet_with_retry(worksheet_final, final_data_list)
+            st.success("✅ Google Sheets에 최종 방배정표가 성공적으로 저장되었습니다.")
 with col_final2:
     if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         st.session_state['show_final_results'] = True

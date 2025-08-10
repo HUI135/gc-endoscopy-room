@@ -570,54 +570,55 @@ if 분류 == "요청 없음":
     st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
 
 if st.button("📅 추가"):
-    try:
-        gc = get_gspread_client()
-        sheet = gc.open_by_url(url)
-        worksheet2 = sheet.worksheet(f"{month_str} 요청")
-        
-        최종_이름 = 이름 if 이름 else 이름_수기
-        if 최종_이름 and (분류 == "요청 없음" or 날짜정보):
-            if 분류 == "요청 없음":
-                df_request = df_request[df_request["이름"] != 최종_이름]
-                new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": ""}], columns=df_request.columns)
-                df_request = pd.concat([df_request, new_row], ignore_index=True)
-            elif 날짜정보:
-                if not df_request[(df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음")].empty:
-                    df_request = df_request[~((df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음"))]
-                new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": 날짜정보}], columns=df_request.columns)
-                df_request = pd.concat([df_request, new_row], ignore_index=True)
+    with st.spinner("요청을 기록하는 중입니다..."):
+        try:
+            gc = get_gspread_client()
+            sheet = gc.open_by_url(url)
+            worksheet2 = sheet.worksheet(f"{month_str} 요청")
             
-            df_request = df_request.sort_values(by=["이름", "날짜정보"])
-            if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
-                time.sleep(1)
-                load_request_data_page4()
-                st.session_state["df_request"] = df_request
-                st.session_state["worksheet2"] = worksheet2
-                st.cache_data.clear()
-                if "delete_employee_select" in st.session_state:
-                    del st.session_state["delete_employee_select"]
-                if "delete_request_select" in st.session_state:
-                    del st.session_state["delete_request_select"]
-                st.success("✅ 요청사항이 저장되었습니다!")
-                time.sleep(1)
-                st.rerun()
+            최종_이름 = 이름 if 이름 else 이름_수기
+            if 최종_이름 and (분류 == "요청 없음" or 날짜정보):
+                if 분류 == "요청 없음":
+                    df_request = df_request[df_request["이름"] != 최종_이름]
+                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": ""}], columns=df_request.columns)
+                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+                elif 날짜정보:
+                    if not df_request[(df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음")].empty:
+                        df_request = df_request[~((df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음"))]
+                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": 날짜정보}], columns=df_request.columns)
+                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+                
+                df_request = df_request.sort_values(by=["이름", "날짜정보"])
+                if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                    time.sleep(1)
+                    load_request_data_page4()
+                    st.session_state["df_request"] = df_request
+                    st.session_state["worksheet2"] = worksheet2
+                    st.cache_data.clear()
+                    if "delete_employee_select" in st.session_state:
+                        del st.session_state["delete_employee_select"]
+                    if "delete_request_select" in st.session_state:
+                        del st.session_state["delete_request_select"]
+                    st.success("✅ 요청사항이 저장되었습니다!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("요청사항 저장 실패. 새로고침 후 다시 시도하세요.")
+                    st.stop()
             else:
-                st.warning("요청사항 저장 실패. 새로고침 후 다시 시도하세요.")
-                st.stop()
-        else:
-            st.warning("이름을 선택하거나 입력한 후 요청사항을 입력해주세요.")
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (요청사항 추가): {str(e)}")
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"요청사항 추가 중 오류 발생: {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"요청사항 추가 중 오류 발생: {str(e)}")
-        st.stop()
+                st.warning("이름을 선택하거나 입력한 후 요청사항을 입력해주세요.")
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (요청사항 추가): {e.response.status_code} - {e.response.text}")
+            st.stop()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 추가 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 추가 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
 
 # 요청사항 삭제 섹션
 st.write(" ")
@@ -645,42 +646,43 @@ else:
     selected_rows = []
 
 if st.button("📅 삭제"):
-    try:
-        if selected_rows:
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(url)
-            worksheet2 = sheet.worksheet(f"{month_str} 요청")
-            
-            df_request = df_request.drop(index=selected_rows)
-            is_user_empty = df_request[df_request["이름"] == selected_employee_id2].empty
-            if is_user_empty:
-                new_row = pd.DataFrame([{"이름": selected_employee_id2, "분류": "요청 없음", "날짜정보": ""}], columns=df_request.columns)
-                df_request = pd.concat([df_request, new_row], ignore_index=True)
-            df_request = df_request.sort_values(by=["이름", "날짜정보"])
-            
-            if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
-                time.sleep(1)
-                load_request_data_page4()
-                st.session_state["df_request"] = df_request
-                st.session_state["worksheet2"] = worksheet2
-                st.cache_data.clear()
-                st.success("선택한 요청사항이 삭제되었습니다!")
-                time.sleep(1)
-                st.rerun()
+    with st.spinner("요청을 삭제하는 중입니다..."):
+        try:
+            if selected_rows:
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(url)
+                worksheet2 = sheet.worksheet(f"{month_str} 요청")
+                
+                df_request = df_request.drop(index=selected_rows)
+                is_user_empty = df_request[df_request["이름"] == selected_employee_id2].empty
+                if is_user_empty:
+                    new_row = pd.DataFrame([{"이름": selected_employee_id2, "분류": "요청 없음", "날짜정보": ""}], columns=df_request.columns)
+                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+                df_request = df_request.sort_values(by=["이름", "날짜정보"])
+                
+                if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                    time.sleep(1)
+                    load_request_data_page4()
+                    st.session_state["df_request"] = df_request
+                    st.session_state["worksheet2"] = worksheet2
+                    st.cache_data.clear()
+                    st.success("선택한 요청사항이 삭제되었습니다!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("요청사항 삭제 실패. 새로고침 후 다시 시도하세요.")
+                    st.stop()
             else:
-                st.warning("요청사항 삭제 실패. 새로고침 후 다시 시도하세요.")
-                st.stop()
-        else:
-            st.warning("삭제할 요청사항을 선택해주세요.")
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (요청사항 삭제): {str(e)}")
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"요청사항 삭제 중 오류 발생: {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"요청사항 삭제 중 오류 발생: {str(e)}")
-        st.stop()
+                st.warning("삭제할 요청사항을 선택해주세요.")
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (요청사항 삭제): {e.response.status_code} - {e.response.text}")
+            st.stop()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 삭제 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 삭제 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
