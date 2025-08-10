@@ -29,6 +29,8 @@ if not st.session_state.get("login_success", False):
 # --- 세션 상태 초기화 ---
 if "change_data_loaded" not in st.session_state:
     st.session_state["change_data_loaded"] = False
+if "saved_changes_log" not in st.session_state:
+    st.session_state["saved_changes_log"] = []
 if "df_final_assignment" not in st.session_state:
     st.session_state["df_final_assignment"] = pd.DataFrame()
 if "df_change_requests" not in st.session_state:
@@ -82,7 +84,6 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 
 # --- 데이터 로드 함수 ---
 @st.cache_data(ttl=600)
-@st.cache_data(ttl=600)
 def load_data_for_change_page(month_str):
     try:
         gc = get_gspread_client()
@@ -99,7 +100,7 @@ def load_data_for_change_page(month_str):
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"스프레드시트 열기 실패: {type(e).__name__} - {e}")
         st.stop()
-        
+
     try:
         worksheet_final = sheet.worksheet(f"{month_str} 방배정")
         df_final = pd.DataFrame(worksheet_final.get_all_records())
@@ -119,7 +120,7 @@ def load_data_for_change_page(month_str):
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
         st.stop()
-        
+
     try:
         worksheet_req = sheet.worksheet(f"{month_str} 방배정 변경요청")
         df_req = pd.DataFrame(worksheet_req.get_all_records())
@@ -139,7 +140,7 @@ def load_data_for_change_page(month_str):
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"'{month_str} 방배정 변경요청' 시트 로드 실패: {type(e).__name__} - {e}")
         st.stop()
-        
+
     return df_final, df_req
 
 # --- 방배정 변경사항 적용 함수 ---
@@ -343,35 +344,44 @@ edited_df = st.data_editor(
     disabled=['날짜', '요일'],
     hide_index=True
 )
+
+# 데이터에 변경이 발생했을 때 changed_cells_log 업데이트
 if not edited_df.equals(st.session_state.df_final_assignment):
     st.session_state.df_before_apply = st.session_state.df_final_assignment.copy()
     diff_mask = (edited_df != st.session_state.df_final_assignment) & (edited_df.notna() | st.session_state.df_final_assignment.notna())
     current_log = st.session_state.changed_cells_log
+    
+    # 새로운 변경사항을 기록
+    newly_changed_logs = []
+    existing_keys = {(log['날짜'], log['방배정']) for log in current_log if len(log) == 4}
+    
     for col in diff_mask.columns:
         if diff_mask[col].any():
             for idx in diff_mask.index[diff_mask[col]]:
                 date_val = edited_df.at[idx, '날짜']
-                # 수정: 날짜를 'M월 D일 (요일)' 형식으로 변환
-                date_obj = datetime.strptime(f"2025 {date_val}", '%Y %m월 %d일')
-                formatted_date = f"{date_obj.month}월 {date_obj.day}일 ({'월화수목금토일'[date_obj.weekday()]})"
+                try:
+                    date_obj = datetime.strptime(f"2025 {date_val}", '%Y %m월 %d일')
+                    formatted_date = f"{date_obj.month}월 {date_obj.day}일 ({'월화수목금토일'[date_obj.weekday()]})"
+                except (ValueError, TypeError):
+                    formatted_date = date_val
+                
                 new_val = edited_df.at[idx, col]
                 old_val = st.session_state.df_final_assignment.at[idx, col]
-                current_log = [
-                    log for log in current_log if not (
-                        log['날짜'] == formatted_date and 
-                        log['방배정'] == col
-                    )
-                ]
-                if new_val != old_val:
-                    current_log.append({
+                
+                log_key = (formatted_date, col)
+                if log_key not in existing_keys and new_val != old_val:
+                    newly_changed_logs.append({
                         '날짜': formatted_date,
                         '방배정': col,
                         '변경 전 인원': old_val,
                         '변경 후 인원': new_val
                     })
-    st.session_state.changed_cells_log = current_log
+                    existing_keys.add(log_key)  # 중복 방지
+    
+    st.session_state.changed_cells_log = current_log + newly_changed_logs
     st.session_state.df_final_assignment = edited_df.copy()
     st.session_state.has_changes_to_revert = True
+
 st.divider()
 st.caption("📝 현재까지 기록된 변경사항 로그")
 if st.session_state.changed_cells_log:
@@ -384,55 +394,46 @@ if st.session_state.changed_cells_log:
         st.info("기록된 변경사항이 없습니다.")
 else:
     st.info("기록된 변경사항이 없습니다.")
+
+# 변경사항 유무를 판단하는 플래그
+has_unsaved_changes = (
+    (st.session_state.changed_cells_log is not None and len(st.session_state.changed_cells_log) > 0)
+)
+
 col_final1, col_final2 = st.columns(2)
 with col_final1:
-    if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True):
+    if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True, disabled=not has_unsaved_changes):
         final_df_to_save = st.session_state.df_final_assignment
-        with st.spinner("Google Sheets에 저장 중..."):
-            try:
+        try:
+            with st.spinner("Google Sheets에 저장 중..."):
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 (연결 단계): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except NameError as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-            except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-                
-            try:
                 worksheet_final = sheet.worksheet(f"{month_str} 방배정")
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 로드): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except gspread.exceptions.WorksheetNotFound:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"'{month_str} 방배정' 시트를 찾을 수 없습니다. 시트 이름을 확인해주세요.")
-                st.stop()
-            except NameError as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"'{month_str} 방배정' 시트 로드 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-            except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
-                st.stop()
-                
-            final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
-            update_sheet_with_retry(worksheet_final, final_data_list)
+                final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
+                update_sheet_with_retry(worksheet_final, final_data_list)
+            
+            # 로그를 saved_changes_log에 추가하고 current log 초기화
+            st.session_state.saved_changes_log.extend(st.session_state.changed_cells_log)
+            st.session_state.changed_cells_log = []
+            st.session_state.has_changes_to_revert = False
+            st.session_state.show_final_results = False
+            
             st.success("✅ Google Sheets에 최종 방배정표가 성공적으로 저장되었습니다.")
+            time.sleep(2)
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"⚠️ 저장 중 오류 발생: {e}")
+
 with col_final2:
-    if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
+    if st.button("🚀 방배정 수행", type="primary", use_container_width=True, disabled=has_unsaved_changes):
         st.session_state['show_final_results'] = True
     else:
         st.session_state['show_final_results'] = False
-if st.session_state.get('show_final_results', False):
+        if has_unsaved_changes:
+            st.warning("⚠️ 변경사항이 있습니다. 먼저 **'변경사항 저장'** 버튼을 눌러주세요.")
+
+if st.session_state.get('show_final_results', False) and not has_unsaved_changes:
     st.divider()
     final_df_to_save = st.session_state.df_final_assignment
     st.subheader(f"💡 {month_str} 최종 방배정 결과", divider='rainbow')
@@ -448,31 +449,60 @@ if st.session_state.get('show_final_results', False):
         highlight_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
         duty_font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
         default_font = Font(name="맑은 고딕", size=9)
+        
+        # 컬럼 헤더 작성
         columns = final_df_to_save.columns.tolist()
         for col_idx, header in enumerate(columns, 1):
             cell = sheet.cell(1, col_idx, header)
             cell.font = Font(bold=True, name="맑은 고딕", size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            if header.startswith('8:30') or header == '온콜': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-            elif header.startswith('9:00'): cell.fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
-            elif header.startswith('9:30'): cell.fill = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
-            elif header.startswith('10:00'): cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-            elif header.startswith('13:30'): cell.fill = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
+            if header.startswith('8:30') or header == '온콜':
+                cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+            elif header.startswith('9:00'):
+                cell.fill = PatternFill(start_color="F8CBAD", end_color="F8CBAD", fill_type="solid")
+            elif header.startswith('9:30'):
+                cell.fill = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
+            elif header.startswith('10:00'):
+                cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+            elif header.startswith('13:30'):
+                cell.fill = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
+        
+        # 변경된 셀 정보: saved + current 로그 합침
+        all_logs = st.session_state.saved_changes_log + st.session_state.changed_cells_log
         changed_cells_set = set()
-        for log in st.session_state.changed_cells_log:
-            changed_cells_set.add((log['날짜'], log['방배정'], log['변경 후 인원']))
+        for log in all_logs:
+            if len(log) != 4:
+                continue
+            date_str = log['날짜']
+            slot_name = log['방배정']
+            try:
+                # 날짜 형식을 'M월 D일'로 변환하여 매핑 (요일 부분 제거)
+                date_without_week = date_str.split(' (')[0]  # '4월 2일' 추출
+                if slot_name in columns and date_without_week in final_df_to_save['날짜'].values:
+                    row_idx = final_df_to_save.index[final_df_to_save['날짜'] == date_without_week].tolist()[0] + 2  # 헤더 고려 +2
+                    col_idx = columns.index(slot_name) + 1
+                    changed_cells_set.add((row_idx, col_idx))
+            except (ValueError, IndexError) as e:
+                st.warning(f"⚠️ 로그 처리 중 오류 (무시됨): {e} - 로그: {log}")
+                continue
+        
+        # 데이터 작성 및 색칠
         for row_idx, row_data in enumerate(final_df_to_save.itertuples(index=False), 2):
             has_person = any(val for val in row_data[2:] if val)
             current_date_str = row_data[0]
-            # 수정: Excel에서 날짜 비교를 위해 'M월 D일 (요일)' 형식으로 변환
-            date_obj = datetime.strptime(f"2025 {current_date_str}", '%Y %m월 %d일')
-            formatted_date = f"{date_obj.month}월 {date_obj.day}일 ({'월화수목금토일'[date_obj.weekday()]})"
+            try:
+                date_obj = datetime.strptime(f"2025 {current_date_str}", '%Y %m월 %d일')
+                formatted_date = f"{date_obj.month}월 {date_obj.day}일 ({'월화수목금토일'[date_obj.weekday()]})"
+            except (ValueError, TypeError):
+                formatted_date = current_date_str
+            
             assignment_cells = row_data[2:]
             personnel_in_row = [p for p in assignment_cells if p]
             is_no_person_day = not any(personnel_in_row)
             SMALL_TEAM_THRESHOLD_FORMAT = 15
             is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT)
+            
             for col_idx, value in enumerate(row_data, 1):
                 cell = sheet.cell(row_idx, col_idx, value if value else None)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -480,6 +510,7 @@ if st.session_state.get('show_final_results', False):
                 special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
                 no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
                 default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                
                 if col_idx == 1:
                     cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
                 elif col_idx == 2:
@@ -491,14 +522,17 @@ if st.session_state.get('show_final_results', False):
                         cell.fill = default_yoil_fill
                 elif is_no_person_day and col_idx >= 3:
                     cell.fill = no_person_day_fill
+                
                 slot_name = columns[col_idx-1]
-                # 수정: 변경된 셀 강조 시 'M월 D일 (요일)' 형식 사용
-                if (formatted_date, slot_name, str(value)) in changed_cells_set:
-                    cell.fill = highlight_fill
+                if (row_idx, col_idx) in changed_cells_set:
+                    cell.fill = highlight_fill  # 변경된 셀 색칠
+                
                 if (slot_name.endswith('_당직') or slot_name == '온콜') and value:
                     cell.font = duty_font
                 else:
                     cell.font = default_font
+
+        # 통계 시트 생성
         stats_sheet = wb.create_sheet("Stats")
         stats_columns = stats_df.columns.tolist()
         for col_idx, header in enumerate(stats_columns, 1):
@@ -507,22 +541,30 @@ if st.session_state.get('show_final_results', False):
             cell.font = Font(bold=True, name="맑은 고딕", size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-            if header == '인원': cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
-            elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
-            elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
-            elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-            elif '번방' in header: cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+            if header == '인원':
+                cell.fill = PatternFill(start_color="D0CECE", end_color="D0CECE", fill_type="solid")
+            elif header == '이른방 합계':
+                cell.fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+            elif header == '늦은방 합계':
+                cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
+            elif '당직' in header:
+                cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
+            elif '번방' in header:
+                cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+        
         for row_idx, row in enumerate(stats_df.values, 2):
             for col_idx, value in enumerate(row, 1):
                 cell = stats_sheet.cell(row_idx, col_idx, value)
                 cell.font = Font(name="맑은 고딕", size=9)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        
         output = BytesIO()
         wb.save(output)
         output.seek(0)
         st.session_state.download_file = output
         st.session_state.download_filename = f"{month_str} 방배정_최종확정.xlsx"
+
 if 'download_file' in st.session_state and st.session_state.download_file:
     st.download_button(
         label="📥 최종 확정본 다운로드",

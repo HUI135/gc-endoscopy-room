@@ -146,60 +146,54 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
     return None, None, None, None, None
 
 def create_df_schedule_md(df_schedule):
+    """
+    원본 스케줄 데이터프레임을 기반으로 화면에 표시할 데이터프레임을 생성합니다.
+    - 오전당직(온콜) 인원을 오전/오후 근무자 목록에서 제외하고, 나머지 인원을 앞으로 당겨서 재배치합니다.
+    - 특히, 오후5열은 최종 결과에서 제외됩니다.
+    """
+    
+    # 최종적으로 표시할 컬럼 목록을 정의합니다. (오후5 제외)
     display_cols = ['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4']
 
-    df_schedule_md = pd.DataFrame()
-    for col in display_cols:
-        if col in df_schedule.columns:
-            df_schedule_md[col] = df_schedule[col].fillna('').astype(str).str.strip()
-        else:
-            df_schedule_md[col] = ''
+    # 새로운 데이터프레임을 초기화하고 원본 데이터를 복사합니다.
+    df_schedule_md = pd.DataFrame(columns=display_cols)
+    if not df_schedule.empty:
+        df_schedule_md['날짜'] = df_schedule['날짜']
+        df_schedule_md['요일'] = df_schedule['요일']
+        df_schedule_md['오전당직(온콜)'] = df_schedule['오전당직(온콜)']
 
-    # 오전 당직(온콜) 인원 처리 및 재배치
-    for idx, row in df_schedule_md.iterrows():
-        oncall_person = row['오전당직(온콜)']
-
-        # 1. 오전 근무자 목록 재정렬
-        original_am_cols = [str(i) for i in range(1, 13) if str(i) in df_schedule.columns]
-        am_personnel_list = [
-            str(df_schedule.at[idx, col]).strip()
-            for col in original_am_cols
-            if str(df_schedule.at[idx, col]).strip() and str(df_schedule.at[idx, col]).strip() != oncall_person
-        ]
+    # 각 행을 순회하며 근무자 목록을 재배치합니다.
+    for idx, row in df_schedule.iterrows():
+        # 해당 날짜의 오전당직(온콜) 인원 확인
+        oncall_person = str(row['오전당직(온콜)']).strip() if '오전당직(온콜)' in df_schedule.columns else ''
         
-        # 중복을 제거하고 순서를 유지하며 리스트를 압축합니다.
-        am_personnel_unique = list(dict.fromkeys(am_personnel_list))
-
-        # 만약 오전 인원이 11명보다 적다면, oncall_person을 다시 추가하여 11명을 채웁니다.
-        if len(am_personnel_unique) < 11 and oncall_person:
-            am_personnel_unique.append(oncall_person)
-
-        # '1'부터 '11'까지의 열에 재배치합니다.
+        # 1. 오전 근무자 목록 재정렬 (온콜 인원 제외)
+        am_original_cols = [str(i) for i in range(1, 13)]
+        am_personnel_list = [
+            str(row[col]).strip() for col in am_original_cols
+            if col in df_schedule.columns and str(row[col]).strip() and str(row[col]).strip() != oncall_person
+        ]
+        am_personnel_unique = list(dict.fromkeys(am_personnel_list)) # 중복 제거
+        
+        # '1'부터 '11'까지의 열에 재배치
         am_display_cols = [str(i) for i in range(1, 12)]
         for i, col in enumerate(am_display_cols):
             df_schedule_md.at[idx, col] = am_personnel_unique[i] if i < len(am_personnel_unique) else ''
-            
-        # 2. 오후 근무자 목록 재정렬
-        original_pm_cols = [f'오후{i}' for i in range(1, 6) if f'오후{i}' in df_schedule.columns]
+        
+        # 2. 오후 근무자 목록 재정렬 (온콜 인원 제외)
+        pm_original_cols = [f'오후{i}' for i in range(1, 6)]
         pm_personnel_list = [
-            str(df_schedule.at[idx, col]).strip()
-            for col in original_pm_cols
-            if str(df_schedule.at[idx, col]).strip() and str(df_schedule.at[idx, col]).strip() != oncall_person
+            str(row[col]).strip() for col in pm_original_cols
+            if col in df_schedule.columns and str(row[col]).strip() and str(row[col]).strip() != oncall_person
         ]
-
-        pm_personnel_unique = list(dict.fromkeys(pm_personnel_list))
-
-        # 만약 오후 인원이 4명보다 적다면, oncall_person을 다시 추가하여 4명을 채웁니다.
-        if len(pm_personnel_unique) < 4 and oncall_person:
-            pm_personnel_unique.append(oncall_person)
-
-        # '오후1'부터 '오후4'까지의 열에 재배치합니다.
+        pm_personnel_unique = list(dict.fromkeys(pm_personnel_list)) # 중복 제거
+        
+        # '오후1'부터 '오후4'까지의 열에 재배치
         pm_display_cols = [f'오후{i}' for i in range(1, 5)]
         for i, col in enumerate(pm_display_cols):
             df_schedule_md.at[idx, col] = pm_personnel_unique[i] if i < len(pm_personnel_unique) else ''
             
     return df_schedule_md
-
 
 # 근무 가능 일자 계산
 @st.cache_data
@@ -556,110 +550,91 @@ edited_df_md = st.data_editor(st.session_state["df_schedule_md"], use_container_
 st.write(" ")
 
 if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True):
-    if edited_df_md.empty or st.session_state["df_schedule_md_initial"].empty:
-        st.warning("⚠️ 저장할 데이터 또는 비교 대상 데이터가 비어있습니다. 새로고침 후 다시 시도하거나, 데이터가 있는 시트를 사용해주세요.")
-        st.stop()
-    if edited_df_md.shape != st.session_state["df_schedule_md_initial"].shape:
-        st.warning("⚠️ 편집된 데이터와 원본 데이터의 크기가 일치하지 않아 변경사항을 저장할 수 없습니다. 새로고침 후 다시 시도해주세요.")
+    # 1. 변경된 데이터프레임 확인
+    # 'edited_df_md'는 사용자가 수정한 최종 상태의 데이터프레임입니다.
+    # 'df_schedule_md_initial'은 수정 전의 원본 상태입니다.
+    # 두 데이터프레임을 비교하여 변경사항이 있는지 확인합니다.
+    if edited_df_md.equals(st.session_state["df_schedule_md_initial"]):
+        st.info("ℹ️ 변경사항이 없습니다. 저장할 내용이 없습니다.")
         st.stop()
 
+    # 2. 변경사항 로그 기록 (선택 사항)
     manual_change_log = []
-    if not edited_df_md.equals(st.session_state["df_schedule_md_initial"]):
-        st.info("ℹ️ 수동 변경사항을 감지하고 로그에 기록합니다...")
-        diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
-        for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
-            date_str_raw = edited_df_md.iloc[row_idx, 0]
-            col_name = edited_df_md.columns[col_idx]
-            old_value = st.session_state["df_schedule_md_initial"].iloc[row_idx, col_idx]
-            new_value = edited_df_md.iloc[row_idx, col_idx]
-            original_row = st.session_state["df_schedule_original"][st.session_state["df_schedule_original"]['날짜'] == date_str_raw].iloc[0]
-            weekday = original_row['요일']
-            time_period = '오후' if col_name.startswith('오후') else '오전'
-            date_match = re.search(r'(\d+월 \d+일)', date_str_raw)
-            if date_match:
-                formatted_date_part = date_match.group(1)
-            else:
-                formatted_date_part = date_str_raw
-            formatted_date_str = f"{formatted_date_part} ({weekday.replace('요일', '')}) - {time_period}"
-            manual_change_log.append({
-                '날짜': formatted_date_str,
-                '변경 전 인원': str(old_value),
-                '변경 후 인원': str(new_value),
-            })
-            st.session_state["swapped_assignments"].add((formatted_date_part, time_period, str(new_value).strip()))
-            
+    diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
+    for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
+        date_str_raw = edited_df_md.iloc[row_idx, 0]
+        col_name = edited_df_md.columns[col_idx]
+        old_value = st.session_state["df_schedule_md_initial"].iloc[row_idx, col_idx]
+        new_value = edited_df_md.iloc[row_idx, col_idx]
+        original_row = st.session_state["df_schedule_original"][st.session_state["df_schedule_original"]['날짜'] == date_str_raw].iloc[0]
+        weekday = original_row['요일']
+        time_period = '오후' if col_name.startswith('오후') else '오전'
+        formatted_date_str = f"{date_str_raw} ({weekday.replace('요일', '')}) - {time_period}"
+        manual_change_log.append({
+            '날짜': formatted_date_str,
+            '변경 전 인원': str(old_value),
+            '변경 후 인원': str(new_value),
+        })
+        st.session_state["swapped_assignments"].add((date_str_raw, time_period, str(new_value).strip()))
+    
     st.session_state["final_change_log"] = st.session_state["swapped_assignments_log"] + manual_change_log
-    
-    # 💡 수정: edited_df_md의 변경사항을 df_schedule_md_initial에 반영합니다.
-    st.session_state["df_schedule_md_initial"] = edited_df_md.copy()
-    
-    # 💡 수정: edited_df_md를 기반으로 원본 스케줄 데이터를 재구성합니다.
-    # df_schedule_to_save는 edited_df_md의 모든 내용을 반영한 df_schedule_original의 복사본이 됩니다.
+
+    # 3. df_schedule_to_save 생성 (원본 구조 복원)
+    # edited_df_md는 12열, 오후5열이 없으므로, 원본 df_schedule_original의 구조에 맞게 복원합니다.
     df_schedule_to_save = st.session_state["df_schedule_original"].copy()
-    
-    # 오전 근무자 업데이트
-    am_cols = [str(i) for i in range(1, 12)]
-    oncall_col = '오전당직(온콜)'
     for row_idx, row in edited_df_md.iterrows():
         date_str = row['날짜']
-        original_row_idx_list = df_schedule_to_save[df_schedule_to_save['날짜'] == date_str].index
-        if not original_row_idx_list.empty:
-            original_row_idx = original_row_idx_list[0]
-            
-            # 오전 근무자 목록을 edited_df_md에서 가져와서 df_schedule_to_save에 재배치합니다.
-            am_personnel_list = [row[col] for col in am_cols if row[col]]
-            oncall_person = row[oncall_col]
-            if oncall_person and oncall_person not in am_personnel_list:
-                am_personnel_list.append(oncall_person)
+        original_row_idx = df_schedule_to_save[df_schedule_to_save['날짜'] == date_str].index[0]
+        
+        # 오전당직(온콜) 처리
+        oncall_person = row['오전당직(온콜)']
+        df_schedule_to_save.at[original_row_idx, '오전당직(온콜)'] = oncall_person
 
-            am_personnel_list = list(dict.fromkeys(am_personnel_list))
+        # 오전 일반 근무자 처리 (1~11열 -> 1~12열 재배치)
+        am_personnel = [str(row[str(i)]).strip() for i in range(1, 12) if str(row[str(i)]).strip()]
+        am_personnel_with_oncall = am_personnel + ([oncall_person] if oncall_person and oncall_person not in am_personnel else [])
+        for i in range(1, 13):
+            col = str(i)
+            if i <= len(am_personnel_with_oncall):
+                df_schedule_to_save.at[original_row_idx, col] = am_personnel_with_oncall[i-1]
+            else:
+                df_schedule_to_save.at[original_row_idx, col] = ''
 
-            # 원본 df_schedule_to_save의 오전 컬럼을 모두 비웁니다.
-            for col in [str(i) for i in range(1, 13)]:
-                if col in df_schedule_to_save.columns:
-                    df_schedule_to_save.at[original_row_idx, col] = ''
+        # 오후 근무자 처리 (오후1~오후4열 -> 오후1~오후5열 재배치)
+        pm_personnel = [str(row[f'오후{i}']).strip() for i in range(1, 5) if str(row[f'오후{i}']).strip()]
+        pm_personnel_with_oncall = pm_personnel + ([oncall_person] if oncall_person and oncall_person not in pm_personnel else [])
+        for i in range(1, 6):
+            col = f'오후{i}'
+            if i <= len(pm_personnel_with_oncall):
+                df_schedule_to_save.at[original_row_idx, col] = pm_personnel_with_oncall[i-1]
+            else:
+                df_schedule_to_save.at[original_row_idx, col] = ''
 
-            # edited_df_md의 오전 근무자 목록을 df_schedule_to_save에 재배치합니다.
-            for i, person in enumerate(am_personnel_list):
-                if str(i+1) in df_schedule_to_save.columns:
-                    df_schedule_to_save.at[original_row_idx, str(i+1)] = person
-            
-            # 오후 근무자 업데이트
-            pm_cols = [f'오후{i}' for i in range(1, 5)]
-            pm_personnel_list = [row[col] for col in pm_cols if row[col]]
-            if oncall_person and oncall_person not in pm_personnel_list:
-                pm_personnel_list.append(oncall_person)
-
-            pm_personnel_list = list(dict.fromkeys(pm_personnel_list))
-            
-            # 원본 df_schedule_to_save의 오후 컬럼을 모두 비웁니다.
-            for col in [f'오후{i}' for i in range(1, 6)]:
-                 if col in df_schedule_to_save.columns:
-                    df_schedule_to_save.at[original_row_idx, col] = ''
-
-            # edited_df_md의 오후 근무자 목록을 df_schedule_to_save에 재배치합니다.
-            for i, person in enumerate(pm_personnel_list):
-                 if f'오후{i+1}' in df_schedule_to_save.columns:
-                    df_schedule_to_save.at[original_row_idx, f'오후{i+1}'] = person
-
+    # 4. Google Sheets에 저장
     try:
         st.info("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
         if gc is None:
             raise Exception("Failed to initialize gspread client")
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
+
+        sheet_name = f"{month_str} 스케줄"
         
-        # 💡 수정: 저장할 때 원본 컬럼 순서를 사용합니다.
-        columns_to_save = st.session_state["df_schedule_original"].columns.tolist()
-        df_schedule_to_save = df_schedule_to_save[columns_to_save]
+        # 시트가 없으면 새로 생성합니다.
+        try:
+            worksheet_schedule = sheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"'{sheet_name}' 시트를 찾을 수 없어 새로 생성합니다.")
+            worksheet_schedule = sheet.add_worksheet(title=sheet_name, rows=100, cols=20)
+            
+        columns_to_save = df_schedule_to_save.columns.tolist()
+        schedule_data = [columns_to_save] + df_schedule_to_save.fillna('').values.tolist()
         
-        schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
         if update_sheet_with_retry(worksheet_schedule, schedule_data):
             st.session_state["df_schedule"] = df_schedule_to_save.copy()
             st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_to_save)
             st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-            st.success("🎉 최종 스케줄이 Google Sheets에 성공적으로 저장되었습니다. 방 배정 로직에 반영됩니다.")
+            st.success(f"🎉 최종 스케줄이 '{sheet_name}' 시트에 성공적으로 저장되었습니다.")
             time.sleep(1)
             st.rerun()
     except Exception as e:

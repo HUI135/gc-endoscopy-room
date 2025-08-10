@@ -15,6 +15,8 @@ import menu
 
 st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
 
+st.header("⚙️ 스케줄 관리", divider='rainbow')
+
 import os
 st.session_state.current_page = os.path.basename(__file__)
 
@@ -153,7 +155,32 @@ def load_request_data_page4():
         st.session_state["warning_displayed"] = True
         time.sleep(2)
         st.stop()
-        
+
+# 새로고침 버튼
+if st.button("🔄 새로고침(R)"):
+    try:
+        with st.spinner("데이터를 다시 불러오는 중입니다..."):
+            st.cache_data.clear()  # 캐시 초기화
+            st.cache_resource.clear()  # 리소스 캐시 초기화
+            load_request_data_page4()
+            st.session_state["data_loaded"] = True
+            st.rerun()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 NameError 발생: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
 month_str = "2025년 4월"
@@ -283,33 +310,6 @@ next_month = today.replace(day=1) + relativedelta(months=1)
 next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
-
-st.header("⚙️ 스케줄 관리", divider='rainbow')
-
-# 새로고침 버튼
-if st.button("🔄 새로고침(R)"):
-    try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()  # 캐시 초기화
-            st.cache_resource.clear()  # 리소스 캐시 초기화
-            load_request_data_page4()
-            st.session_state["data_loaded"] = True
-            st.rerun()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 NameError 발생: {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.stop()
 
 st.write(" ")
 st.subheader("📁 스케줄 시트 이동")
