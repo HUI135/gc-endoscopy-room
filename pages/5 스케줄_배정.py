@@ -1192,7 +1192,6 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월") 
         next_month_dt = (month_dt + timedelta(days=32)).replace(day=1)
         next_month_str = next_month_dt.strftime("%Y년 %-m월")
-        st.write(next_month_str)
         next_month_start = month_dt.replace(day=1)
         _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
         next_month_end = month_dt.replace(day=last_day)
