@@ -26,38 +26,64 @@ if not st.session_state.get("login_success", False):
     time.sleep(1)
     st.switch_page("Home.py")  # Home 페이지로 이동
     st.stop()
-name = st.session_state.get("name", None)
 
 # ✅ Gspread 클라이언트
 def get_gspread_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    service_account_info = dict(st.secrets["gspread"])
-    service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
-    credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
-    return gspread.authorize(credentials)
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets"]
+        service_account_info = dict(st.secrets["gspread"])
+        service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
+        credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
+        return gspread.authorize(credentials)
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (클라이언트 초기화): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets 클라이언트 초기화 중 오류 발생: {str(e)}")
+        st.stop()
 
+# ✅ 스프레드시트 ID 추출
 def extract_spreadsheet_id(url):
-    return url.split("/d/")[1].split("/")[0]
+    try:
+        return url.split("/d/")[1].split("/")[0]
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"스프레드시트 ID 추출 중 오류 발생: {str(e)}")
+        st.stop()
 
-url = st.secrets["google_sheet"]["url"]
-gc = get_gspread_client()
-sheet = gc.open_by_url(url)
-worksheet1 = sheet.worksheet("마스터")
-
-# 데이터 로드 함수 (캐싱 적용, 필요 시 무효화)
+# ✅ 데이터 로드 함수 (캐싱 적용)
+@st.cache_data(show_spinner=False)
 def load_master_data_page1(_gc, url):
-    sheet = _gc.open_by_url(url)
-    worksheet_master = sheet.worksheet("마스터")
-    return pd.DataFrame(worksheet_master.get_all_records())
+    try:
+        sheet = _gc.open_by_url(url)
+        worksheet_master = sheet.worksheet("마스터")
+        return pd.DataFrame(worksheet_master.get_all_records())
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (마스터 데이터): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"마스터 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
 
 # ✅ 데이터 새로고침 함수
 def refresh_data():
     try:
+        sheet = gc.open_by_url(url)
+        worksheet1 = sheet.worksheet("마스터")
         data = worksheet1.get_all_records()
-        return pd.DataFrame(data)
+        return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (데이터 새로고침): {str(e)}")
+        st.stop()
     except Exception as e:
-        st.error(f"데이터 로드 중 오류 발생: {e}")
-        return pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"데이터 새로고침 중 오류 발생: {str(e)}")
+        st.stop()
 
 # ✅ 캘린더 이벤트 생성 함수
 def generate_calendar_events(df_user_master, year, month, week_labels):
@@ -104,10 +130,12 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
         if weekday in weekday_map:
             day_name = weekday_map[weekday]
             # 주차 계산: 첫 번째 일요일 기준
-            if day < first_sunday:
+            if first_sunday and day < first_sunday:
                 week_num = 0  # 첫 번째 일요일 이전은 1주차
-            else:
+            elif first_sunday:
                 week_num = (day - first_sunday) // 7 + 1  # 첫 번째 일요일 이후 주차 계산
+            else:
+                week_num = (day - 1) // 7
             if week_num >= len(week_labels):
                 continue
             week = week_labels[week_num]
@@ -122,23 +150,59 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
     return events
 
 # ✅ 데이터 로드 및 세션 상태 초기화
-if "df_master" not in st.session_state:
-    st.session_state["df_master"] = refresh_data()
-df_master = st.session_state["df_master"]
-df_user_master = df_master[df_master["이름"] == name]
+try:
+    url = st.secrets["google_sheet"]["url"]
+    gc = get_gspread_client()
+    name = st.session_state.get("name", None)
+    if name is None:
+        st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
+        st.stop()
+
+    if "df_master" not in st.session_state:
+        st.session_state["df_master"] = refresh_data()
+    df_master = st.session_state["df_master"]
+    df_user_master = df_master[df_master["이름"] == name]
+except NameError as e:
+    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+    st.error(f"초기 설정 중 오류 발생: {str(e)}")
+    st.stop()
+except gspread.exceptions.APIError as e:
+    st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+    st.error(f"Google Sheets API 오류 (초기 설정): {str(e)}")
+    st.stop()
+except Exception as e:
+    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+    st.error(f"초기 설정 중 오류 발생: {str(e)}")
+    st.stop()
 
 # ✅ 이름이 마스터 시트에 없으면 초기 데이터 추가
 if df_user_master.empty:
-    st.info(f"{name} 님의 마스터 데이터가 존재하지 않습니다. 초기 데이터를 추가합니다.")
-    initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
-    initial_df = pd.DataFrame(initial_rows)
-    initial_df["요일"] = pd.Categorical(initial_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-    initial_df = initial_df.sort_values(by=["이름", "주차", "요일"])
-    df_master = pd.concat([df_master, initial_df], ignore_index=True)
-    df_user_master = initial_df
-    worksheet1.clear()
-    worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
-    st.session_state["df_master"] = df_master
+    try:
+        st.info(f"{name} 님의 마스터 데이터가 존재하지 않습니다. 초기 데이터를 추가합니다.")
+        initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
+        initial_df = pd.DataFrame(initial_rows)
+        initial_df["요일"] = pd.Categorical(initial_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+        initial_df = initial_df.sort_values(by=["이름", "주차", "요일"])
+        df_master = pd.concat([df_master, initial_df], ignore_index=True)
+        df_user_master = initial_df
+        sheet = gc.open_by_url(url)
+        worksheet1 = sheet.worksheet("마스터")
+        try:
+            worksheet1.clear()
+            worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (초기 데이터 업데이트): {str(e)}")
+            st.stop()
+        st.session_state["df_master"] = df_master
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (초기 데이터 추가): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"초기 데이터 추가 중 오류 발생: {str(e)}")
+        st.stop()
 
 # ✅ 월 정보
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
@@ -155,12 +219,26 @@ st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
 
 # 새로고침 버튼 (맨 상단)
 if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    st.session_state["df_master"] = load_master_data_page1(gc, url)
-    st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
-    st.success("데이터가 새로고침되었습니다.")
-    time.sleep(1)
-    st.rerun()
+    try:
+        with st.spinner("데이터를 다시 불러오는 중입니다..."):
+            st.cache_data.clear()
+            st.session_state["df_master"] = load_master_data_page1(gc, url)
+            st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+        st.success("데이터가 새로고침되었습니다.")
+        time.sleep(1)
+        st.rerun()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
 
 # ✅ 주차 리스트
 has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
@@ -173,24 +251,40 @@ if has_weekly and not df_user_master.empty:
 
 # ✅ "매주"로 변환 로직
 if not df_user_master.empty and not has_weekly:
-    updated = False
-    pivot_df = df_user_master.pivot(index="요일", columns="주차", values="근무여부")
-    expected_weeks = set([f"{i+1}주" for i in range(len(week_nums))])
-    actual_weeks = set(pivot_df.columns)
-    if actual_weeks == expected_weeks and pivot_df.apply(lambda x: x.nunique() == 1, axis=1).all():
-        df_user_master["주차"] = "매주"
-        df_user_master = df_user_master.drop_duplicates(subset=["이름", "주차", "요일"])
-        updated = True
-    if updated:
-        df_user_master["요일"] = pd.Categorical(df_user_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        df_user_master = df_user_master.sort_values(by=["이름", "주차", "요일"])
-        df_master = df_master[df_master["이름"] != name]
-        df_master = pd.concat([df_master, df_user_master], ignore_index=True)
-        df_master["요일"] = pd.Categorical(df_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        df_master = df_master.sort_values(by=["이름", "주차", "요일"])
-        worksheet1.clear()
-        worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
-        st.session_state["df_master"] = df_master
+    try:
+        updated = False
+        pivot_df = df_user_master.pivot(index="요일", columns="주차", values="근무여부")
+        expected_weeks = set([f"{i+1}주" for i in range(len(week_nums))])
+        actual_weeks = set(pivot_df.columns)
+        if actual_weeks == expected_weeks and pivot_df.apply(lambda x: x.nunique() == 1, axis=1).all():
+            df_user_master["주차"] = "매주"
+            df_user_master = df_user_master.drop_duplicates(subset=["이름", "주차", "요일"])
+            updated = True
+        if updated:
+            df_user_master["요일"] = pd.Categorical(df_user_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            df_user_master = df_user_master.sort_values(by=["이름", "주차", "요일"])
+            df_master = df_master[df_master["이름"] != name]
+            df_master = pd.concat([df_master, df_user_master], ignore_index=True)
+            df_master["요일"] = pd.Categorical(df_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            df_master = df_master.sort_values(by=["이름", "주차", "요일"])
+            sheet = gc.open_by_url(url)
+            worksheet1 = sheet.worksheet("마스터")
+            try:
+                worksheet1.clear()
+                worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (매주 변환): {str(e)}")
+                st.stop()
+            st.session_state["df_master"] = df_master
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (매주 변환): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"매주 변환 중 오류 발생: {str(e)}")
+        st.stop()
 
 next_month = today.replace(day=1) + relativedelta(months=1)
 year, month = next_month.year, next_month.month
@@ -237,24 +331,40 @@ with st.expander("📅 월 단위로 일괄 설정"):
     금값 = col5.selectbox("금", 근무옵션, index=근무옵션.index(default_bulk.get("금", "근무없음")), key="금_bulk")
 
     if st.button("💾 월 단위 저장", key="save_monthly"):
-        rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": {"월": 월값, "화": 화값, "수": 수값, "목": 목값, "금": 금값}[요일]} for 요일 in 요일리스트]
-        updated_df = pd.DataFrame(rows)
-        updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
-        df_master = df_master[df_master["이름"] != name]
-        df_result = pd.concat([df_master, updated_df], ignore_index=True)
-        df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        df_result = df_result.sort_values(by=["이름", "주차", "요일"])
-        worksheet1.clear()
-        worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
-
-        st.session_state["df_master"] = df_result
-        df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
-        st.success("편집하신 내용을 저장하였습니다 ✅")
-        st.cache_data.clear()  # 캐시 무효화
-        st.session_state["df_master"] = load_master_data_page1(gc, url)
-        st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
-        st.rerun()  # 페이지 새로고침
+        try:
+            rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": {"월": 월값, "화": 화값, "수": 수값, "목": 목값, "금": 금값}[요일]} for 요일 in 요일리스트]
+            updated_df = pd.DataFrame(rows)
+            updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
+            df_master = df_master[df_master["이름"] != name]
+            df_result = pd.concat([df_master, updated_df], ignore_index=True)
+            df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            df_result = df_result.sort_values(by=["이름", "주차", "요일"])
+            sheet = gc.open_by_url(url)
+            worksheet1 = sheet.worksheet("마스터")
+            try:
+                worksheet1.clear()
+                worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
+                st.stop()
+            
+            st.session_state["df_master"] = df_result
+            df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
+            st.success("편집하신 내용을 저장하였습니다 ✅")
+            st.cache_data.clear()  # 캐시 무효화
+            st.session_state["df_master"] = load_master_data_page1(gc, url)
+            st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+            st.rerun()  # 페이지 새로고침
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"월 단위 저장 중 오류 발생: {str(e)}")
+            st.stop()
 
 # 📅 주 단위로 설정
 with st.expander("📅 주 단위로 설정"):
@@ -283,20 +393,36 @@ with st.expander("📅 주 단위로 설정"):
         master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금")
 
     if st.button("💾 주 단위 저장", key="save_weekly"):
-        rows = [{"이름": name, "주차": week, "요일": 요일, "근무여부": 근무} for week, days in master_data.items() for 요일, 근무 in days.items()]
-        updated_df = pd.DataFrame(rows)
-        updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
-        df_master = df_master[df_master["이름"] != name]
-        df_result = pd.concat([df_master, updated_df], ignore_index=True)
-        df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        df_result = df_result.sort_values(by=["이름", "주차", "요일"])
-        worksheet1.clear()
-        worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
-
-        st.session_state["df_master"] = df_result
-        df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
-        st.success("편집하신 내용을 저장하였습니다 ✅")
-        st.session_state["df_master"] = load_master_data_page1(gc, url)
-        st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
-        st.rerun()  # 페이지 새로고침
+        try:
+            rows = [{"이름": name, "주차": week, "요일": 요일, "근무여부": 근무} for week, days in master_data.items() for 요일, 근무 in days.items()]
+            updated_df = pd.DataFrame(rows)
+            updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
+            df_master = df_master[df_master["이름"] != name]
+            df_result = pd.concat([df_master, updated_df], ignore_index=True)
+            df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            df_result = df_result.sort_values(by=["이름", "주차", "요일"])
+            sheet = gc.open_by_url(url)
+            worksheet1 = sheet.worksheet("마스터")
+            try:
+                worksheet1.clear()
+                worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
+                st.stop()
+            
+            st.session_state["df_master"] = df_result
+            df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
+            st.success("편집하신 내용을 저장하였습니다 ✅")
+            st.session_state["df_master"] = load_master_data_page1(gc, url)
+            st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
+            st.rerun()  # 페이지 새로고침
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
+            st.stop()
