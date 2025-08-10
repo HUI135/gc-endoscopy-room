@@ -213,7 +213,7 @@ def apply_assignment_swaps(df_assignment, df_requests):
     return df_modified, changed_log
 
 # --- 통계 계산 함수 ---
-def calculate_statistics(result_df: pd.DataFrame) ➡️ pd.DataFrame:
+def calculate_statistics(result_df: pd.DataFrame) -> pd.DataFrame:
     total_stats = {
         'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(),
         'rooms': {str(i): Counter() for i in range(1, 13)}
