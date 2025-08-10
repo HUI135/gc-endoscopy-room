@@ -380,6 +380,12 @@ def create_df_schedule_md(df_schedule):
     df_schedule_md = df_schedule_md.drop(columns=['12', '오후5'], errors='ignore')
     return df_schedule_md
 
+import re
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+import time
+
 def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     df_modified = original_schedule_df.copy()
     applied_count = 0
@@ -427,13 +433,11 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 continue
             target_row_idx = target_row_indices[0]
             
-            # 수정: 시간대에 따라 검색할 컬럼을 명확히 지정
+            # 수정: 오전당직(온콜)을 항상 검색 대상에 포함
             if time_period == '오전':
-                # 오전 요청: 온콜 컬럼만 검색
-                cols_to_search = [oncall_col]
+                cols_to_search = am_cols + [oncall_col]  # 오전 컬럼 + 온콜
             else:
-                # 오후 요청: 오후 컬럼만 검색
-                cols_to_search = pm_cols
+                cols_to_search = pm_cols + [oncall_col]  # 오후 컬럼 + 온콜
             
             is_swapped = False
             for col in cols_to_search:
@@ -447,6 +451,7 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                         '날짜': formatted_date_str,
                         '변경 전 인원': str(old_value),
                         '변경 후 인원': new_assignee,
+                        '변경된 컬럼': col  # 변경된 컬럼 기록
                     })
                     applied_count += 1
                     is_swapped = True
