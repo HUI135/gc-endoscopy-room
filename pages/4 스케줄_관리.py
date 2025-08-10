@@ -142,6 +142,8 @@ if "data_loaded" not in st.session_state:
         if df_map.empty:
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error("매핑 시트에 데이터가 없습니다.")
+            st.session_state["df_map"] = df_map  # 빈 DataFrame 저장
+            st.session_state["data_loaded"] = False
             st.stop()
             
         st.session_state["df_map"] = df_map
@@ -163,6 +165,8 @@ if "data_loaded" not in st.session_state:
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (시트 생성): {str(e)}")
+                st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+                st.session_state["data_loaded"] = False
                 st.stop()
         st.session_state["worksheet2"] = worksheet2
         load_request_data_page4()
@@ -189,6 +193,8 @@ if "data_loaded" not in st.session_state:
             df_master = df_master.sort_values(by=["이름", "주차", "요일"])
             if not update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist()):
                 st.error("마스터 시트 업데이트 실패")
+                st.session_state["df_map"] = df_map
+                st.session_state["data_loaded"] = False
                 st.stop()
             st.session_state["df_master"] = df_master
 
@@ -200,6 +206,8 @@ if "data_loaded" not in st.session_state:
             df_request = df_request.sort_values(by=["이름", "날짜정보"])
             if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
                 st.error("요청사항 시트 업데이트 실패")
+                st.session_state["df_map"] = df_map
+                st.session_state["data_loaded"] = False
                 st.stop()
             st.session_state["df_request"] = df_request
 
@@ -208,10 +216,18 @@ if "data_loaded" not in st.session_state:
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (초기 데이터 로드): {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["df_master"] = pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+        st.session_state["df_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+        st.session_state["data_loaded"] = False
         st.stop()
     except NameError as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"초기 설정 중 오류 발생: {str(e)}")
+        st.error(f"초기 설정 중 NameError 발생: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["df_master"] = pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+        st.session_state["df_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+        st.session_state["data_loaded"] = False
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
@@ -221,7 +237,7 @@ if "data_loaded" not in st.session_state:
         st.session_state["df_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
         st.session_state["data_loaded"] = False
         st.stop()
-        
+
 # 익월 범위 지정
 today = datetime.datetime.strptime('2025-03-31', '%Y-%m-%d').date()
 next_month = today.replace(day=1) + relativedelta(months=1)
