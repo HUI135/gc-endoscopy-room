@@ -30,15 +30,20 @@ REQUEST_SHEET_NAME = f"{MONTH_STR} 방배정 변경요청"
 
 # --- 함수 정의 ---
 def get_gspread_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
     try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets"]
         service_account_info = dict(st.secrets["gspread"])
         service_account_info["private_key"] = service_account_info["private_key"].replace("\\n", "\n")
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
         return gspread.authorize(credentials)
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (클라이언트 초기화): {str(e)}")
+        st.stop()
     except Exception as e:
-        st.error(f"Google Sheets 인증 정보를 불러오는 데 실패했습니다: {e}")
-        return None
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets 인증 정보를 불러오는 데 실패했습니다: {str(e)}")
+        st.stop()
 
 @st.cache_data(ttl=300)
 def load_room_data(month_str):
@@ -61,18 +66,26 @@ def load_room_data(month_str):
         df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (방배정 데이터 로드): {str(e)}")
+        st.stop()
     except gspread.exceptions.WorksheetNotFound:
         st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
         return pd.DataFrame()
     except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
-        return pd.DataFrame()
+        st.error(f"방배정 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
 
 def get_my_room_requests(month_str, employee_id):
-    if not employee_id: return []
+    if not employee_id:
+        return []
     try:
         gc = get_gspread_client()
-        if not gc: return []
+        if not gc:
+            return []
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         try:
             worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
@@ -81,26 +94,42 @@ def get_my_room_requests(month_str, employee_id):
         all_requests = worksheet.get_all_records()
         my_requests = [req for req in all_requests if str(req.get('요청자 사번')) == str(employee_id)]
         return my_requests
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (요청 목록 로드): {str(e)}")
+        st.stop()
     except Exception as e:
-        st.error(f"요청 목록을 불러오는 중 오류 발생: {e}")
-        return []
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"요청 목록을 불러오는 중 오류 발생: {str(e)}")
+        st.stop()
 
 def add_room_request_to_sheet(request_data, month_str):
     try:
         gc = get_gspread_client()
-        if not gc: return False
+        if not gc:
+            return False
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         headers = ['RequestID', '요청일시', '요청자', '요청자 사번', '변경 요청', '변경 요청한 방배정']
         try:
             worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
             current_headers = worksheet.row_values(1)
             if not current_headers or current_headers != headers:
-                worksheet.update('A1:F1', [headers])
-                st.info(f"'{REQUEST_SHEET_NAME}' 시트의 헤더를 올바른 형식으로 업데이트했습니다.")
+                try:
+                    worksheet.update('A1:F1', [headers])
+                    st.info(f"'{REQUEST_SHEET_NAME}' 시트의 헤더를 올바른 형식으로 업데이트했습니다.")
+                except gspread.exceptions.APIError as e:
+                    st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                    st.error(f"Google Sheets API 오류 (헤더 업데이트): {str(e)}")
+                    st.stop()
         except gspread.exceptions.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
-            worksheet.append_row(headers)
-            st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
+            try:
+                worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
+                worksheet.append_row(headers)
+                st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (시트 생성): {str(e)}")
+                st.stop()
         row_to_add = [
             request_data.get('RequestID'),
             request_data.get('요청일시'),
@@ -109,29 +138,50 @@ def add_room_request_to_sheet(request_data, month_str):
             request_data.get('변경 요청'),
             request_data.get('변경 요청한 방배정')
         ]
-        worksheet.append_row(row_to_add)
+        try:
+            worksheet.append_row(row_to_add)
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+            st.stop()
         st.cache_data.clear()
         return True
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+        st.stop()
     except Exception as e:
-        st.error(f"교환 요청 저장 실패: {e}")
-        return False
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"교환 요청 저장 실패: {str(e)}")
+        st.stop()
 
 def delete_room_request_from_sheet(request_id, month_str):
     try:
         gc = get_gspread_client()
-        if not gc: return False
+        if not gc:
+            return False
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(REQUEST_SHEET_NAME)
         cell = worksheet.find(request_id)
         if cell:
-            worksheet.delete_rows(cell.row)
+            try:
+                worksheet.delete_rows(cell.row)
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
+                st.stop()
             st.cache_data.clear()
             return True
         st.error("삭제할 요청을 찾을 수 없습니다.")
         return False
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
+        st.stop()
     except Exception as e:
-        st.error(f"요청 삭제 중 오류 발생: {e}")
-        return False
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"요청 삭제 중 오류 발생: {str(e)}")
+        st.stop()
 
 def get_person_room_assignments(df, person_name=""):
     assignments = []
@@ -184,14 +234,36 @@ def is_person_assigned_at_time(df, person_name, date_obj, column_name):
     return False
 
 # --- 메인 로직 ---
-user_name = st.session_state.get("name", "")
-employee_id = st.session_state.get("employee_id", "")
+try:
+    user_name = st.session_state.get("name", "")
+    employee_id = st.session_state.get("employee_id", "")
+    if not user_name or not employee_id:
+        st.error("⚠️ 사용자 정보가 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
+        st.stop()
+except NameError as e:
+    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+    st.error(f"초기 설정 중 오류 발생: {str(e)}")
+    st.stop()
 
 st.header(f"📅 {user_name} 님의 {MONTH_STR} 방배정 변경 요청", divider='rainbow')
 
 if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    st.rerun()
+    try:
+        with st.spinner("데이터를 다시 불러오는 중입니다..."):
+            st.cache_data.clear()
+            st.rerun()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
 
 df_room = load_room_data(MONTH_STR)
 if df_room.empty:
@@ -251,7 +323,7 @@ else:
             
             selected_colleague_name = st.selectbox(
                 "교환할 상대방 선택",
-                options=compatible_colleague_names,  # Fixed: Changed from compatible_colleagues to compatible_colleague_names
+                options=compatible_colleague_names,
                 index=None,
                 placeholder="먼저 나의 방배정을 선택하세요" if not is_my_assignment_selected else "상대방을 선택하세요",
                 disabled=not is_my_assignment_selected,
