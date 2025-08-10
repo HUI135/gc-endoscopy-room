@@ -358,6 +358,7 @@ else:
                 with st.spinner("요청을 기록하는 중입니다..."):
                     if add_room_request_to_sheet(new_request, MONTH_STR):
                         st.success("교환 요청이 성공적으로 기록되었습니다.")
+                        time.sleep(1.5)
                         st.rerun()
 
     # --- 상대방의 방배정을 나와 바꾸기 ---
@@ -436,7 +437,7 @@ else:
             with st.spinner("요청을 기록하는 중입니다..."):
                 if add_room_request_to_sheet(new_request, MONTH_STR):
                     st.success("요청이 성공적으로 기록되었습니다.")
-                    time.sleep(2)
+                    time.sleep(1.5)
                     st.rerun()
 
     st.divider()
@@ -486,5 +487,5 @@ else:
                     with st.spinner("요청을 삭제하는 중입니다..."):
                         if delete_room_request_from_sheet(req.get('RequestID'), MONTH_STR):
                             st.success("요청이 성공적으로 삭제되었습니다.")
-                            time.sleep(2)  # 2초 대기
+                            time.sleep(1.5)
                             st.rerun()

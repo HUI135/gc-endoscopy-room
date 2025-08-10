@@ -352,7 +352,8 @@ with st.expander("📅 월 단위로 일괄 설정"):
             
             st.session_state["df_master"] = df_result
             df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
-            st.success("편집하신 내용을 저장하였습니다 ✅")
+            st.success("편집하신 내용을 저장하였습니다.")
+            time.sleep(1.5)
             st.cache_data.clear()  # 캐시 무효화
             st.session_state["df_master"] = load_master_data_page1(gc, url)
             st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
@@ -414,7 +415,8 @@ with st.expander("📅 주 단위로 설정"):
             
             st.session_state["df_master"] = df_result
             df_user_master = df_result[df_result["이름"] == name]  # df_user_master 즉시 업데이트
-            st.success("편집하신 내용을 저장하였습니다 ✅")
+            st.success("편집하신 내용을 저장하였습니다.")
+            time.sleep(1.5)
             st.session_state["df_master"] = load_master_data_page1(gc, url)
             st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
             st.rerun()  # 페이지 새로고침

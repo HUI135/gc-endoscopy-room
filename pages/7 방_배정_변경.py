@@ -335,7 +335,8 @@ with col2:
         st.session_state.df_final_assignment = st.session_state.df_before_apply.copy()
         st.session_state.changed_cells_log = []
         st.session_state.has_changes_to_revert = False
-        st.success("✅ 변경사항이 취소되었습니다.")
+        st.info("변경사항이 취소되고 원본 스케줄로 돌아갑니다.")
+        time.sleep(1.5)
         st.rerun()
 edited_df = st.data_editor(
     st.session_state.df_final_assignment,

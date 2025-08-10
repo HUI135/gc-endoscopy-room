@@ -336,8 +336,8 @@ def add_request_callback():
                 st.error(f"요청 추가 중 오류 발생: {str(e)}")
                 st.stop()
         
-        st.success("요청사항이 추가되었습니다!", icon="📅")
-        time.sleep(1)
+        st.success("요청이 성공적으로 기록되었습니다.")
+        time.sleep(1.5)
         st.rerun()
 
 # 요청사항 삭제 콜백 함수
@@ -397,8 +397,8 @@ def delete_requests_callback():
                 st.error(f"요청 삭제 중 오류 발생: {str(e)}")
                 st.stop()
         
-        st.success("요청사항이 삭제되었습니다!", icon="🗑️")
-        time.sleep(1)
+        st.success("요청이 성공적으로 삭제되었습니다.")
+        time.sleep(1.5)
         st.rerun()
 
 # --- UI 렌더링 시작 ---

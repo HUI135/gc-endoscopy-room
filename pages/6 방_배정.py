@@ -399,8 +399,8 @@ def save_to_gsheet(name, categories, selected_save_dates, month_str, worksheet):
                 st.warning("⚠️ Google Sheets 업데이트에 실패했습니다. 잠시 후 재시도 해주세요.")
                 return None
 
-            st.success("요청사항이 추가되었습니다!", icon="📅")
-            time.sleep(1)
+            st.success("요청이 성공적으로 기록되었습니다.")
+            time.sleep(1.5)
             return df_room_request_temp
 
     except gspread.exceptions.APIError as e:
@@ -525,6 +525,7 @@ with col2:
         st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
         st.session_state["swapped_assignments_log"] = []
         st.info("변경사항이 취소되고 원본 스케줄로 돌아갑니다.")
+        time.sleep(1.5)
         st.rerun()
 
 edited_df_md = st.data_editor(st.session_state["df_schedule_md"], use_container_width=True, key="schedule_editor", disabled=['날짜', '요일'])
@@ -620,7 +621,7 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
             st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_to_save)
             st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
             st.success(f"🎉 최종 스케줄이 '{sheet_name}' 시트에 성공적으로 저장되었습니다.")
-            time.sleep(1)
+            time.sleep(1.5)
             st.rerun()
     except Exception as e:
         st.error(f"Google Sheets 저장 중 오류 발생: {type(e).__name__} - {e}")
@@ -764,7 +765,8 @@ if add_button_clicked:
         if df_room_request is not None:
             st.session_state["df_room_request"] = df_room_request
             st.cache_data.clear()
-            st.success("방 배정 요청 저장 완료!")
+            st.success("요청사항이 기록되었습니다.")
+            time.sleep(1.5)
             st.rerun()
 
 st.write(" ")
@@ -801,7 +803,8 @@ if not st.session_state["df_room_request"].empty:
             st.session_state["df_room_request"] = df_room_request
             if update_sheet_with_retry(st.session_state["worksheet_room_request"], [df_room_request.columns.tolist()] + df_room_request.values.tolist()):
                 st.cache_data.clear()
-                st.success("선택한 방 배정 요청 삭제 완료!")
+                st.success("요청사항이 삭제되었습니다.")
+                time.sleep(1.5)
                 st.rerun()
 else:
     st.info("📍 방 배정 요청이 없습니다.")

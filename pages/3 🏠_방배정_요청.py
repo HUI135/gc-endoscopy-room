@@ -528,8 +528,8 @@ if submit_add:
                     
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
-                    st.success("요청사항이 추가되었습니다!", icon="📅")
-                    time.sleep(1)
+                    st.success("요청이 성공적으로 기록되었습니다.")
+                    time.sleep(1.5)
                     st.rerun()
                 else:
                     st.info("ℹ️ 이미 존재하는 요청사항입니다.")
@@ -587,8 +587,8 @@ if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
                     
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
-                    st.success("요청사항이 삭제되었습니다!", icon="🗑️")
-                    time.sleep(1)
+                    st.success("요청이 성공적으로 삭제되었습니다.")
+                    time.sleep(1.5)
                     st.rerun()
                 else:
                     st.info("ℹ️ 삭제할 항목을 찾을 수 없습니다.")

@@ -383,8 +383,8 @@ with st.form("fixed_form_namelist"):
                     st.session_state["df_request"] = df_request
                     st.cache_data.clear()
 
-                    st.success(f"{new_employee_name}님이 추가되었습니다!")
-                    time.sleep(2)
+                    st.success(f"{new_employee_name}님이 추가되었습니다.")
+                    time.sleep(1.5)
                     st.rerun()
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -435,8 +435,8 @@ with st.form("fixed_form_namelist"):
                 st.session_state["df_request"] = df_request
                 st.cache_data.clear()
 
-                st.success(f"{selected_employee_name}님이 삭제되었습니다!")
-                time.sleep(2)
+                st.success(f"{selected_employee_name}님이 삭제되었습니다.")
+                time.sleep(1.5)
                 st.rerun()
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -485,8 +485,8 @@ if st.button("💾 저장", key="save"):
             st.session_state["df_master"] = df_result
             st.session_state["worksheet1"] = worksheet1
             st.cache_data.clear()
-            st.success("✅ 수정사항이 저장되었습니다!")
-            time.sleep(2)
+            st.success("수정사항이 저장되었습니다.")
+            time.sleep(1.5)
             st.rerun()
         else:
             st.error("마스터 시트 저장 실패")
@@ -658,8 +658,8 @@ if st.button("📅 추가"):
                         del st.session_state["delete_employee_select"]
                     if "delete_request_select" in st.session_state:
                         del st.session_state["delete_request_select"]
-                    st.success("✅ 요청사항이 저장되었습니다!")
-                    time.sleep(1)
+                    st.success("요청사항이 저장되었습니다.")
+                    time.sleep(1.5)
                     st.rerun()
                 else:
                     st.warning("요청사항 저장 실패. 새로고침 후 다시 시도하세요.")
@@ -725,8 +725,8 @@ if st.button("📅 삭제"):
                     st.session_state["df_request"] = df_request
                     st.session_state["worksheet2"] = worksheet2
                     st.cache_data.clear()
-                    st.success("선택한 요청사항이 삭제되었습니다!")
-                    time.sleep(1)
+                    st.success("요청사항이 삭제되었습니다.")
+                    time.sleep(1.5)
                     st.rerun()
                 else:
                     st.warning("요청사항 삭제 실패. 새로고침 후 다시 시도하세요.")
