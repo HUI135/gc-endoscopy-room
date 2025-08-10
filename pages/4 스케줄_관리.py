@@ -78,6 +78,22 @@ def load_request_data_page4():
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
         
+        # 매핑 시트 로드
+        mapping = sheet.worksheet("매핑")
+        mapping_data = mapping.get_all_records()
+        st.write(f"DEBUG: mapping_data = {mapping_data}")  # 디버깅 로그
+        df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
+        st.write(f"DEBUG: df_map shape = {df_map.shape}, is_empty = {df_map.empty}")  # 디버깅 로그
+        
+        # 매핑 시트가 비어 있는 경우 경고 표시 및 중단
+        if df_map.empty:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error("매핑 시트에 데이터가 없습니다.")
+            st.stop()
+            
+        st.session_state["df_map"] = df_map
+        st.session_state["mapping"] = mapping
+        
         # 요청사항 시트 로드
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
         request_data = worksheet2.get_all_records()
@@ -91,13 +107,6 @@ def load_request_data_page4():
         df_master = pd.DataFrame(master_data) if master_data else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
         st.session_state["df_master"] = df_master
         st.session_state["worksheet1"] = worksheet1
-        
-        # 매핑 시트 로드
-        mapping = sheet.worksheet("매핑")
-        mapping_data = mapping.get_all_records()
-        df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
-        st.session_state["df_map"] = df_map
-        st.session_state["mapping"] = mapping
         
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -125,11 +134,14 @@ if "data_loaded" not in st.session_state:
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
         mapping_data = mapping.get_all_records()
+        st.write(f"DEBUG: Initial mapping_data = {mapping_data}")  # 디버깅 로그
         df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
+        st.write(f"DEBUG: Initial df_map shape = {df_map.shape}, is_empty = {df_map.empty}")  # 디버깅 로그
         
         # 매핑 시트가 비어 있는 경우 경고 표시 및 중단
         if df_map.empty:
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error("매핑 시트에 데이터가 없습니다.")
             st.stop()
             
         st.session_state["df_map"] = df_map
@@ -209,37 +221,7 @@ if "data_loaded" not in st.session_state:
         st.session_state["df_request"] = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
         st.session_state["data_loaded"] = False
         st.stop()
-
-# 세션 상태에서 데이터 가져오기
-mapping = st.session_state.get("mapping")
-df_map = st.session_state.get("df_map", pd.DataFrame(columns=["이름", "사번"]))
-worksheet1 = st.session_state.get("worksheet1")
-df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))
-worksheet2 = st.session_state.get("worksheet2")
-df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
-names_in_master = df_master["이름"].unique() if not df_master.empty else []
-
-st.header("⚙️ 스케줄 관리", divider='rainbow')
-
-# 새로고침 버튼
-if st.button("🔄 새로고침(R)"):
-    try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            load_request_data_page4()
-            st.rerun()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
-
+        
 # 익월 범위 지정
 today = datetime.datetime.strptime('2025-03-31', '%Y-%m-%d').date()
 next_month = today.replace(day=1) + relativedelta(months=1)
