@@ -150,7 +150,6 @@ def load_request_data_page4():
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"데이터를 불러오는 데 실패했습니다: {str(e)}")
         st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
         st.session_state["warning_displayed"] = True
         time.sleep(2)
