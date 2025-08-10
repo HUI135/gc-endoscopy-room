@@ -339,7 +339,7 @@ with st.form("fixed_form_namelist"):
                 st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
                 st.error(f"명단 추가 중 오류 발생: {str(e)}")
                 st.stop()
-                    st.rerun()
+                st.rerun()
 
     with col_delete:
         st.markdown("**🔴 명단 삭제**")
