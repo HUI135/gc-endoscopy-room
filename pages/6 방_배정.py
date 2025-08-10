@@ -562,6 +562,7 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
     if edited_df_md.shape != st.session_state["df_schedule_md_initial"].shape:
         st.warning("⚠️ 편집된 데이터와 원본 데이터의 크기가 일치하지 않아 변경사항을 저장할 수 없습니다. 새로고침 후 다시 시도해주세요.")
         st.stop()
+
     manual_change_log = []
     if not edited_df_md.equals(st.session_state["df_schedule_md_initial"]):
         st.info("ℹ️ 수동 변경사항을 감지하고 로그에 기록합니다...")
@@ -586,16 +587,61 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
                 '변경 후 인원': str(new_value),
             })
             st.session_state["swapped_assignments"].add((formatted_date_part, time_period, str(new_value).strip()))
+            
     st.session_state["final_change_log"] = st.session_state["swapped_assignments_log"] + manual_change_log
-    df_schedule_to_save = st.session_state["df_schedule"].copy()
+    
+    # 💡 수정: edited_df_md의 변경사항을 df_schedule_md_initial에 반영합니다.
+    st.session_state["df_schedule_md_initial"] = edited_df_md.copy()
+    
+    # 💡 수정: edited_df_md를 기반으로 원본 스케줄 데이터를 재구성합니다.
+    # df_schedule_to_save는 edited_df_md의 모든 내용을 반영한 df_schedule_original의 복사본이 됩니다.
+    df_schedule_to_save = st.session_state["df_schedule_original"].copy()
+    
+    # 오전 근무자 업데이트
+    am_cols = [str(i) for i in range(1, 12)]
+    oncall_col = '오전당직(온콜)'
     for row_idx, row in edited_df_md.iterrows():
         date_str = row['날짜']
         original_row_idx_list = df_schedule_to_save[df_schedule_to_save['날짜'] == date_str].index
         if not original_row_idx_list.empty:
             original_row_idx = original_row_idx_list[0]
-            for col in edited_df_md.columns:
+            
+            # 오전 근무자 목록을 edited_df_md에서 가져와서 df_schedule_to_save에 재배치합니다.
+            am_personnel_list = [row[col] for col in am_cols if row[col]]
+            oncall_person = row[oncall_col]
+            if oncall_person and oncall_person not in am_personnel_list:
+                am_personnel_list.append(oncall_person)
+
+            am_personnel_list = list(dict.fromkeys(am_personnel_list))
+
+            # 원본 df_schedule_to_save의 오전 컬럼을 모두 비웁니다.
+            for col in [str(i) for i in range(1, 13)]:
                 if col in df_schedule_to_save.columns:
-                    df_schedule_to_save.at[original_row_idx, col] = row[col]
+                    df_schedule_to_save.at[original_row_idx, col] = ''
+
+            # edited_df_md의 오전 근무자 목록을 df_schedule_to_save에 재배치합니다.
+            for i, person in enumerate(am_personnel_list):
+                if str(i+1) in df_schedule_to_save.columns:
+                    df_schedule_to_save.at[original_row_idx, str(i+1)] = person
+            
+            # 오후 근무자 업데이트
+            pm_cols = [f'오후{i}' for i in range(1, 5)]
+            pm_personnel_list = [row[col] for col in pm_cols if row[col]]
+            if oncall_person and oncall_person not in pm_personnel_list:
+                pm_personnel_list.append(oncall_person)
+
+            pm_personnel_list = list(dict.fromkeys(pm_personnel_list))
+            
+            # 원본 df_schedule_to_save의 오후 컬럼을 모두 비웁니다.
+            for col in [f'오후{i}' for i in range(1, 6)]:
+                 if col in df_schedule_to_save.columns:
+                    df_schedule_to_save.at[original_row_idx, col] = ''
+
+            # edited_df_md의 오후 근무자 목록을 df_schedule_to_save에 재배치합니다.
+            for i, person in enumerate(pm_personnel_list):
+                 if f'오후{i+1}' in df_schedule_to_save.columns:
+                    df_schedule_to_save.at[original_row_idx, f'오후{i+1}'] = person
+
     try:
         st.info("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
@@ -603,8 +649,11 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
             raise Exception("Failed to initialize gspread client")
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
+        
+        # 💡 수정: 저장할 때 원본 컬럼 순서를 사용합니다.
         columns_to_save = st.session_state["df_schedule_original"].columns.tolist()
         df_schedule_to_save = df_schedule_to_save[columns_to_save]
+        
         schedule_data = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.fillna('').values.tolist()
         if update_sheet_with_retry(worksheet_schedule, schedule_data):
             st.session_state["df_schedule"] = df_schedule_to_save.copy()
@@ -830,7 +879,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     # 슬롯 분류
     morning_slots = [s for s in slots if s.startswith(('8:30', '9:00', '9:30', '10:00')) and '_당직' not in s]
     afternoon_slots = [s for s in slots if s.startswith('13:30')]
-    afternoon_duty_slot = '13:30(2)_당직'  # 오후당직 슬롯
+    afternoon_duty_slot = [s for s in slots if s.startswith('13:30') and s.endswith('_당직')]
 
     # 1. 배정 요청 먼저 처리 (중복 배정 방지, 균등 배정 고려)
     for slot, person in request_assignments.items():
