@@ -392,8 +392,8 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     swapped_assignments = set()
     
     # 오전과 오후 컬럼 분리, 오전당직(온콜)은 별도로 처리
-    am_cols = [str(i) for i in range(1, 12)]  # 오전 일반 컬럼
-    pm_cols = [f'오후{i}' for i in range(1, 5)]  # 오후 일반 컬럼
+    am_cols = [str(i) for i in range(1, 13)]  # 오전 일반 컬럼
+    pm_cols = [f'오후{i}' for i in range(1, 6)]  # 오후 일반 컬럼
     oncall_col = '오전당직(온콜)'  # 온콜 컬럼 별도 지정
     
     batch_change_log = []
