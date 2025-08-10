@@ -81,14 +81,15 @@ def load_request_data_page4():
         # 매핑 시트 로드
         mapping = sheet.worksheet("매핑")
         mapping_data = mapping.get_all_records()
-        st.write(f"DEBUG: mapping_data = {mapping_data}")  # 디버깅 로그
+        st.write(f"DEBUG: load_request_data_page4 mapping_data = {mapping_data}")  # 디버깅 로그
         df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
-        st.write(f"DEBUG: df_map shape = {df_map.shape}, is_empty = {df_map.empty}")  # 디버깅 로그
+        st.write(f"DEBUG: load_request_data_page4 df_map shape = {df_map.shape}, is_empty = {df_map.empty}")  # 디버깅 로그
         
         # 매핑 시트가 비어 있는 경우 경고 표시 및 중단
         if df_map.empty:
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error("매핑 시트에 데이터가 없습니다.")
+            st.session_state["df_map"] = df_map
             st.stop()
             
         st.session_state["df_map"] = df_map
@@ -111,14 +112,22 @@ def load_request_data_page4():
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (데이터 로드): {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
         st.stop()
     except gspread.exceptions.WorksheetNotFound:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error("요청된 시트를 찾을 수 없습니다.")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"데이터 로드 중 NameError 발생: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터를 불러오는 데 실패했습니다: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
         st.stop()
         
 # 초기 데이터 로드 및 세션 상태 설정
