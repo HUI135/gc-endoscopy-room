@@ -385,8 +385,9 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     applied_count = 0
     swapped_assignments = set()
     
-    am_cols = [str(i) for i in range(1, 13)]
-    pm_cols = [f'오후{i}' for i in range(1, 6)] + ['오전당직(온콜)']  # 오전당직(온콜)을 오후 컬럼에 추가
+    am_cols = [str(i) for i in range(1, 13)]  # 오전 컬럼: '1'~'12'
+    pm_cols = [f'오후{i}' for i in range(1, 6)]  # 오후 컬럼: '오후1'~'오후5'
+    oncall_col = '오전당직(온콜)'  # 온콜 컬럼
     
     batch_change_log = []
     
@@ -425,29 +426,51 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 continue
             target_row_idx = target_row_indices[0]
             
-            cols_to_search = am_cols if time_period == '오전' else pm_cols
-            
             is_swapped = False
-            for col in cols_to_search:
-                if str(df_modified.at[target_row_idx, col]).strip() == requester_name:
-                    old_value = df_modified.at[target_row_idx, col]
-                    df_modified.at[target_row_idx, col] = new_assignee
-                    weekday = df_modified.at[target_row_idx, '요일'].replace('요일', '')
-                    formatted_date_str = f"{formatted_date_in_df} ({weekday}) - {time_period}"
-                    
-                    batch_change_log.append({
-                        '날짜': formatted_date_str,
-                        '변경 전 인원': str(old_value),
-                        '변경 후 인원': new_assignee,
-                    })
-                    applied_count += 1
-                    is_swapped = True
-                    swapped_assignments.add((formatted_date_in_df, time_period, new_assignee))
-                    break
-                                
-            if not is_swapped:
-                st.error(f"❌ 적용 실패: '{formatted_date_in_df}'의 '{time_period}' 스케줄에서 '{requester_name}'를 찾을 수 없습니다.")
+            weekday = df_modified.at[target_row_idx, '요일'].replace('요일', '')
+            formatted_date_str = f"{formatted_date_in_df} ({weekday}) - {time_period}"
+            
+            # 1. 오전당직(온콜) 확인 (오전/오후 요청 모두에서 처리)
+            if str(df_modified.at[target_row_idx, oncall_col]).strip() == requester_name:
+                old_value = df_modified.at[target_row_idx, oncall_col]
+                df_modified.at[target_row_idx, oncall_col] = new_assignee
+                batch_change_log.append({
+                    '날짜': formatted_date_str,
+                    '변경 전 인원': str(old_value),
+                    '변경 후 인원': new_assignee,
+                    '컬럼': oncall_col
+                })
+                applied_count += 1
+                is_swapped = True
+                swapped_assignments.add((formatted_date_in_df, time_period, new_assignee, oncall_col))
+            
+            # 2. 오전 요청: 오전당직(온콜)만 처리하므로 추가 검색 없음
+            if time_period == '오전' and not is_swapped:
+                st.error(f"❌ 적용 실패: '{formatted_date_in_df}'의 '{time_period}' 스케줄에서 '{requester_name}'를 찾을 수 없습니다 (오전당직(온콜) 확인).")
                 time.sleep(1)
+                continue
+            
+            # 3. 오후 요청: 오전당직(온콜)에 없으면 pm_cols 검색
+            if time_period == '오후' and not is_swapped:
+                cols_to_search = pm_cols
+                for col in cols_to_search:
+                    if str(df_modified.at[target_row_idx, col]).strip() == requester_name:
+                        old_value = df_modified.at[target_row_idx, col]
+                        df_modified.at[target_row_idx, col] = new_assignee
+                        batch_change_log.append({
+                            '날짜': formatted_date_str,
+                            '변경 전 인원': str(old_value),
+                            '변경 후 인원': new_assignee,
+                            '컬럼': col
+                        })
+                        applied_count += 1
+                        is_swapped = True
+                        swapped_assignments.add((formatted_date_in_df, time_period, new_assignee, col))
+                        break  # 오후 컬럼은 하나만 교체
+                
+                if not is_swapped:
+                    st.error(f"❌ 적용 실패: '{formatted_date_in_df}'의 '{time_period}' 스케줄에서 '{requester_name}'를 찾을 수 없습니다.")
+                    time.sleep(1)
         
         except Exception as e:
             st.error(f"요청 처리 중 오류 발생: {str(e)}")
@@ -464,7 +487,7 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
         
     st.session_state["swapped_assignments"] = swapped_assignments
     return df_modified
-    
+
 def format_sheet_date_for_display(date_string):
     """Google Sheets에 저장된 'YYYY-MM-DD (오전)' 형식을 'M월 D일 (요일) - 오전'으로 변환"""
     match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', date_string)
