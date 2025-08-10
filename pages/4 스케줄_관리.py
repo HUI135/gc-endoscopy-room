@@ -82,6 +82,10 @@ def load_request_data_page4():
         st.session_state["df_map"] = df_map
         st.session_state["mapping"] = mapping
         
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"오류: {str(e)}")
+        st.stop()
     except Exception as e:
         st.error(f"데이터를 불러오는 데 실패했습니다: {e}")
         
