@@ -75,25 +75,49 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
 
 def load_request_data_page4():
     try:
-        gc = get_gspread_client()
+        gc = get_gspread_client(cache_buster=str(uuid.uuid4()))  # 캐시 갱신
         sheet = gc.open_by_url(url)
         
         # 매핑 시트 로드
         mapping = sheet.worksheet("매핑")
-        mapping_data = mapping.get_all_records()
-        st.write(f"DEBUG: load_request_data_page4 mapping_data = {mapping_data}")  # 디버깅 로그
-        df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
-        st.write(f"DEBUG: load_request_data_page4 df_map shape = {df_map.shape}, is_empty = {df_map.empty}")  # 디버깅 로그
+        st.session_state["mapping"] = mapping
+        mapping_values = mapping.get_all_values()  # 원시 데이터 가져오기
+        st.write(f"DEBUG: load_request_data_page4 mapping_values = {mapping_values}")  # 디버깅 로그
+        if not mapping_values:
+            st.write("DEBUG: 매핑 시트가 완전히 비어 있습니다.")
+            df_map = pd.DataFrame(columns=["이름", "사번"])
+        elif len(mapping_values) == 1:
+            st.write("DEBUG: 매핑 시트에 헤더만 존재합니다.")
+            df_map = pd.DataFrame(columns=["이름", "사번"])
+        else:
+            # 첫 번째 행을 헤더로 사용
+            headers = mapping_values[0]
+            data = mapping_values[1:]
+            st.write(f"DEBUG: Headers = {headers}, Data rows = {len(data)}")
+            if not data or all(not row for row in data):
+                st.write("DEBUG: 매핑 시트에 데이터 행이 없습니다.")
+                df_map = pd.DataFrame(columns=["이름", "사번"])
+            else:
+                df_map = pd.DataFrame(data, columns=headers)
+                # 필요한 열만 유지
+                if "이름" in df_map.columns and "사번" in df_map.columns:
+                    df_map = df_map[["이름", "사번"]]
+                else:
+                    st.write("DEBUG: 매핑 시트에 '이름' 또는 '사번' 열이 없습니다.")
+                    df_map = pd.DataFrame(columns=["이름", "사번"])
         
-        # 매핑 시트가 비어 있는 경우 경고 표시 및 중단
+        st.write(f"DEBUG: load_request_data_page4 df_map shape = {df_map.shape}, is_empty = {df_map.empty}")
+        
+        # 매핑 시트가 비어 있는 경우 경고 표시
         if df_map.empty:
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error("매핑 시트에 데이터가 없습니다.")
             st.session_state["df_map"] = df_map
+            st.session_state["warning_displayed"] = True  # 경고 표시 상태 저장
+            time.sleep(2)  # 메시지 표시를 위해 대기
             st.stop()
             
         st.session_state["df_map"] = df_map
-        st.session_state["mapping"] = mapping
         
         # 요청사항 시트 로드
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
@@ -113,21 +137,29 @@ def load_request_data_page4():
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (데이터 로드): {str(e)}")
         st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["warning_displayed"] = True
+        time.sleep(2)
         st.stop()
     except gspread.exceptions.WorksheetNotFound:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error("요청된 시트를 찾을 수 없습니다.")
         st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["warning_displayed"] = True
+        time.sleep(2)
         st.stop()
     except NameError as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터 로드 중 NameError 발생: {str(e)}")
         st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["warning_displayed"] = True
+        time.sleep(2)
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터를 불러오는 데 실패했습니다: {str(e)}")
         st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["warning_displayed"] = True
+        time.sleep(2)
         st.stop()
         
 # 초기 데이터 로드 및 세션 상태 설정
@@ -143,9 +175,7 @@ if "data_loaded" not in st.session_state:
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
         mapping_data = mapping.get_all_records()
-        st.write(f"DEBUG: Initial mapping_data = {mapping_data}")  # 디버깅 로그
         df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
-        st.write(f"DEBUG: Initial df_map shape = {df_map.shape}, is_empty = {df_map.empty}")  # 디버깅 로그
         
         # 매핑 시트가 비어 있는 경우 경고 표시 및 중단
         if df_map.empty:
