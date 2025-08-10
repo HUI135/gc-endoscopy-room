@@ -242,33 +242,6 @@ def get_user_available_dates(name, df_schedule, month_start, month_end):
         time.sleep(1)
     return sorted_dates
 
-# 요청 저장 (df_room_request용)
-def save_to_gsheet(name, categories, dates, month_str, worksheet):
-    if worksheet is None:
-        st.error("방 배정 요청 시트가 초기화되지 않았습니다. 새로고침 후 다시 시도해주세요.")
-        return None
-    try:
-        gc = get_gspread_client()
-        if gc is None:
-            raise Exception("Failed to initialize gspread client")
-        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        worksheet = sheet.worksheet(f"{month_str} 방배정 요청")
-        df = pd.DataFrame(worksheet.get_all_records())
-        if "우선순위" in df.columns:
-            df = df.drop(columns=["우선순위"])
-        
-        new_rows = []
-        for date in dates:
-            for cat in categories:
-                new_rows.append({"이름": name, "분류": cat, "날짜정보": date})
-        
-        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-        update_sheet_with_retry(worksheet, [df.columns.tolist()] + df.values.tolist())
-        return df
-    except Exception as e:
-        st.error(f"방 배정 요청 저장 중 오류: {type(e).__name__} - {e}")
-        return None
-
 # df_schedule_md 생성 함수
 def create_df_schedule_md(df_schedule):
     display_cols = ['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4']
