@@ -247,6 +247,14 @@ if "data_loaded" not in st.session_state:
         st.session_state["data_loaded"] = False
         st.stop()
 
+# 세션 상태에서 데이터 가져오기
+df_map = st.session_state.get("df_map", pd.DataFrame(columns=["이름", "사번"]))
+mapping = st.session_state.get("mapping")
+df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))
+worksheet1 = st.session_state.get("worksheet1")
+df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
+names_in_master = df_master["이름"].unique() if not df_master.empty else []
+
 # 익월 범위 지정
 today = datetime.datetime.strptime('2025-03-31', '%Y-%m-%d').date()
 next_month = today.replace(day=1) + relativedelta(months=1)
@@ -254,8 +262,36 @@ next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_end = next_month.replace(day=last_day)
 
+st.header("⚙️ 스케줄 관리", divider='rainbow')
+
+# 새로고침 버튼
+if st.button("🔄 새로고침(R)"):
+    try:
+        with st.spinner("데이터를 다시 불러오는 중입니다..."):
+            st.cache_data.clear()  # 캐시 초기화
+            st.cache_resource.clear()  # 리소스 캐시 초기화
+            load_request_data_page4()
+            st.session_state["data_loaded"] = True
+            st.rerun()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 NameError 발생: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
+        st.stop()
+
 st.write(" ")
 st.subheader("📁 스케줄 시트 이동")
+
 st.markdown("https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?usp=sharing")
 
 # 명단 관리 탭
