@@ -38,9 +38,17 @@ def get_gspread_client():
 # 데이터 로드 함수 (캐싱 적용, 필요 시 무효화)
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_master_data(_gc, url):
-    sheet = _gc.open_by_url(url)
-    worksheet_master = sheet.worksheet("마스터")
-    return pd.DataFrame(worksheet_master.get_all_records())
+    try:
+        sheet = _gc.open_by_url(url)
+        worksheet_master = sheet.worksheet("마스터")
+        return pd.DataFrame(worksheet_master.get_all_records())
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets API 오류: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"마스터 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_request_data_page2(_gc, url, month_str):
@@ -60,18 +68,29 @@ def load_request_data_page2(_gc, url, month_str):
     except Exception as e:
         st.error(f"요청사항 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
-        
-# 기본 설정
-gc = get_gspread_client()
-url = st.secrets["google_sheet"]["url"]
-name = st.session_state["name"]
-today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
 
-next_month = today.replace(day=1) + relativedelta(months=1)
-month_str = next_month.strftime("%Y년 %-m월")
-next_month_start = next_month
-_, last_day = calendar.monthrange(next_month.year, next_month.month)
-next_month_end = next_month.replace(day=last_day)
+# 기본 설정
+try:
+    gc = get_gspread_client()
+    url = st.secrets["google_sheet"]["url"]
+    if "name" not in st.session_state:
+        st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
+        st.stop()
+    name = st.session_state["name"]
+    today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
+
+    next_month = today.replace(day=1) + relativedelta(months=1)
+    month_str = next_month.strftime("%Y년 %-m월")
+    next_month_start = next_month
+    _, last_day = calendar.monthrange(next_month.year, next_month.month)
+    next_month_end = next_month.replace(day=last_day)
+except NameError as e:
+    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+    st.error(f"초기 설정 중 오류 발생: {str(e)}")
+    st.stop()
+except Exception as e:
+    st.error(f"초기 설정 중 오류 발생: {str(e)}")
+    st.stop()
 
 # 캘린더 이벤트 생성 함수 (마스터 스케줄과 요청사항 모두 처리)
 def create_calendar_events(df_master, df_request):
@@ -157,8 +176,44 @@ def create_calendar_events(df_master, df_request):
                         continue
     return events
 
-
 # --- 초기 데이터 로딩 및 세션 상태 초기화 ---
+def initialize_data():
+    """페이지에 필요한 모든 데이터를 한 번에 로드하고 세션 상태에 저장합니다."""
+    try:
+        st.session_state["df_master"] = load_master_data(gc, url)
+        st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
+        if st.session_state["df_request"].empty:
+            st.warning("⚠️ 요청사항 데이터가 비어 있습니다. Google Sheet를 확인해주세요.")
+        st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy() if not st.session_state["df_request"].empty else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+        st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy() if not st.session_state["df_master"].empty else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
+        st.stop()
+
+# 데이터 새로고침 및 스피너 로직을 통합
+def refresh_and_update():
+    """데이터를 새로고침하고 UI를 업데이트합니다."""
+    try:
+        with st.spinner("데이터를 다시 불러오는 중입니다..."):
+            st.cache_data.clear()  # 캐시 지우기
+            initialize_data()
+        st.success("데이터가 새로고침되었습니다.", icon="🔄")
+        time.sleep(1)
+        st.rerun()  # 새로고침 후 UI 전체를 다시 그립니다.
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"새로고침 중 오류 발생: {str(e)}")
+        st.stop()
+
+# --- 콜백 함수 정의 ---
+# 요청사항 추가 콜백 함수
 def add_request_callback():
     분류 = st.session_state["category_select"]
     날짜정보 = ""
@@ -286,13 +341,20 @@ def delete_requests_callback():
         time.sleep(1)
         st.rerun()
 
-
 # --- UI 렌더링 시작 ---
 # 첫 페이지 로드 시에만 데이터 로드
 if "initial_load_done_page2" not in st.session_state:
-    with st.spinner("데이터를 불러오는 중입니다. 잠시만 기다려 주세요."):
-        initialize_data()
-    st.session_state["initial_load_done_page2"] = True
+    try:
+        with st.spinner("데이터를 불러오는 중입니다. 잠시만 기다려 주세요."):
+            initialize_data()
+        st.session_state["initial_load_done_page2"] = True
+    except NameError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
 
 df_request = st.session_state["df_request"]
 df_user_request = st.session_state["df_user_request"]
