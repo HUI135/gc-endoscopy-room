@@ -126,6 +126,12 @@ if "data_loaded" not in st.session_state:
         st.session_state["mapping"] = mapping
         mapping_data = mapping.get_all_records()
         df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
+        
+        # 매핑 시트가 비어 있는 경우 경고 표시 및 중단
+        if df_map.empty:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.stop()
+            
         st.session_state["df_map"] = df_map
         
         # 마스터 시트
