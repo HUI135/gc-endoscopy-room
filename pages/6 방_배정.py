@@ -182,10 +182,11 @@ def get_user_available_dates(name, df_schedule, month_start, month_end):
         except ValueError:
             continue
         if month_start <= date_obj <= month_end and row['요일'] not in ['토요일', '일요일']:
-            morning_personnel = [str(row[str(i)]).strip() for i in range(1, 12) if str(i) in df_schedule.columns and pd.notna(row[str(i)]) and row[str(i)]]
-            if '오전당직(온콜)' in df_schedule.columns and pd.notna(row['오전당직(온콜)']):
-                morning_personnel.append(str(row['오전당직(온콜)']).strip())
-            afternoon_personnel = [str(row[f'오후{i}']).strip() for i in range(1, 5) if f'오후{i}' in df_schedule.columns and pd.notna(row[f'오후{i}']) and row[f'오후{i}']]
+            oncall_person = str(row['오전당직(온콜)']).strip() if '오전당직(온콜)' in row and pd.notna(row['오전당직(온콜)']) else ''
+            morning_personnel = [str(row[str(i)]).strip() for i in range(1, 12) if str(i) in df_schedule.columns and pd.notna(row[str(i)]) and str(row[str(i)]).strip() and str(row[str(i)]).strip() != oncall_person]
+            if '오전당직(온콜)' in df_schedule.columns and pd.notna(row['오전당직(온콜)']) and oncall_person == name:
+                morning_personnel.append(name)
+            afternoon_personnel = [str(row[f'오후{i}']).strip() for i in range(1, 5) if f'오후{i}' in df_schedule.columns and pd.notna(row[f'오후{i}']) and str(row[f'오후{i}']).strip() and str(row[f'오후{i}']).strip() != oncall_person]
             
             display_date = f"{date_obj.month}월 {date_obj.day}일 ({weekday_map[date_obj.weekday()]})"
             save_date_am = f"{date_obj.strftime('%Y-%m-%d')} (오전)"
@@ -279,7 +280,8 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
             target_row_idx = target_row_indices[0]
             
             time_period_cols = am_cols if time_period == '오전' else pm_cols
-            existing_assignments = [str(df_modified.at[target_row_idx, col]).strip() for col in time_period_cols if col in df_modified.columns and str(df_modified.at[target_row_idx, col]).strip()]
+            oncall_person = str(df_modified.at[target_row_idx, '오전당직(온콜)']).strip() if '오전당직(온콜)' in df_modified.columns and pd.notna(df_modified.at[target_row_idx, '오전당직(온콜)']) else ''
+            existing_assignments = [str(df_modified.at[target_row_idx, col]).strip() for col in time_period_cols if col in df_modified.columns and str(df_modified.at[target_row_idx, col]).strip() and str(df_modified.at[target_row_idx, col]).strip() != oncall_person]
             if new_assignee in existing_assignments:
                 st.warning(f"⚠️ '{new_assignee}'님은 이미 {formatted_date_in_df} {time_period} 시간대에 배정되어 있습니다. 변경을 적용할 수 없습니다.")
                 time.sleep(1)
@@ -324,8 +326,36 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
         time.sleep(1)
         
     st.session_state["swapped_assignments"] = swapped_assignments
-    df_modified = df_modified[display_cols]
-    return df_modified
+    return create_df_schedule_md(df_modified)
+
+# df_schedule_md 생성 함수
+def create_df_schedule_md(df_schedule):
+    display_cols = ['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4']
+    available_cols = [col for col in display_cols if col in df_schedule.columns]
+    if len(available_cols) < len(display_cols):
+        missing_cols = [col for col in display_cols if col not in df_schedule.columns]
+        st.warning(f"다음 컬럼이 df_schedule에 없습니다: {missing_cols}. 누락된 컬럼은 빈 값으로 채웁니다.")
+        for col in missing_cols:
+            df_schedule[col] = ''
+    
+    df_schedule_md = df_schedule[available_cols].copy()
+    
+    # 오전당직(온콜) 인원 처리
+    for idx, row in df_schedule_md.iterrows():
+        oncall_person = str(row['오전당직(온콜)']).strip() if pd.notna(row['오전당직(온콜)']) else ''
+        if oncall_person:
+            # 오전 시간대(1~11)에서 오전당직 인원 제거 및 앞으로 당김
+            am_cols = [str(i) for i in range(1, 12)]
+            am_personnel = [str(row[col]).strip() for col in am_cols if col in row and pd.notna(row[col]) and str(row[col]).strip() and str(row[col]).strip() != oncall_person]
+            for i, col in enumerate(am_cols):
+                df_schedule_md.at[idx, col] = am_personnel[i] if i < len(am_personnel) else ''
+            # 오후 시간대(오후1~오후4)에서 오전당직 인원 제거 및 앞으로 당김
+            pm_cols = [f'오후{i}' for i in range(1, 5)]
+            pm_personnel = [str(row[col]).strip() for col in pm_cols if col in row and pd.notna(row[col]) and str(row[col]).strip() and str(row[col]).strip() != oncall_person]
+            for i, col in enumerate(pm_cols):
+                df_schedule_md.at[idx, col] = pm_personnel[i] if i < len(pm_personnel) else ''
+    
+    return df_schedule_md
 
 def format_sheet_date_for_display(date_string):
     match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', date_string)
