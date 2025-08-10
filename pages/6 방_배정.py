@@ -145,56 +145,6 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
     st.error("데이터 로드 실패: 재시도 횟수 초과")
     return None, None, None, None, None
 
-def create_df_schedule_md(df_schedule):
-    """
-    원본 스케줄 데이터프레임을 기반으로 화면에 표시할 데이터프레임을 생성합니다.
-    - 오전당직(온콜) 인원을 오전/오후 근무자 목록에서 제외하고, 나머지 인원을 앞으로 당겨서 재배치합니다.
-    - 특히, 오후5열은 최종 결과에서 제외됩니다.
-    """
-    
-    # 최종적으로 표시할 컬럼 목록을 정의합니다. (오후5 제외)
-    display_cols = ['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4']
-
-    # 새로운 데이터프레임을 초기화하고 원본 데이터를 복사합니다.
-    df_schedule_md = pd.DataFrame(columns=display_cols)
-    if not df_schedule.empty:
-        df_schedule_md['날짜'] = df_schedule['날짜']
-        df_schedule_md['요일'] = df_schedule['요일']
-        df_schedule_md['오전당직(온콜)'] = df_schedule['오전당직(온콜)']
-
-    # 각 행을 순회하며 근무자 목록을 재배치합니다.
-    for idx, row in df_schedule.iterrows():
-        # 해당 날짜의 오전당직(온콜) 인원 확인
-        oncall_person = str(row['오전당직(온콜)']).strip() if '오전당직(온콜)' in df_schedule.columns else ''
-        
-        # 1. 오전 근무자 목록 재정렬 (온콜 인원 제외)
-        am_original_cols = [str(i) for i in range(1, 13)]
-        am_personnel_list = [
-            str(row[col]).strip() for col in am_original_cols
-            if col in df_schedule.columns and str(row[col]).strip() and str(row[col]).strip() != oncall_person
-        ]
-        am_personnel_unique = list(dict.fromkeys(am_personnel_list)) # 중복 제거
-        
-        # '1'부터 '11'까지의 열에 재배치
-        am_display_cols = [str(i) for i in range(1, 12)]
-        for i, col in enumerate(am_display_cols):
-            df_schedule_md.at[idx, col] = am_personnel_unique[i] if i < len(am_personnel_unique) else ''
-        
-        # 2. 오후 근무자 목록 재정렬 (온콜 인원 제외)
-        pm_original_cols = [f'오후{i}' for i in range(1, 6)]
-        pm_personnel_list = [
-            str(row[col]).strip() for col in pm_original_cols
-            if col in df_schedule.columns and str(row[col]).strip() and str(row[col]).strip() != oncall_person
-        ]
-        pm_personnel_unique = list(dict.fromkeys(pm_personnel_list)) # 중복 제거
-        
-        # '오후1'부터 '오후4'까지의 열에 재배치
-        pm_display_cols = [f'오후{i}' for i in range(1, 5)]
-        for i, col in enumerate(pm_display_cols):
-            df_schedule_md.at[idx, col] = pm_personnel_unique[i] if i < len(pm_personnel_unique) else ''
-            
-    return df_schedule_md
-
 # 근무 가능 일자 계산
 @st.cache_data
 def get_user_available_dates(name, df_schedule, month_start, month_end):
