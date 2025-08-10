@@ -362,6 +362,56 @@ def format_date_str_to_display(date_str, weekday, time_period):
         weekday = weekday.replace('요일', '')
     return f"{date_str} ({weekday}) - {time_period}"
 
+def save_to_gsheet(name, categories, selected_save_dates, month_str, worksheet):
+    try:
+        if not name or not categories or not selected_save_dates:
+            st.warning("⚠️ 근무자, 요청 분류, 날짜 정보를 올바르게 입력해주세요.")
+            return None
+
+        with st.spinner("요청사항을 추가 중입니다..."):
+            # Get the current room request DataFrame from session state
+            df_room_request_temp = st.session_state["df_room_request"].copy()
+            new_requests = []
+
+            # Check for duplicate requests and prepare new entries
+            for category in categories:
+                for date in selected_save_dates:
+                    date = date.strip()
+                    existing_request = df_room_request_temp[
+                        (df_room_request_temp['이름'] == name) &
+                        (df_room_request_temp['날짜정보'] == date) &
+                        (df_room_request_temp['분류'] == category)
+                    ]
+                    if existing_request.empty:
+                        new_requests.append({"이름": name, "분류": category, "날짜정보": date})
+
+            if not new_requests:
+                st.info("ℹ️ 이미 존재하는 요청사항입니다.")
+                return df_room_request_temp
+
+            # Append new requests to the DataFrame
+            new_request_df = pd.DataFrame(new_requests)
+            df_room_request_temp = pd.concat([df_room_request_temp, new_request_df], ignore_index=True)
+            df_room_request_temp = df_room_request_temp.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+
+            # Update Google Sheet
+            if not update_sheet_with_retry(worksheet, [df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist()):
+                st.warning("⚠️ Google Sheets 업데이트에 실패했습니다. 잠시 후 재시도 해주세요.")
+                return None
+
+            st.success("요청사항이 추가되었습니다!", icon="📅")
+            time.sleep(1)
+            return df_room_request_temp
+
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+        return None
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"요청 추가 중 오류 발생: {type(e).__name__} - {str(e)}")
+        return None
+
 # 메인
 month_str = "2025년 4월"
 next_month_start = date(2025, 4, 1)
@@ -463,7 +513,6 @@ with col1:
             modified_schedule = apply_schedule_swaps(st.session_state["df_schedule_original"], df_swaps)
             st.session_state["df_schedule"] = modified_schedule
             st.session_state["df_schedule_md"] = create_df_schedule_md(modified_schedule)
-            st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
             st.rerun()
         else:
             st.info("ℹ️ 처리할 교환 요청이 없습니다.")
@@ -487,10 +536,14 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
     # 'df_schedule_md_initial'은 수정 전의 원본 상태입니다.
     # 두 데이터프레임을 비교하여 변경사항이 있는지 확인합니다.
     if edited_df_md.equals(st.session_state["df_schedule_md_initial"]):
-        st.info("ℹ️ 변경사항이 없습니다. 저장할 내용이 없습니다.")
-        st.stop()
+        # 일괄 적용만 된 경우, 변경 로그가 있는지 확인
+        if st.session_state.get("swapped_assignments_log", []):
+            st.info("ℹ️ 일괄 적용된 변경사항을 저장합니다.")
+        else:
+            st.info("ℹ️ 변경사항이 없습니다. 저장할 내용이 없습니다.")
+            st.stop()
 
-    # 2. 변경사항 로그 기록 (선택 사항)
+    # 2. 변경사항 로그 기록
     manual_change_log = []
     diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
     for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
@@ -509,7 +562,7 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
         })
         st.session_state["swapped_assignments"].add((date_str_raw, time_period, str(new_value).strip()))
     
-    st.session_state["final_change_log"] = st.session_state["swapped_assignments_log"] + manual_change_log
+    st.session_state["final_change_log"] = st.session_state.get("swapped_assignments_log", []) + manual_change_log
 
     # 3. df_schedule_to_save 생성 (원본 구조 복원)
     # edited_df_md는 12열, 오후5열이 없으므로, 원본 df_schedule_original의 구조에 맞게 복원합니다.
