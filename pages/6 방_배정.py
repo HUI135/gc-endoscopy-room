@@ -332,10 +332,12 @@ def save_to_gsheet(name, categories, dates, month_str, worksheet):
     update_sheet_with_retry(worksheet, [df.columns.tolist()] + df.values.tolist())
     return df
 
+# df_schedule_md 생성
 def create_df_schedule_md(df_schedule):
     df_schedule_md = df_schedule.copy().fillna('')
     for idx, row in df_schedule_md.iterrows():
         date_str = row['날짜']
+        oncall_worker = row['오전당직(온콜)']
         
         try:
             if isinstance(date_str, (float, int)):
@@ -345,14 +347,22 @@ def create_df_schedule_md(df_schedule):
             st.error(f"날짜 파싱 오류: {date_str}, 오류: {str(e)}")
             continue
         
-        # 오후 컬럼이 모두 비어있을 경우 온콜 비우기
         afternoon_cols = ['오후1', '오후2', '오후3', '오후4', '오후5']
         if all(row[col] == '' for col in afternoon_cols):
             df_schedule_md.at[idx, '오전당직(온콜)'] = ''
             continue
         
-        # 오전/오후 근무자 재정렬 (온콜 근무자 제거 로직 제거)
-        morning_cols = [str(i) for i in range(1, 12)]
+        if pd.isna(oncall_worker) or oncall_worker == '':
+            oncall_worker = ''
+            df_schedule_md.at[idx, '오전당직(온콜)'] = ''
+        
+        if oncall_worker:
+            morning_cols = [str(i) for i in range(1, 13)]
+            for col in morning_cols + afternoon_cols:
+                if row[col] == oncall_worker:
+                    df_schedule_md.at[idx, col] = ''
+        
+        morning_cols = [str(i) for i in range(1, 13)]
         morning_workers = [row[col] for col in morning_cols if row[col]]
         if len(morning_workers) > 11:
             morning_workers = morning_workers[:11]
@@ -367,11 +377,8 @@ def create_df_schedule_md(df_schedule):
         for i, col in enumerate(['오후1', '오후2', '오후3', '오후4'], 1):
             df_schedule_md.at[idx, col] = afternoon_workers[i-1]
         
-    # 표시용 컬럼만 추출
-    display_cols = ['날짜', '요일'] + [str(i) for i in range(1, 12)] + ['오전당직(온콜)'] + ['오후1', '오후2', '오후3', '오후4']
-    df_schedule_md = df_schedule_md[display_cols]
+    df_schedule_md = df_schedule_md.drop(columns=['12', '오후5'], errors='ignore')
     return df_schedule_md
-
 
 import re
 import streamlit as st
