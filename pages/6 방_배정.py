@@ -51,6 +51,8 @@ def initialize_session_state():
         st.session_state["manual_change_log"] = []
     if "final_change_log" not in st.session_state:
         st.session_state["final_change_log"] = []
+    if "saved_changes_log" not in st.session_state:  # 추가
+        st.session_state["saved_changes_log"] = []
     if "df_schedule_md_initial" not in st.session_state:
         st.session_state["df_schedule_md_initial"] = pd.DataFrame()
     if "swapped_assignments_log" not in st.session_state:
@@ -481,14 +483,11 @@ st.write(" ")
 
 if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True):
     # 1. 변경된 데이터프레임 확인
-    # 'edited_df_md'는 사용자가 수정한 최종 상태의 데이터프레임입니다.
-    # 'df_schedule_md_initial'은 수정 전의 원본 상태입니다.
-    # 두 데이터프레임을 비교하여 변경사항이 있는지 확인합니다.
     if edited_df_md.equals(st.session_state["df_schedule_md_initial"]):
         st.info("ℹ️ 변경사항이 없습니다. 저장할 내용이 없습니다.")
         st.stop()
 
-    # 2. 변경사항 로그 기록 (선택 사항)
+    # 2. 변경사항 로그 기록
     manual_change_log = []
     diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
     for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
@@ -502,15 +501,17 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
         formatted_date_str = f"{date_str_raw} ({weekday.replace('요일', '')}) - {time_period}"
         manual_change_log.append({
             '날짜': formatted_date_str,
-            '변경 전 인원': str(old_value),
-            '변경 후 인원': str(new_value),
+            '변경 전 인원': str(old_value) if pd.notna(old_value) else '',
+            '변경 후 인원': str(new_value) if pd.notna(new_value) else '',
+            '방배정': col_name
         })
         st.session_state["swapped_assignments"].add((date_str_raw, time_period, str(new_value).strip()))
-    
-    st.session_state["final_change_log"] = st.session_state["swapped_assignments_log"] + manual_change_log
 
-    # 3. df_schedule_to_save 생성 (원본 구조 복원)
-    # edited_df_md는 12열, 오후5열이 없으므로, 원본 df_schedule_original의 구조에 맞게 복원합니다.
+    # 3. final_change_log와 saved_changes_log 업데이트
+    st.session_state["final_change_log"] = st.session_state["swapped_assignments_log"] + manual_change_log
+    st.session_state["saved_changes_log"].extend(manual_change_log)  # 저장된 로그에 추가
+
+    # 4. df_schedule_to_save 생성 (원본 구조 복원)
     df_schedule_to_save = st.session_state["df_schedule_original"].copy()
     for row_idx, row in edited_df_md.iterrows():
         date_str = row['날짜']
@@ -540,7 +541,7 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
             else:
                 df_schedule_to_save.at[original_row_idx, col] = ''
 
-    # 4. Google Sheets에 저장
+    # 5. Google Sheets에 저장
     try:
         st.info("ℹ️ 최종 스케줄을 Google Sheets에 저장합니다...")
         gc = get_gspread_client()
@@ -550,7 +551,7 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
 
         sheet_name = f"{month_str} 스케줄"
         
-        # 시트가 없으면 새로 생성합니다.
+        # 시트가 없으면 새로 생성
         try:
             worksheet_schedule = sheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
@@ -561,9 +562,12 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
         schedule_data = [columns_to_save] + df_schedule_to_save.fillna('').values.tolist()
         
         if update_sheet_with_retry(worksheet_schedule, schedule_data):
+            # 6. 세션 상태 동기화
             st.session_state["df_schedule"] = df_schedule_to_save.copy()
+            st.session_state["df_schedule_original"] = df_schedule_to_save.copy()  # 원본도 업데이트
             st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule_to_save)
             st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+            st.session_state["manual_change_log"] = []  # 임시 로그 초기화
             st.success(f"🎉 최종 스케줄이 '{sheet_name}' 시트에 성공적으로 저장되었습니다.")
             time.sleep(1)
             st.rerun()
