@@ -44,15 +44,23 @@ def load_master_data(_gc, url):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_request_data_page2(_gc, url, month_str):
-    sheet = _gc.open_by_url(url)
     try:
-        worksheet = sheet.worksheet(f"{month_str} 요청")
-    except WorksheetNotFound:
-        worksheet = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
-        worksheet.append_row(["이름", "분류", "날짜정보"])
-    data = worksheet.get_all_records()
-    return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-
+        sheet = _gc.open_by_url(url)
+        try:
+            worksheet = sheet.worksheet(f"{month_str} 요청")
+        except WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
+            worksheet.append_row(["이름", "분류", "날짜정보"])
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"Google Sheets API 오류: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"요청사항 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
+        
 # 기본 설정
 gc = get_gspread_client()
 url = st.secrets["google_sheet"]["url"]
