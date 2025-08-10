@@ -157,28 +157,17 @@ def load_request_data_page4():
 
 # 새로고침 버튼
 if st.button("🔄 새로고침(R)"):
-    try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()  # 캐시 초기화
-            st.cache_resource.clear()  # 리소스 캐시 초기화
+    with st.spinner("데이터를 다시 불러오는 중입니다..."):
+        try:
             load_request_data_page4()
             st.session_state["data_loaded"] = True
-            st.rerun()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 NameError 발생: {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.stop()
+            st.success("데이터가 성공적으로 새로고침되었습니다!")
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ Google Sheets API 요청이 지연되고 있습니다. 잠시 후 다시 시도하세요.")
+            st.error(f"오류 상세: {str(e)}")
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"새로고침 중 오류 발생: {str(e)}")
 
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]

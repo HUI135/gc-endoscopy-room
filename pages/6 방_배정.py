@@ -399,26 +399,6 @@ else:
     df_cumulative = st.session_state["df_cumulative"]
     df_swap_requests = st.session_state["df_swap_requests"]
 
-    # worksheet_room_request가 None인지 확인하고 복구 시도
-    if worksheet_room_request is None:
-        st.warning("⚠️ 방 배정 요청 시트가 로드되지 않았습니다. 복구를 시도합니다...")
-        try:
-            gc = get_gspread_client()
-            if gc is None:
-                raise Exception("Failed to initialize gspread client")
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-            try:
-                worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
-            except gspread.exceptions.WorksheetNotFound:
-                st.warning(f"{month_str} 방배정 요청 시트가 없습니다. 새 시트를 생성합니다.")
-                worksheet_room_request = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows=100, cols=10)
-                worksheet_room_request.update('A1', [["이름", "분류", "날짜정보"]])
-            st.session_state["worksheet_room_request"] = worksheet_room_request
-            st.success("방 배정 요청 시트 복구 완료!")
-        except Exception as e:
-            st.error(f"방 배정 요청 시트 복구 실패: {type(e).__name__} - {e}")
-            st.stop()
-
 st.header("🚪 방 배정", divider='rainbow')
 
 # 새로고침 버튼
