@@ -381,20 +381,13 @@ def create_df_schedule_md(df_schedule):
     return df_schedule_md
 
 def apply_schedule_swaps(original_schedule_df, swap_requests_df):
-    """
-    스케줄 변경 요청 시트에 있는 내용을 일괄 적용하고, 변경 내역을 로그에 저장합니다.
-    Args:
-        original_schedule_df (pd.DataFrame): 변경 전 원본 스케줄 DataFrame.
-        swap_requests_df (pd.DataFrame): 변경 요청이 담긴 DataFrame.
-    Returns:
-        pd.DataFrame: 변경이 적용된 새로운 스케줄 DataFrame.
-    """
     df_modified = original_schedule_df.copy()
     applied_count = 0
     swapped_assignments = set()
     
     am_cols = [str(i) for i in range(1, 13)]
-    pm_cols = [f'오후{i}' for i in range(1, 6)] + ['오전당직(온콜)']  # 오전당직(온콜)을 오후 컬럼에 추가    
+    pm_cols = [f'오후{i}' for i in range(1, 6)] + ['오전당직(온콜)']  # 오전당직(온콜)을 오후 컬럼에 추가
+    
     batch_change_log = []
     
     for _, request_row in swap_requests_df.iterrows():
@@ -407,7 +400,6 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
 
             requester_name, new_assignee = [p.strip() for p in change_request_str.split('➡️')]
             
-            # '변경 요청한 스케줄' 컬럼에서 날짜와 시간대를 파싱합니다.
             schedule_info_str = str(request_row.get('변경 요청한 스케줄', '')).strip()
             date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_info_str)
             
@@ -418,7 +410,6 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
 
             date_part, time_period = date_match.groups()
             
-            # '날짜' 컬럼은 '4월 4일' 형식으로 저장되어 있으므로 변환이 필요합니다.
             try:
                 date_obj = datetime.strptime(date_part, '%Y-%m-%d').date()
                 formatted_date_in_df = f"{date_obj.month}월 {date_obj.day}일"
@@ -440,10 +431,9 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
             for col in cols_to_search:
                 if str(df_modified.at[target_row_idx, col]).strip() == requester_name:
                     old_value = df_modified.at[target_row_idx, col]
-                    df_modified.at[target_row_idx, col] = new_assignee # 값 변경
-                    
+                    df_modified.at[target_row_idx, col] = new_assignee
                     weekday = df_modified.at[target_row_idx, '요일'].replace('요일', '')
-                    formatted_date_str = formatted_date_in_df  # "4월 4일" 형식으로 저장                    
+                    formatted_date_str = f"{formatted_date_in_df} ({weekday}) - {time_period}"
                     
                     batch_change_log.append({
                         '날짜': formatted_date_str,
@@ -452,7 +442,6 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                     })
                     applied_count += 1
                     is_swapped = True
-                    # <--- 변경된 셀의 위치(날짜, 시간대, 새로운 값)를 세트에 저장
                     swapped_assignments.add((formatted_date_in_df, time_period, new_assignee))
                     break
                                 
@@ -473,9 +462,9 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
         st.info("새롭게 적용할 스케줄 변경 요청이 없습니다.")
         time.sleep(1)
         
-    st.session_state["swapped_assignments"] = swapped_assignments # <--- 세션 상태에 최종 변경 내용 저장
+    st.session_state["swapped_assignments"] = swapped_assignments
     return df_modified
-
+    
 def format_sheet_date_for_display(date_string):
     """Google Sheets에 저장된 'YYYY-MM-DD (오전)' 형식을 'M월 D일 (요일) - 오전'으로 변환"""
     match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', date_string)
