@@ -606,23 +606,24 @@ week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in all_mont
 day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
 
 # --- UI 개선: 토요/휴일 스케줄 입력 ---
+# 세션 상태 초기화
+if "special_schedule_count" not in st.session_state:
+    st.session_state.special_schedule_count = 1
+if "special_schedules" not in st.session_state:
+    st.session_state.special_schedules = []
+
+# UI: 토요/휴일 스케줄 입력
 st.write(" ")
 st.markdown("**📅 토요/휴일 스케줄 입력**")
 
 # 전체 인원 목록 준비
-all_names = sorted(list(df_master["이름"].unique()))
+all_names = sorted(list(st.session_state["df_master"]["이름"].unique()))
 
-# special_schedules 리스트 초기화
+# 날짜 및 인원 입력
 special_schedules = []
-
-# st.session_state을 사용하여 추가된 입력 필드 수 관리
-if 'special_schedule_count' not in st.session_state:
-    st.session_state.special_schedule_count = 1
-
 for i in range(st.session_state.special_schedule_count):
     cols = st.columns([2, 3])
     with cols[0]:
-        # 날짜 선택 위젯 (전체 월 대상)
         selected_date = st.date_input(
             label=f"날짜 선택",
             value=None,
@@ -633,19 +634,46 @@ for i in range(st.session_state.special_schedule_count):
         )
     with cols[1]:
         if selected_date:
-            # 인원 선택 위젯 (제한 없음)
             selected_workers = st.multiselect(
                 label=f"근무 인원 선택",
                 options=all_names,
                 key=f"special_workers_{i}"
             )
-            # 선택된 스케줄 정보를 리스트에 저장
-            special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
+            if selected_workers:
+                special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
 
 # 입력 필드 추가 버튼
 if st.button("➕ 토요/휴일 스케줄 추가"):
     st.session_state.special_schedule_count += 1
     st.rerun()
+
+if special_schedules:
+    st.session_state.special_schedules = special_schedules  # 세션 상태 업데이트
+
+# Google Sheets 저장 함수 수정
+def save_special_schedules_to_sheets(special_schedules, month_str, client):
+    if special_schedules:
+        try:
+            spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+            sheet_name = f"{month_str} 토요/휴일 일자"
+            try:
+                worksheet = spreadsheet.worksheet(sheet_name)
+                worksheet.clear()
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=2)
+            
+            schedule_df = pd.DataFrame(
+                [(s[0], ", ".join(s[1])) for s in special_schedules],
+                columns=["날짜", "근무 인원"]
+            )
+            worksheet.update([schedule_df.columns.values.tolist()] + schedule_df.values.tolist())
+            return True
+        except Exception as e:
+            st.error(f"Google Sheets 저장 실패: {str(e)}")
+            return False
+    else:
+        st.warning("저장할 스케줄이 없습니다.")
+        return False
 
 def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers):
     """V1의 안정적인 루프 방식으로 1:1 인원 이동을 수행하는 함수"""
@@ -922,11 +950,13 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
     st.session_state.assigned = False
     st.session_state.output = None
     st.session_state.downloaded = False
-    special_schedule_dates = [s[0] for s in special_schedules if s]
-
+    special_schedules = st.session_state.get("special_schedules", [])
+    
     with st.spinner("근무 배정 중..."):
         time.sleep(1)
-        
+        client = get_gspread_client()
+        save_special_schedules_to_sheets(special_schedules, month_str, client)
+
         # --- 0단계: 모든 초기화 ---
         df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근무자', '상태', '메모', '색상'])
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
@@ -1132,7 +1162,8 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         # 데이터 행 순회하며 스타일 적용
         for row_idx, (idx, row) in enumerate(df_excel.iterrows(), 2):
             date_str_lookup = df_schedule.at[idx, '날짜']
-            is_special_day = date_str_lookup in special_schedule_dates
+            special_schedule_dates_set = {s[0] for s in special_schedules}
+            is_special_day = date_str_lookup in special_schedule_dates_set
             is_empty_day = df_final_unique[df_final_unique['날짜'] == date_str_lookup].empty and not is_special_day
             
             # 행 전체 스타일 적용
