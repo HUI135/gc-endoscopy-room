@@ -735,9 +735,7 @@ except Exception as e:
     st.error(f"special_schedules 로드 실패: {str(e)}")
 
 # special_schedules가 비어 있으면 추가로 경고 표시
-if not special_schedules:
-    st.warning("별도의 토요/휴일 스케줄이 없습니다.")
-else:
+if special_schedules:
     special_schedules.sort(key=lambda x: x[0])
     room_options = [str(i) for i in range(1, 13)]
 
