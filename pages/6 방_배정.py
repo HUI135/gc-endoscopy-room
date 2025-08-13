@@ -776,6 +776,13 @@ if special_schedules:
             tab815, tab830, tab900, tab930 = st.tabs(["🕗 08:15", "🕗 08:30", "🕘 09:00", "🕤 09:30"])
             time_slots = ["815", "830", "900", "930"]
             tabs = [tab815, tab830, tab900, tab930]
+            default_room_counts = {"815": 2, "830": 2, "900": 4, "930": 2}
+            default_rooms = {
+                "815": ["1", "4"],
+                "830": ["7", "8"],
+                "900": ["2", "5", "6", "10"],
+                "930": ["9", "3"]
+            }
             
             for time_slot, tab in zip(time_slots, tabs):
                 with tab:
@@ -784,26 +791,17 @@ if special_schedules:
                         display_time = time_slot.replace("815", "08:15").replace("830", "08:30").replace("900", "09:00").replace("930", "09:30")
                         st.markdown(f"###### **{display_time} 방 개수**")
                         count_key = f"{time_slot}_count_{date_str}_{idx}"
-                        default_count = st.session_state["weekend_room_settings"].get(date_str, {}).get(f"{time_slot}_count", 0)
+                        default_count = st.session_state["weekend_room_settings"].get(date_str, {}).get(f"{time_slot}_count", default_room_counts[time_slot])
                         room_count = st.number_input(f"{time_slot}_rooms_count", min_value=0, max_value=12, value=default_count, key=count_key, label_visibility="collapsed")
                     with col2:
                         st.markdown(f"###### **{display_time} 방 번호**")
                         rooms_key = f"{time_slot}_rooms_{date_str}_{idx}"
-                        default_rooms = st.session_state["weekend_room_settings"].get(date_str, {}).get(f"{time_slot}_rooms", [])
+                        default_rooms_for_slot = st.session_state["weekend_room_settings"].get(date_str, {}).get(f"{time_slot}_rooms", default_rooms[time_slot])
                         if room_count == 0:
                             rooms = []
                             st.write("방 개수가 0이므로 방 번호를 선택할 수 없습니다.")
                         else:
-                            if not default_rooms:
-                                if time_slot == "815":
-                                    default_rooms = ["1", "4"]
-                                elif time_slot == "830":
-                                    default_rooms = ["7", "8"]
-                                elif time_slot == "900":
-                                    default_rooms = ["2", "5", "6", "10"]
-                                elif time_slot == "930":
-                                    default_rooms = ["9", "3"]
-                            rooms = st.multiselect(f"{time_slot}_room_select_numbers", room_options, default=default_rooms[:room_count], max_selections=room_count, key=rooms_key, label_visibility="collapsed")
+                            rooms = st.multiselect(f"{time_slot}_room_select_numbers", room_options, default=default_rooms_for_slot[:room_count], max_selections=room_count, key=rooms_key, label_visibility="collapsed")
                             if len(rooms) < room_count:
                                 st.warning(f"{formatted_date} {display_time} 시간대의 방 번호를 {room_count}개 선택해주세요.")
                         # session_state 업데이트
@@ -821,16 +819,16 @@ if special_schedules:
             duty_person = settings.get("duty_person", None)
             duty_room = settings.get("duty_room", None)
             if not duty_person or duty_person == "선택 안 함" or not duty_room or duty_room == "선택 안 함":
-                st.error(f"{date_str}: 당직 인원 또는 당직 방이 아직 입력되지 않았습니다.")
+                st.error(f"당직 인원 또는 당직 방이 입력되지 않았습니다.")
             
             total_rooms = sum(settings.get(f"{ts}_count", 0) for ts in ["815", "830", "900", "930"])
             personnel_count = len(personnel_for_day)
             effective_personnel = personnel_count - 1 if duty_person and duty_person != "선택 안 함" else personnel_count
             if effective_personnel < total_rooms:
-                st.error(f"{date_str}: 배정된 방 수({total_rooms}개)가 당직 제외 근무 인원 수({effective_personnel}명)보다 많습니다.")
+                st.error(f"배정된 방 수({total_rooms}개)가 당직 제외 근무 인원 수({effective_personnel}명)보다 많습니다.")
             elif effective_personnel > total_rooms:
-                st.error(f"{date_str}: 배정된 방 수({total_rooms}개)가 당직 제외 근무 인원 수({effective_personnel}명)보다 적습니다.")
-                
+                st.error(f"배정된 방 수({total_rooms}개)가 당직 제외 근무 인원 수({effective_personnel}명)보다 적습니다.")
+
 all_selected_rooms = (st.session_state["room_settings"]["830_room_select"] + 
                      st.session_state["room_settings"]["900_room_select"] + 
                      st.session_state["room_settings"]["930_room_select"] + 
@@ -1248,8 +1246,11 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         personnel_count = len(personnel)
         effective_personnel = personnel_count - 1 if duty_person and duty_person != "선택 안 함" else personnel_count
         
+        if duty_person == "선택 안 함" or not duty_person:
+            st.warning(f"{date_str} - 토요/휴일 스케줄에 당직 인원 없이 배정됩니다.")
+        
         if total_rooms != effective_personnel and total_rooms != 0:
-            st.warning(f"{date_str}: 토요/휴일 방 개수({total_rooms}개)를 근무 인원 수({effective_personnel}명)에 맞게 설정해 주세요.")
+            st.error(f"{date_str}: 토요/휴일 방 개수({total_rooms}개)를 근무 인원 수({effective_personnel}명)에 맞게 설정해 주세요.")
             st.stop()
     
     with st.spinner("방 배정 중..."):
