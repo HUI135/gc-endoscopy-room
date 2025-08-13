@@ -933,6 +933,7 @@ def parse_date_info(date_info):
         st.warning(f"Failed to parse date_info: {date_info}, error: {str(e)}")
         return None, False
 
+# assign_special_date 함수 수정
 def assign_special_date(personnel_for_day, date_str, duty_person, settings):
     assignment = []
     assigned_personnel = set()
@@ -942,7 +943,9 @@ def assign_special_date(personnel_for_day, date_str, duty_person, settings):
     if duty_person and duty_person != "선택 안 함" and duty_person in personnel_for_day and duty_room and duty_room != "선택 안 함":
         assignment.append(f"{duty_person}[{duty_room}]")
         assigned_personnel.add(duty_person)
-        assignment.append(None)  # 시간대 구분을 위한 빈 셀
+    else:
+        assignment.append(None)  # 당직 없으면 빈 셀
+    assignment.append(None)  # 시간대 구분을 위한 빈 셀
     
     # 나머지 인원 복사 및 랜덤 셔플
     remaining_personnel = [p for p in personnel_for_day if p not in assigned_personnel]
@@ -957,10 +960,10 @@ def assign_special_date(personnel_for_day, date_str, duty_person, settings):
     ]
     
     for time_slot, room_count, rooms in time_slots:
-        available_rooms = rooms[:room_count]  # 설정된 방 개수만큼 사용
-        if room_count == 0:  # 방 개수가 0인 경우 빈 셀 추가
+        if room_count == 0:  # 방 개수가 0이면 빈 셀 추가
             assignment.append(None)
         else:
+            available_rooms = rooms[:room_count]  # 설정된 방 개수만큼 사용
             for room in sorted(available_rooms, key=lambda x: int(x)):  # 방 번호 정렬
                 if remaining_personnel:
                     person = remaining_personnel.pop(0)
