@@ -651,28 +651,43 @@ if special_schedules:
     st.session_state.special_schedules = special_schedules  # 세션 상태 업데이트
 
 # Google Sheets 저장 함수 수정
+# Google Sheets 저장 함수 수정
 def save_special_schedules_to_sheets(special_schedules, month_str, client):
-    if special_schedules:
+    try:
+        spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+        sheet_name = f"{month_str} 토요/휴일 일자"
+        
+        # 기존 시트가 있으면 가져오고, 없으면 새로 생성
         try:
-            spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
-            sheet_name = f"{month_str} 토요/휴일 일자"
-            try:
-                worksheet = spreadsheet.worksheet(sheet_name)
-                worksheet.clear()
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=2)
-            
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=2)
+        
+        # 시트 초기화 및 헤더 설정
+        worksheet.clear()
+        headers = ["날짜", "근무 인원"]
+        worksheet.update('A1', [headers], value_input_option='RAW')
+        
+        # 스케줄 데이터가 있을 경우에만 저장
+        if special_schedules:
             schedule_df = pd.DataFrame(
                 [(s[0], ", ".join(s[1])) for s in special_schedules],
-                columns=["날짜", "근무 인원"]
+                columns=headers
             )
-            worksheet.update([schedule_df.columns.values.tolist()] + schedule_df.values.tolist())
+            data_to_save = schedule_df.values.tolist()
+            worksheet.update('A2', data_to_save, value_input_option='RAW')
             return True
-        except Exception as e:
-            st.error(f"Google Sheets 저장 실패: {str(e)}")
-            return False
-    else:
-        st.warning("저장할 스케줄이 없습니다.")
+        else:
+            # 스케줄이 없으면 빈 데이터로 초기화
+            worksheet.update('A2', [[]], value_input_option='RAW')
+            st.warning("별도 토요/휴일 스케줄이 없습니다. 빈 시트로 저장됩니다.")
+            return True
+            
+    except gspread.exceptions.APIError as e:
+        st.error(f"Google Sheets API 오류 (토요/휴일 스케줄 저장): {e.response.status_code} - {e.response.text}")
+        return False
+    except Exception as e:
+        st.error(f"토요/휴일 스케줄 저장 실패: {type(e).__name__} - {e}")
         return False
 
 def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers):
