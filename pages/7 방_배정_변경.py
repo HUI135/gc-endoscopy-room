@@ -261,7 +261,7 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
                                 '방배정': col,
                                 '변경 전 인원': cell_value,
                                 '변경 후 인원': new_cell_value,
-                                '변경 유형': '일괄 적용',
+                                # '변경 유형': '일괄 적용',
                                 '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             })
                             applied_count += 1
@@ -295,7 +295,7 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
                         '방배정': target_slot,
                         '변경 전 인원': old_person,
                         '변경 후 인원': new_person,
-                        '변경 유형': '일괄 적용',
+                        # '변경 유형': '일괄 적용',
                         '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     })
                     applied_count += 1
@@ -319,26 +319,39 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
 
     return df_modified, changed_log, df_special
 
+# --- 시간대 순서 정의 ---
+time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
+
+# --- 시간대 순서 정의 ---
+time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
+
 # --- 통계 계산 함수 (수정됨) ---
 def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> pd.DataFrame:
     total_stats = {
-        'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(),
-        'rooms': {str(i): Counter() for i in range(1, 13)}
+        'early': Counter(),
+        'late': Counter(),
+        'morning_duty': Counter(),
+        'afternoon_duty': Counter(),
+        'time_room_slots': {}  # 시간대-방 쌍 통계
     }
     
     # special_schedules 날짜를 제외하기 위해 날짜 목록 생성
     special_dates = []
     if df_special is not None and not df_special.empty and '날짜_dt' in df_special.columns:
-        # 날짜 형식 '4월 1일' 에 맞추기
         special_dates = df_special['날짜_dt'].dt.strftime('%#m월 %#d일').tolist() if os.name != 'nt' else df_special['날짜_dt'].dt.strftime('%m월 %d일').apply(lambda x: x.lstrip("0").replace(" 0", " "))
-
-    # 모든 인원 목록 생성 (통계표의 기준)
+    
+    # 모든 인원 목록 생성
     all_personnel_raw = pd.unique(result_df.iloc[:, 2:].values.ravel('K'))
     all_personnel_clean = {re.sub(r'\[\d+\]', '', str(p)).strip() for p in all_personnel_raw if pd.notna(p) and str(p).strip()}
     all_personnel = sorted(list(all_personnel_clean))
     
     SMALL_TEAM_THRESHOLD = 13
-
+    
+    # 슬롯별 통계 초기화
+    for slot_name in result_df.columns[2:]:
+        if slot_name != '온콜':  # '온콜' 제외
+            total_stats['time_room_slots'].setdefault(slot_name, Counter())
+    
     for _, row in result_df.iterrows():
         date_str = str(row.get('날짜', '')).strip()
         
@@ -349,7 +362,7 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
         personnel_in_row = [p for p in row.iloc[2:].dropna() if p]
         if 0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD:
             continue
-
+        
         for slot_name in result_df.columns[2:]:
             person = row.get(slot_name)
             if not person or pd.isna(person):
@@ -357,30 +370,48 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
             
             person_clean = re.sub(r'\[\d+\]', '', str(person)).strip()
             
+            # 시간대-방 쌍 통계 ('온콜' 제외)
+            if slot_name != '온콜':
+                total_stats['time_room_slots'][slot_name][person_clean] += 1
+            
+            # 기존 통계
             if slot_name.startswith('8:30') and not slot_name.endswith('_당직'):
                 total_stats['early'][person_clean] += 1
             elif slot_name.startswith('10:00'):
                 total_stats['late'][person_clean] += 1
-            
             if slot_name == '온콜' or (slot_name.startswith('8:30') and slot_name.endswith('_당직')):
                 total_stats['morning_duty'][person_clean] += 1
             elif slot_name.startswith('13:30') and slot_name.endswith('_당직'):
                 total_stats['afternoon_duty'][person_clean] += 1
-            
-            match = re.search(r'\((\d+)\)', slot_name)
-            if match:
-                room_num = match.group(1)
-                if room_num in total_stats['rooms']:
-                    total_stats['rooms'][room_num][person_clean] += 1
-
-    stats_data = [{
-        '인원': p,
-        '이른방 합계': total_stats['early'][p], '늦은방 합계': total_stats['late'][p],
-        '오전 당직 합계': total_stats['morning_duty'][p], '오후 당직 합계': total_stats['afternoon_duty'][p],
-        **{f'{r}번방 합계': total_stats['rooms'][r][p] for r in total_stats['rooms']}
-    } for p in all_personnel]
-
-    return pd.DataFrame(stats_data)
+    
+    # 통계 DataFrame 생성
+    stats_data = []
+    for p in all_personnel:
+        stats_entry = {
+            '인원': p,
+            '이른방 합계': total_stats['early'][p],
+            '늦은방 합계': total_stats['late'][p],
+            '오전 당직 합계': total_stats['morning_duty'][p],
+            '오후 당직 합계': total_stats['afternoon_duty'][p],
+        }
+        # 시간대(방) 합계 추가 (당직 제외)
+        for slot in total_stats['time_room_slots']:
+            if not slot.endswith('_당직'):
+                stats_entry[f'{slot} 합계'] = total_stats['time_room_slots'][slot][p]
+        stats_data.append(stats_entry)
+    
+    # 컬럼 정렬
+    sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전 당직 합계', '오후 당직 합계']
+    time_slots = sorted(
+        [slot for slot in total_stats['time_room_slots'].keys() if not slot.endswith('_당직')],
+        key=lambda x: (
+            time_order.index(x.split('(')[0]),  # 시간대 순서
+            int(x.split('(')[1].split(')')[0])  # 방 번호 순서
+        )
+    )
+    sorted_columns.extend([f'{slot} 합계' for slot in time_slots])
+    
+    return pd.DataFrame(stats_data)[sorted_columns]
 
 # --- UI 및 데이터 핸들링 ---
 month_str = "2025년 4월"
@@ -517,7 +548,7 @@ if st.session_state.changed_cells_log:
     valid_logs = [log for log in st.session_state.changed_cells_log if len(log) >= 4]
     if valid_logs:
         log_df = pd.DataFrame(valid_logs)
-        log_df = log_df[['날짜', '방배정', '변경 전 인원', '변경 후 인원', '변경 유형', '변경 일시']].fillna('')
+        log_df = log_df[['날짜', '방배정', '변경 전 인원', '변경 후 인원', '변경 일시']].fillna('')
         st.dataframe(log_df.sort_values(by=['변경 일시', '날짜', '방배정']).reset_index(drop=True), use_container_width=True, hide_index=True)
     else:
         st.info("기록된 변경사항이 없습니다.")
@@ -653,7 +684,6 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
             try:
                 date_obj = datetime.strptime(f"2025년 {current_date_str}", '%Y년 %m월 %d일')
                 is_special_day = current_date_str in special_dates
-                st.write(special_dates)
             except (ValueError, TypeError):
                 is_special_day = False
 
@@ -715,7 +745,7 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
                 cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
             elif '당직' in header:
                 cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-            elif '번방' in header:
+            else:
                 cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
         
         for row_idx, row in enumerate(stats_df.values, 2):
