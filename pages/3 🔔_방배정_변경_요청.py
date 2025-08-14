@@ -79,6 +79,40 @@ def load_room_data(month_str):
         st.error(f"방배정 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
+@st.cache_data(ttl=300)
+def load_special_schedules(month_str):
+    try:
+        gc = get_gspread_client()
+        if not gc:
+            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            return pd.DataFrame()
+        spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        worksheet = spreadsheet.worksheet(f"{month_str} 토요/휴일 일자")
+        records = worksheet.get_all_records()
+        if not records:
+            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            return pd.DataFrame()
+        df = pd.DataFrame(records)
+        if '날짜' not in df.columns or '근무 인원' not in df.columns:
+            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            return pd.DataFrame()
+        df.fillna('', inplace=True)
+        df['날짜_dt'] = pd.to_datetime(df['날짜'], format='%Y-%m-%d', errors='coerce')
+        df.dropna(subset=['날짜_dt'], inplace=True)
+        return df
+    except gspread.exceptions.WorksheetNotFound:
+        st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+        return pd.DataFrame()
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (토요/휴일 데이터 로드): {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+        st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
+
 def get_my_room_requests(month_str, employee_id):
     if not employee_id:
         return []
@@ -183,34 +217,90 @@ def delete_room_request_from_sheet(request_id, month_str):
         st.error(f"요청 삭제 중 오류 발생: {str(e)}")
         st.stop()
 
-def get_person_room_assignments(df, person_name=""):
+def get_person_room_assignments(df, person_name="", special_schedules_df=None):
     assignments = []
-    sorted_df = df.sort_values(by='날짜_dt').reset_index(drop=True)
-    def sort_key(col_name):
-        match = re.search(r"(\d{1,2}:\d{2})", str(col_name))
-        if match:
-            time_str = match.group(1)
-            return datetime.strptime(time_str.zfill(5), "%H:%M").time()
-        if '당직' in str(col_name) or '온콜' in str(col_name):
-            return datetime.strptime("23:59", "%H:%M").time()
-        return datetime.max.time()
-    time_cols = sorted([col for col in df.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)], key=sort_key)
-    for _, row in sorted_df.iterrows():
-        dt = row['날짜_dt']
-        display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
-        sheet_date_str = dt.strftime("%Y-%m-%d")
-        for col in time_cols:
-            current_person = row.get(col)
-            if (not person_name and current_person) or (person_name and current_person == person_name):
-                assignments.append({
-                    'date_obj': dt.date(),
-                    'column_name': str(col),
-                    'person_name': current_person,
-                    'display_str': f"{display_date_str} - {col}",
-                    'sheet_str': f"{sheet_date_str} ({col})"
-                })
-    return assignments
+    # 일반 스케줄 처리
+    if not df.empty:
+        sorted_df = df.sort_values(by='날짜_dt').reset_index(drop=True)
+        def sort_key(col_name):
+            match = re.search(r"(\d{1,2}:\d{2})", str(col_name))
+            if match:
+                time_str = match.group(1)
+                return datetime.strptime(time_str.zfill(5), "%H:%M").time()
+            if '당직' in str(col_name) or '온콜' in str(col_name):
+                return datetime.strptime("23:59", "%H:%M").time()
+            return datetime.max.time()
+        time_cols = sorted([col for col in df.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)], key=sort_key)
+        for _, row in sorted_df.iterrows():
+            dt = row['날짜_dt']
+            display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+            sheet_date_str = dt.strftime("%Y-%m-%d")
+            for col in time_cols:
+                current_person = row.get(col)
+                if (not person_name and current_person) or (person_name and current_person == person_name):
+                    assignments.append({
+                        'date_obj': dt.date(),
+                        'column_name': str(col),
+                        'person_name': current_person,
+                        'display_str': f"{display_date_str} - {col}",
+                        'sheet_str': f"{sheet_date_str} ({col})"
+                    })
 
+    # 토요/휴일 스케줄 처리
+    if special_schedules_df is not None and not special_schedules_df.empty:
+        for _, row in special_schedules_df.iterrows():
+            dt = row['날짜_dt']
+            display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+            sheet_date_str = dt.strftime("%Y-%m-%d")
+            workers = row['근무 인원'].split(', ') if row['근무 인원'] else []
+            cleaned_workers = [re.sub(r'\[\d+\]', '', worker).strip() for worker in workers]
+            if not person_name or person_name in cleaned_workers:
+                regular_row = df[df['날짜_dt'].dt.date == dt.date()]
+                time_slots = ['당직', '8:15', '8:30', '9:00', '9:30']
+                if not regular_row.empty:
+                    regular_row_dict = regular_row.iloc[0].to_dict()
+                    current_time_idx = 0
+                    for col in regular_row_dict:
+                        if col in ['날짜', '요일', '날짜_dt']:
+                            continue
+                        if regular_row_dict[col] == '':
+                            if current_time_idx < len(time_slots) - 1:
+                                current_time_idx += 1
+                            continue
+                        match = re.search(r'\[(\d+)\]', str(regular_row_dict[col]))
+                        if match:
+                            room_number = match.group(1)
+                            worker_name = re.sub(r'\[\d+\]', '', str(regular_row_dict[col])).strip()
+                            if (not person_name and worker_name) or (person_name and worker_name == person_name):
+                                time_slot = time_slots[current_time_idx]
+                                display_str = f"{display_date_str} - {time_slot}({room_number})" if time_slot != '당직' else f"{display_date_str} - 당직"
+                                sheet_str = f"{sheet_date_str} ({time_slot}({room_number}))" if time_slot != '당직' else f"{sheet_date_str} (당직)"
+                                assignments.append({
+                                    'date_obj': dt.date(),
+                                    'column_name': f"{time_slot}({room_number})" if time_slot != '당직' else '당직',
+                                    'person_name': worker_name,
+                                    'display_str': display_str,
+                                    'sheet_str': sheet_str
+                                })
+                else:
+                    # df_room에 해당 날짜 데이터가 없어도 df_special의 근무 인원을 기반으로 배정 생성
+                    for worker in cleaned_workers:
+                        if (not person_name and worker) or (person_name and worker == person_name):
+                            # 기본적으로 9:00 시간대와 가상의 방 번호(예: 0)를 사용
+                            time_slot = '9:00'
+                            room_number = '0'
+                            display_str = f"{display_date_str} - {time_slot}({room_number})"
+                            sheet_str = f"{sheet_date_str} ({time_slot}({room_number}))"
+                            assignments.append({
+                                'date_obj': dt.date(),
+                                'column_name': f"{time_slot}({room_number})",
+                                'person_name': worker,
+                                'display_str': display_str,
+                                'sheet_str': sheet_str
+                            })
+
+    return sorted(assignments, key=lambda x: (x['date_obj'], x['column_name']))
+    
 def get_shift_period(column_name):
     match = re.search(r"(\d{1,2}:\d{2})", str(column_name))
     if match:
@@ -223,14 +313,26 @@ def get_shift_period(column_name):
         return "기타"
     return "기타"
 
-def is_person_assigned_at_time(df, person_name, date_obj, column_name):
+def is_person_assigned_at_time(df, person_name, date_obj, column_name, special_schedules_df=None):
+    # 일반 스케줄 확인
     row_data = df[df['날짜_dt'].dt.date == date_obj]
-    if row_data.empty:
-        return False
-    row_dict = row_data.iloc[0].to_dict()
-    for col, assigned_person in row_dict.items():
-        if get_shift_period(col) == get_shift_period(column_name) and assigned_person == person_name:
-            return True
+    if not row_data.empty:
+        row_dict = row_data.iloc[0].to_dict()
+        for col, assigned_person in row_dict.items():
+            if col in ['날짜', '요일', '날짜_dt']:
+                continue
+            if assigned_person == person_name:
+                return True
+    
+    # 토요/휴일 스케줄 확인
+    if special_schedules_df is not None and not special_schedules_df.empty:
+        special_row = special_schedules_df[special_schedules_df['날짜_dt'].dt.date == date_obj]
+        if not special_row.empty:
+            workers = special_row.iloc[0]['근무 인원'].split(', ') if special_row.iloc[0]['근무 인원'] else []
+            cleaned_workers = [re.sub(r'\[\d+\]', '', worker).strip() for worker in workers]
+            if person_name in cleaned_workers:
+                return True
+    
     return False
 
 # --- 메인 로직 ---
@@ -266,6 +368,8 @@ if st.button("🔄 새로고침 (R)"):
         st.stop()
 
 df_room = load_room_data(MONTH_STR)
+df_special = load_special_schedules(MONTH_STR)
+
 if df_room.empty:
     st.stop()
 else:
@@ -294,7 +398,7 @@ else:
     st.write(" ")
     st.markdown("<h6 style='font-weight:bold;'>🟢 나의 방배정을 상대방과 바꾸기</h6>", unsafe_allow_html=True)
     
-    user_assignments_my = get_person_room_assignments(df_room, user_name)
+    user_assignments_my = get_person_room_assignments(df_room, user_name, df_special)
     if not user_assignments_my:
         st.warning(f"'{user_name}'님의 배정된 방이 없습니다.")
     else:
@@ -317,7 +421,13 @@ else:
                 all_employee_names = set(st.session_state.get('user_data', {}).keys())
             else:
                 time_cols_all = [col for col in df_room.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)]
-                all_employee_names = set(df_room[time_cols_all].values.ravel()) - {''}
+                all_employee_names = set()
+                for col in time_cols_all:
+                    for value in df_room[col].values:
+                        if value:
+                            # 이름에서 [방번호] 제거
+                            cleaned_value = re.sub(r'\[\d+\]', '', str(value)).strip()
+                            all_employee_names.add(cleaned_value)
             
             compatible_colleague_names = sorted(list(all_employee_names - {user_name}))
             
@@ -335,7 +445,7 @@ else:
         if my_selected_assignment_str_my and selected_colleague_name:
             my_selected_info = assignment_options_my[my_selected_assignment_str_my]
             
-            is_colleague_occupied = is_person_assigned_at_time(df_room, selected_colleague_name, my_selected_info['date_obj'], my_selected_info['column_name'])
+            is_colleague_occupied = is_person_assigned_at_time(df_room, selected_colleague_name, my_selected_info['date_obj'], my_selected_info['column_name'], df_special)
             
             if is_colleague_occupied:
                 st.warning(f"⚠️ **{selected_colleague_name}**님이 **{my_selected_info['display_str'].split('-')[0].strip()}** ({get_shift_period(my_selected_info['column_name'])})에 이미 근무가 있습니다. 중복 배치가 되지 않도록 **{selected_colleague_name}** 님의 방배정도 변경해 주십시오.")
@@ -368,16 +478,25 @@ else:
     cols_them_to_my = st.columns([2, 2, 1])
 
     compatible_colleague_names_them = []
-
     if st.session_state.get('user_data', None):
         all_colleagues_set = set(st.session_state.get('user_data', {}).keys()) - {user_name, ''}
     else:
         time_cols_all = [col for col in df_room.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)]
-        all_colleagues_set = set(df_room[time_cols_all].values.ravel()) - {user_name, ''}
-    
+        all_colleagues_set = set()
+        for col in time_cols_all:
+            for value in df_room[col].values:
+                if value:
+                    cleaned_value = re.sub(r'\[\d+\]', '', str(value)).strip()
+                    all_colleagues_set.add(cleaned_value)
+        if not df_special.empty:
+            for workers in df_special['근무 인원']:
+                if workers:
+                    cleaned_workers = [re.sub(r'\[\d+\]', '', worker).strip() for worker in workers.split(', ')]
+                    all_colleagues_set.update(cleaned_workers)
+
     for colleague_name in sorted(list(all_colleagues_set)):
         compatible_colleague_names_them.append(colleague_name)
-    
+
     with cols_them_to_my[0]:
         selected_colleague_name_them = st.selectbox(
             "상대방 선택",
@@ -386,16 +505,16 @@ else:
             placeholder="상대방을 선택하세요",
             key="them_to_my_colleague_select"
         )
-    
+
     with cols_them_to_my[1]:
         colleague_assignment_options_them = {}
         selected_assignment_str_them = None
         is_them_assignment_selected = selected_colleague_name_them is not None
-        
+
         if selected_colleague_name_them:
-            colleague_assignments = get_person_room_assignments(df_room, selected_colleague_name_them)
-            
-            user_occupied_slots = {(s['date_obj'], s['column_name']) for s in get_person_room_assignments(df_room, user_name)}
+            colleague_assignments = get_person_room_assignments(df_room, selected_colleague_name_them, df_special)
+
+            user_occupied_slots = {(s['date_obj'], s['column_name']) for s in get_person_room_assignments(df_room, user_name, df_special)}
             compatible_assignments = [
                 s for s in colleague_assignments if (s['date_obj'], s['column_name']) not in user_occupied_slots
             ]

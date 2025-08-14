@@ -1257,7 +1257,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             st.stop()
     
     with st.spinner("방 배정 중..."):
-        time.sleep(1)
+        time.sleep(2)
         if st.session_state.get('df_schedule') is None or st.session_state["df_schedule"].empty:
             st.error("별도의 토요/휴일 일정 없이 배정됩니다.")
             st.stop()
