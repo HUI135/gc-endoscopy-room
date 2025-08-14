@@ -976,7 +976,10 @@ def assign_special_date(personnel_for_day, date_str, duty_person, settings):
     
     return assignment
 
-# 기존 random_assign 함수 (special_dates에서는 사용되지 않음, 유지)
+from collections import Counter
+import random
+import streamlit as st
+
 def random_assign(personnel, slots, request_assignments, time_groups, total_stats, morning_personnel, afternoon_personnel, afternoon_duty_counts):
     assignment = [None] * len(slots)
     assigned_personnel_morning = set()
@@ -986,13 +989,25 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
         'late': Counter(),
         'morning_duty': Counter(),
         'afternoon_duty': Counter(),
-        'rooms': {str(i): Counter() for i in range(1, 13)}
+        'rooms': {str(i): Counter() for i in range(1, 13)},
+        'time_room_slots': {}  # 시간대-방 쌍에 대한 Counter 객체를 딕셔너리로 관리
     }
+
+    # time_room_slots 초기화
+    for slot in slots:
+        daily_stats['time_room_slots'][slot] = Counter()
+
+    # total_stats['time_room_slots'] 초기화 (외부 코드 수정 없이 함수 내에서 처리)
+    if 'time_room_slots' not in total_stats:
+        total_stats['time_room_slots'] = {}
+    for slot in slots:
+        total_stats['time_room_slots'].setdefault(slot, Counter())
 
     morning_slots = [s for s in slots if s.startswith(('8:30', '9:00', '9:30', '10:00')) and '_당직' not in s]
     afternoon_slots = [s for s in slots if s.startswith('13:30')]
     afternoon_duty_slot = [s for s in slots if s.startswith('13:30') and s.endswith('_당직')]
 
+    # 요청된 배정 처리
     for slot, person in request_assignments.items():
         if person in personnel and slot in slots:
             slot_idx = slots.index(slot)
@@ -1013,6 +1028,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
                         assigned_personnel_afternoon.add(person)
                     room_num = slot.split('(')[1].split(')')[0]
                     daily_stats['rooms'][room_num][person] += 1
+                    daily_stats['time_room_slots'][slot][person] += 1
                     if slot.startswith('8:30') and '_당직' not in slot:
                         daily_stats['early'][person] += 1
                     elif slot.startswith('10:00'):
@@ -1026,6 +1042,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             else:
                 st.warning(f"배정 요청 충돌: {person}을 {slot}에 배정할 수 없음. 이미 배정됨: {assignment[slot_idx]}")
 
+    # 오후 당직 배정
     afternoon_duty_slot_idx = slots.index(afternoon_duty_slot[0]) if afternoon_duty_slot else None
     if afternoon_duty_slot_idx is not None and assignment[afternoon_duty_slot_idx] is None:
         available_personnel = [p for p in afternoon_personnel if p not in assigned_personnel_afternoon]
@@ -1036,19 +1053,24 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             min_duty_count = float('inf')
             for person in candidates:
                 duty_count = total_stats['afternoon_duty'][person] + daily_stats['afternoon_duty'][person]
-                if duty_count < min_duty_count:
-                    min_duty_count = duty_count
+                time_room_count = total_stats['time_room_slots'][afternoon_duty_slot[0]][person] + \
+                                 daily_stats['time_room_slots'][afternoon_duty_slot[0]][person]
+                score = duty_count * 100 + time_room_count
+                if score < min_duty_count:
+                    min_duty_count = score
                     best_person = person
             if best_person:
                 assignment[afternoon_duty_slot_idx] = best_person
                 assigned_personnel_afternoon.add(best_person)
                 room_num = afternoon_duty_slot[0].split('(')[1].split(')')[0]
                 daily_stats['rooms'][room_num][best_person] += 1
+                daily_stats['time_room_slots'][afternoon_duty_slot[0]][best_person] += 1
                 daily_stats['afternoon_duty'][best_person] += 1
                 afternoon_duty_counts[best_person] -= 1
                 if afternoon_duty_counts[best_person] <= 0:
                     del afternoon_duty_counts[best_person]
 
+    # 오전 슬롯 배정
     morning_remaining = [p for p in morning_personnel if p not in assigned_personnel_morning]
     afternoon_remaining = [p for p in afternoon_personnel if p not in assigned_personnel_afternoon]
     remaining_slots = [i for i, a in enumerate(assignment) if a is None]
@@ -1064,18 +1086,18 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             if assignment[slot_idx] is not None:
                 continue
             slot = slots[slot_idx]
-            room_num = slot.split('(')[1].split(')')[0]
             
             for person in morning_remaining:
+                time_room_count = total_stats['time_room_slots'][slot][person] + \
+                                  daily_stats['time_room_slots'][slot][person]
                 if slot.startswith('8:30') and '_당직' not in slot:
                     early_count = total_stats['early'][person] + daily_stats['early'][person]
-                    score = early_count
+                    score = early_count * 100 + time_room_count
                 elif slot.startswith('10:00'):
                     late_count = total_stats['late'][person] + daily_stats['late'][person]
-                    score = 10000 + late_count
+                    score = 10000 + late_count * 100 + time_room_count
                 else:
-                    room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
-                    score = 20000 + room_count
+                    score = 20000 + time_room_count
                 
                 if score < min_score:
                     min_score = score
@@ -1094,6 +1116,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
         remaining_slots.remove(best_slot_idx)
         room_num = slot.split('(')[1].split(')')[0]
         daily_stats['rooms'][room_num][best_person] += 1
+        daily_stats['time_room_slots'][slot][best_person] += 1
         if slot.startswith('8:30') and '_당직' not in slot:
             daily_stats['early'][best_person] += 1
         elif slot.startswith('10:00'):
@@ -1101,6 +1124,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
         if slot.startswith('8:30') and slot.endswith('_당직'):
             daily_stats['morning_duty'][best_person] += 1
 
+    # 오후 슬롯 배정
     afternoon_slot_indices = [i for i in remaining_slots if slots[i] in afternoon_slots]
     while afternoon_remaining and afternoon_slot_indices:
         best_person = None
@@ -1111,22 +1135,15 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             if assignment[slot_idx] is not None:
                 continue
             slot = slots[slot_idx]
-            room_num = slot.split('(')[1].split(')')[0]
             
             for person in afternoon_remaining:
-                room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
+                time_room_count = total_stats['time_room_slots'][slot][person] + \
+                                  daily_stats['time_room_slots'][slot][person]
                 duty_count = total_stats['afternoon_duty'][person] + daily_stats['afternoon_duty'][person] if slot.endswith('_당직') else float('inf')
-                early_count = total_stats['early'][person]
-                late_count = total_stats['late'][person]
-
                 if slot.endswith('_당직'):
-                    score = duty_count
-                elif slot.startswith('8:30') and '_당직' not in slot:
-                    score = (early_count, room_count)
-                elif slot.startswith('10:00'):
-                    score = (late_count, room_count)
+                    score = duty_count * 100 + time_room_count
                 else:
-                    score = room_count
+                    score = time_room_count
                 
                 if score < min_score:
                     min_score = score
@@ -1144,9 +1161,11 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
         afternoon_slot_indices.remove(best_slot_idx)
         room_num = slot.split('(')[1].split(')')[0]
         daily_stats['rooms'][room_num][best_person] += 1
+        daily_stats['time_room_slots'][slot][best_person] += 1
         if slot.endswith('_당직'):
             daily_stats['afternoon_duty'][best_person] += 1
 
+    # 남은 빈 슬롯 처리
     for slot_idx in range(len(slots)):
         if assignment[slot_idx] is None:
             slot = slots[slot_idx]
@@ -1163,18 +1182,19 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
                     late_count = total_stats['late'][person] + daily_stats['late'][person] if slot.startswith('10:00') else float('inf')
                     morning_duty_count = total_stats['morning_duty'][person] + daily_stats['morning_duty'][person] if slot.startswith('8:30') and slot.endswith('_당직') else float('inf')
                     afternoon_duty_count = total_stats['afternoon_duty'][person] + daily_stats['afternoon_duty'][person] if slot.startswith('13:30') and slot.endswith('_당직') else float('inf')
-                    room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
+                    time_room_count = total_stats['time_room_slots'][slot][person] + \
+                                      daily_stats['time_room_slots'][slot][person]
                     
                     if slot.startswith('8:30') and '_당직' not in slot:
-                        score = early_count
+                        score = early_count * 100 + time_room_count
                     elif slot.startswith('10:00'):
-                        score = late_count
+                        score = late_count * 100 + time_room_count
                     elif slot.startswith('8:30') and slot.endswith('_당직'):
-                        score = morning_duty_count
+                        score = morning_duty_count * 100 + time_room_count
                     elif slot.startswith('13:30') and slot.endswith('_당직'):
-                        score = afternoon_duty_count
+                        score = afternoon_duty_count * 100 + time_room_count
                     else:
-                        score = room_count
+                        score = time_room_count
                     
                     if score < min_score:
                         min_score = score
@@ -1197,18 +1217,19 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
                         late_count = total_stats['late'][person] + daily_stats['late'][person] if slot.startswith('10:00') else float('inf')
                         morning_duty_count = total_stats['morning_duty'][person] + daily_stats['morning_duty'][person] if slot.startswith('8:30') and slot.endswith('_당직') else float('inf')
                         afternoon_duty_count = total_stats['afternoon_duty'][person] + daily_stats['afternoon_duty'][person] if slot.startswith('13:30') and slot.endswith('_당직') else float('inf')
-                        room_count = total_stats['rooms'][room_num][person] + daily_stats['rooms'][room_num][person]
+                        time_room_count = total_stats['time_room_slots'][slot][person] + \
+                                          daily_stats['time_room_slots'][slot][person]
                         
                         if slot.startswith('8:30') and '_당직' not in slot:
-                            score = early_count
+                            score = early_count * 100 + time_room_count
                         elif slot.startswith('10:00'):
-                            score = late_count
+                            score = late_count * 100 + time_room_count
                         elif slot.startswith('8:30') and slot.endswith('_당직'):
-                            score = morning_duty_count
+                            score = morning_duty_count * 100 + time_room_count
                         elif slot.startswith('13:30') and slot.endswith('_당직'):
-                            score = afternoon_duty_count
+                            score = afternoon_duty_count * 100 + time_room_count
                         else:
-                            score = room_count
+                            score = time_room_count
                         
                         if score < min_score:
                             min_score = score
@@ -1222,6 +1243,7 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             
             assignment[slot_idx] = person
             daily_stats['rooms'][room_num][person] += 1
+            daily_stats['time_room_slots'][slot][person] += 1
             if slot.startswith('8:30') and '_당직' not in slot:
                 daily_stats['early'][person] += 1
             elif slot.startswith('10:00'):
@@ -1231,10 +1253,13 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
             elif slot.startswith('13:30') and slot.endswith('_당직'):
                 daily_stats['afternoon_duty'][person] += 1
 
+    # total_stats 업데이트
     for key in ['early', 'late', 'morning_duty', 'afternoon_duty']:
         total_stats[key].update(daily_stats[key])
     for room in daily_stats['rooms']:
         total_stats['rooms'][room].update(daily_stats['rooms'][room])
+    for slot in daily_stats['time_room_slots']:
+        total_stats['time_room_slots'][slot].update(daily_stats['time_room_slots'][slot])
 
     return assignment, daily_stats
 
@@ -1463,23 +1488,41 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             person_on_call = row_data[columns.index('온콜')]
             if person_on_call:
                 total_stats['morning_duty'][person_on_call] += 1
-        
+                
+        # --- 시간대 순서 정의 ---
+        time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
+
         # --- 통계 DataFrame 생성 ---
         stats_data, all_personnel_stats = [], set(p for _, r in st.session_state["df_schedule_md"].iterrows() for p in r[2:-1].dropna() if p)
         for person in sorted(all_personnel_stats):
-            stats_data.append({
+            stats_entry = {
                 '인원': person,
                 '이른방 합계': total_stats['early'][person],
                 '늦은방 합계': total_stats['late'][person],
                 '오전 당직 합계': total_stats['morning_duty'][person],
                 '오후 당직 합계': total_stats['afternoon_duty'][person],
-                **{f'{r}번방 합계': total_stats['rooms'][r][person] for r in total_stats['rooms']}
-            })
-        stats_df = pd.DataFrame(stats_data)
+            }
+            # 시간대(방) 합계 추가 (당직 제외)
+            for slot in st.session_state["time_slots"].keys():
+                if not slot.endswith('_당직'):  # 당직 슬롯 제외
+                    stats_entry[f'{slot} 합계'] = total_stats['time_room_slots'].get(slot, Counter())[person]
+            stats_data.append(stats_entry)
+
+        # 컬럼 정렬: 시간대 및 방 번호 순으로
+        sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전 당직 합계', '오후 당직 합계']
+        time_slots = sorted(
+            [slot for slot in st.session_state["time_slots"].keys() if not slot.endswith('_당직')],
+            key=lambda x: (
+                time_order.index(x.split('(')[0]),  # 시간대 순서
+                int(x.split('(')[1].split(')')[0])  # 방 번호 순서
+            )
+        )
+        sorted_columns.extend([f'{slot} 합계' for slot in time_slots])
+        stats_df = pd.DataFrame(stats_data)[sorted_columns]
         st.divider()
         st.markdown("**☑️ 인원별 통계**")
         st.dataframe(stats_df, hide_index=True)
-        
+                
         # --- Excel 생성 및 다운로드 로직 ---
         wb = openpyxl.Workbook()
         sheet = wb.active
@@ -1583,9 +1626,9 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 cell.fill = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
             elif '당직' in header:
                 cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
-            elif '번방' in header:
+            else:
                 cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-        
+            
         for row_idx, row in enumerate(stats_df.values, 2):
             for col_idx, value in enumerate(row, 1):
                 cell = stats_sheet.cell(row_idx, col_idx, value)
