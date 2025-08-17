@@ -1567,6 +1567,14 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
 
         # 데이터 렌더링
         for row_idx, row_data in enumerate(result_data, 2):
+
+            # 날짜를 datetime 객체로 변환하여 요일 계산
+            try:
+                date_obj = datetime.strptime(f"2025년 {current_date_str}", '%Y년 %m월 %d일')
+                is_special_day = current_date_str in special_dates
+            except (ValueError, TypeError):
+                is_special_day = False
+
             has_person = any(val for val in row_data[2:] if val)
             current_date_str = row_data[0]
             assignment_cells = row_data[2:]
