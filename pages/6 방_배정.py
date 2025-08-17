@@ -1535,6 +1535,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             font_name = "맑은 고딕"  # Windows에서 기본 제공
         else:
             font_name = "Arial"  # Mac에서 기본 제공, Windows에서도 사용 가능
+        st.write(font_name)
 
         # 색상 및 스타일 정의
         highlight_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
