@@ -417,15 +417,10 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
 month_str = "2025년 4월"
 st.header("🔄 방 배정 변경", divider='rainbow')
 
-if st.button("🔄 새로고침 (R)"):
-    # st.cache_data만 초기화하고, 세션 상태는 유지
-    st.cache_data.clear()
-    # 데이터 로드 플래그만 False로 설정
-    st.session_state.change_data_loaded = False
-    st.rerun()
-
-if not st.session_state.get('change_data_loaded', False):
-    with st.spinner('데이터를 불러오는 중입니다...'):
+if st.button("🔄 새로고침(R)"):
+    with st.spinner("데이터를 불러오는 중입니다..."):
+        st.cache_data.clear()
+        st.session_state.change_data_loaded = False
         df_final, df_req = load_data_for_change_page(month_str)
         df_special = load_special_schedules(month_str)
         st.session_state.df_final_assignment = df_final
@@ -435,7 +430,7 @@ if not st.session_state.get('change_data_loaded', False):
         st.session_state.df_before_apply = df_final.copy()
         st.session_state.has_changes_to_revert = False
         st.session_state.change_data_loaded = True
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
+    st.rerun()
 
 st.write(" ")
 st.subheader("📋 방배정 변경 요청 목록")
