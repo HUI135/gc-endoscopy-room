@@ -318,17 +318,18 @@ def split_column_to_multiple(df, column_name, prefix):
     return df
 
 st.header("🗓️ 스케줄 배정", divider='rainbow')
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 
 # 새로고침 버튼 (맨 상단)
 if st.button("🔄 새로고침 (R)"):
     try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()
-            st.cache_resource.clear()
-            st.session_state["data_loaded"] = False
-            load_data_page5()
-            st.success("데이터가 새로고침되었습니다.")
-            st.rerun()
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.session_state["data_loaded"] = False
+        load_data_page5()
+        st.success("데이터가 새로고침되었습니다.")
+        time.sleep(1)
+        st.rerun()
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (새로고침): {e.response.status_code} - {e.response.text}")
@@ -341,7 +342,6 @@ if st.button("🔄 새로고침 (R)"):
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
         st.stop()
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 
 # 메인 로직
 load_data_page5()
@@ -353,6 +353,7 @@ df_cumulative = st.session_state.get("df_cumulative", pd.DataFrame(columns=["이
 df_shift = st.session_state.get("df_shift", pd.DataFrame())  # 세션 상태에서 가져오기
 df_supplement = st.session_state.get("df_supplement", pd.DataFrame())  # 세션 상태에서 가져오기
 
+st.divider()
 st.subheader(f"✨ {month_str} 테이블 종합")
 
 # 데이터 전처리: 근무 테이블과 보충 테이블의 열 분리

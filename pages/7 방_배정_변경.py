@@ -417,33 +417,23 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
 month_str = "2025년 4월"
 st.header("🔄 방 배정 변경", divider='rainbow')
 
-# 새로고침 안내 메시지 및 버튼 (2열 형태)
-col1, col2 = st.columns([1, 3])
-with col1:
-    if st.button("🔄 새로고침 (R)", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.change_data_loaded = False
-        df_final, df_req = load_data_for_change_page(month_str)
-        df_special = load_special_schedules(month_str)
-        st.session_state.df_final_assignment = df_final
-        st.session_state.df_change_requests = df_req
-        st.session_state.df_special_schedules = df_special
-        st.session_state.changed_cells_log = []
-        st.session_state.df_before_apply = df_final.copy()
-        st.session_state.has_changes_to_revert = False
-        st.session_state.change_data_loaded = True
-        st.rerun()
-with col2:
-    st.markdown(
-        """
-        <div style="display: flex; align-items: center; height: 100%;">
-            ← 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+# 새로고침 버튼
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.session_state.change_data_loaded = False
+    df_final, df_req = load_data_for_change_page(month_str)
+    df_special = load_special_schedules(month_str)
+    st.session_state.df_final_assignment = df_final
+    st.session_state.df_change_requests = df_req
+    st.session_state.df_special_schedules = df_special
+    st.session_state.changed_cells_log = []
+    st.session_state.df_before_apply = df_final.copy()
+    st.session_state.has_changes_to_revert = False
+    st.session_state.change_data_loaded = True
+    st.rerun()
 
-st.write(" ")
+st.divider()
 st.subheader("📋 방배정 변경 요청 목록")
 if not st.session_state.df_change_requests.empty:
     df_display = st.session_state.df_change_requests.copy()

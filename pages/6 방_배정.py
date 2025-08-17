@@ -439,40 +439,39 @@ else:
 st.header("🚪 방 배정", divider='rainbow')
 
 # 새로고침 버튼
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 if st.button("🔄 새로고침 (R)"):
     try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()
-            st.session_state["data_loaded"] = False
-            result = load_data_page6_no_cache(month_str)
-            if result[0] is None:
-                st.error("데이터 로드에 실패했습니다. 새로고침 버튼을 눌러 다시 시도해주세요.")
-                st.stop()
-            
-            df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = result
-            st.session_state["df_schedule_original"] = df_schedule.copy()
-            st.session_state["df_schedule"] = df_schedule
-            st.session_state["df_room_request"] = df_room_request
-            st.session_state["worksheet_room_request"] = worksheet_room_request
-            st.session_state["df_cumulative"] = df_cumulative
-            st.session_state["df_swap_requests"] = df_swap_requests
-            st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
-            st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-            st.session_state["swapped_assignments_log"] = []
-            st.session_state["swapped_assignments"] = set()
-            st.session_state["manual_change_log"] = []
-            st.session_state["final_change_log"] = []
-            st.session_state["data_loaded"] = True
-            st.session_state["weekend_room_settings"] = {}  # 새로고침 시 weekend_room_settings 초기화
-            st.success("데이터가 새로고침되었습니다.")
-            st.rerun()
+        st.cache_data.clear()
+        st.session_state["data_loaded"] = False
+        result = load_data_page6_no_cache(month_str)
+        if result[0] is None:
+            st.error("데이터 로드에 실패했습니다. 새로고침 버튼을 눌러 다시 시도해주세요.")
+            st.stop()
+        
+        df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = result
+        st.session_state["df_schedule_original"] = df_schedule.copy()
+        st.session_state["df_schedule"] = df_schedule
+        st.session_state["df_room_request"] = df_room_request
+        st.session_state["worksheet_room_request"] = worksheet_room_request
+        st.session_state["df_cumulative"] = df_cumulative
+        st.session_state["df_swap_requests"] = df_swap_requests
+        st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
+        st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+        st.session_state["swapped_assignments_log"] = []
+        st.session_state["swapped_assignments"] = set()
+        st.session_state["manual_change_log"] = []
+        st.session_state["final_change_log"] = []
+        st.session_state["data_loaded"] = True
+        st.session_state["weekend_room_settings"] = {}  # 새로고침 시 weekend_room_settings 초기화
+        st.success("데이터가 새로고침되었습니다.")
+        st.rerun()
     except Exception as e:
         st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
         st.stop()
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 
 # 근무자 명단 수정
-st.write(" ")
+st.divider()
 st.subheader("📋 스케줄 변경 요청 목록")
 if "df_schedule" not in st.session_state or st.session_state["df_schedule"].empty:
     st.warning("⚠️ 스케줄 데이터가 로드되지 않았습니다. 새로고침 버튼을 눌러 데이터를 다시 로드해주세요.")
