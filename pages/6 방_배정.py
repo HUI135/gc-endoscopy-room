@@ -1604,11 +1604,12 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 if (formatted_current_date, cell_shift_type, str(value).strip()) in swapped_assignments:
                     cell.fill = highlight_fill
 
-                # 당직 셀 스타일링 (토요/휴일에는 모든 당직 및 온콜 열에 duty_font 적용 안 함)
-                if (slot_name.endswith('_당직') or slot_name == '온콜') and value and not (current_date_str in special_dates):
-                    cell.font = duty_font  # 평일의 당직 및 온콜 열에만 볼드체 + 핑크색 적용
+                if slot_name.startswith('8:30') and slot_name.endswith('_당직') and value:
+                    cell.font = duty_font  # 오전 당직은 항상 볼드체 + 핑크색
+                elif (slot_name.startswith('13:30') and slot_name.endswith('_당직') or slot_name == '온콜') and value and not (current_date_str in special_dates):
+                    cell.font = duty_font  # 오후 당직과 온콜은 평일에만 볼드체 + 핑크색
                 else:
-                    cell.font = default_font  # 토요/휴일 또는 비당직 열에는 기본 폰트 적용
+                    cell.font = default_font  # 토요/휴일의 오후 당직/온콜 또는 비당직 열에는 기본 폰트 적용
                 
                 # special_dates의 경우 value를 그대로 셀에 기록
                 if current_date_str in special_dates and col_idx > 2 and value:
