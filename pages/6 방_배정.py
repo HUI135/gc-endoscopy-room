@@ -439,7 +439,6 @@ else:
 st.header("🚪 방 배정", divider='rainbow')
 
 # 새로고침 버튼
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 if st.button("🔄 새로고침 (R)"):
     try:
         with st.spinner("데이터를 다시 불러오는 중입니다..."):
@@ -470,6 +469,7 @@ if st.button("🔄 새로고침 (R)"):
     except Exception as e:
         st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
         st.stop()
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 
 # 근무자 명단 수정
 st.write(" ")
