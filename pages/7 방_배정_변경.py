@@ -417,7 +417,8 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
 month_str = "2025년 4월"
 st.header("🔄 방 배정 변경", divider='rainbow')
 
-if st.button("🔄 새로고침(R)"):
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
+if st.button("🔄 새로고침 (R)"):
     # st.cache_data만 초기화하고, 세션 상태는 유지
     st.cache_data.clear()
     # 데이터 로드 플래그만 False로 설정
