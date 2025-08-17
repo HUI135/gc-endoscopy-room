@@ -418,7 +418,7 @@ month_str = "2025년 4월"
 st.header("🔄 방 배정 변경", divider='rainbow')
 
 # 새로고침 안내 메시지 (2열 형태)
-col1, col2 = st.columns([2, 4])
+col1, col2 = st.columns([1, 4])
 
 # 새로고침 버튼
 with col1:
