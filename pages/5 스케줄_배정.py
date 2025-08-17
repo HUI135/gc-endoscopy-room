@@ -1248,8 +1248,8 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         output.seek(0)
         st.session_state.output = output
 
-        # ... 이하 G-Sheet 저장 및 다운로드 버튼 표시 로직은 기존과 동일
-        month_dt = datetime.strptime(month_str, "%Y년 %m월")
+        # ... 이하 G-Sheet 저장 및 다운로드 버튼 표시 로직
+        month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
         next_month_dt = (month_dt + relativedelta(months=1)).replace(day=1)
         next_month_str = next_month_dt.strftime("%Y년 %-m월")
         next_month_start = month_dt.replace(day=1)
