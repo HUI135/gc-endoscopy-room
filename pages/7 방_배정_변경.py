@@ -627,15 +627,24 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
         wb = openpyxl.Workbook()
         sheet = wb.active
         sheet.title = "Schedule"
+
+        import platform
+
+        # 플랫폼에 따라 폰트 선택
+        if platform.system() == "Windows":
+            font_name = "맑은 고딕"  # Windows에서 기본 제공
+        else:
+            font_name = "Arial"  # Mac에서 기본 제공, Windows에서도 사용 가능
+
         highlight_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
-        duty_font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
-        default_font = Font(name="맑은 고딕", size=9)
+        duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")
+        default_font = Font(name=font_name, size=9)
         
         # 컬럼 헤더 작성
         columns = final_df_to_save.columns.tolist()
         for col_idx, header in enumerate(columns, 1):
             cell = sheet.cell(1, col_idx, header)
-            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.font = Font(bold=True, name=font_name, size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             if header.startswith('8:30') or header == '온콜':
@@ -734,7 +743,7 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
         for col_idx, header in enumerate(stats_columns, 1):
             stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
             cell = stats_sheet.cell(1, col_idx, header)
-            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.font = Font(bold=True, name=font_name, size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             if header == '인원':
@@ -751,7 +760,7 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
         for row_idx, row in enumerate(stats_df.values, 2):
             for col_idx, value in enumerate(row, 1):
                 cell = stats_sheet.cell(row_idx, col_idx, value)
-                cell.font = Font(name="맑은 고딕", size=9)
+                cell.font = Font(name=font_name, size=9)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
         
