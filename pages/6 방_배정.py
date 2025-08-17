@@ -1528,11 +1528,19 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         sheet = wb.active
         sheet.title = "Schedule"
 
+        import platform
+
+        # 플랫폼에 따라 폰트 선택
+        if platform.system() == "Windows":
+            font_name = "맑은 고딕"  # Windows에서 기본 제공
+        else:
+            font_name = "Arial"  # Mac에서 기본 제공, Windows에서도 사용 가능
+
         # 색상 및 스타일 정의
         highlight_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
         sky_blue_fill = PatternFill(start_color="CCEEFF", end_color="CCEEFF", fill_type="solid")
-        duty_font = Font(name="맑은 고딕", size=9, bold=True, color="FF00FF")
-        default_font = Font(name="맑은 고딕", size=9)
+        duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")
+        default_font = Font(name=font_name, size=9)
         special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
         no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
         default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
@@ -1543,7 +1551,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         # 헤더 렌더링
         for col_idx, header in enumerate(columns, 1):
             cell = sheet.cell(1, col_idx, header)
-            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.font = Font(bold=True, name=font_name, size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             if header.startswith('8:30') or header == '온콜':
@@ -1615,7 +1623,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         for col_idx, header in enumerate(stats_columns, 1):
             stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
             cell = stats_sheet.cell(1, col_idx, header)
-            cell.font = Font(bold=True, name="맑은 고딕", size=9)
+            cell.font = Font(bold=True, name=font_name, size=9)
             cell.alignment = Alignment(horizontal='center', vertical='center')
             cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             if header == '인원':
@@ -1632,7 +1640,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         for row_idx, row in enumerate(stats_df.values, 2):
             for col_idx, value in enumerate(row, 1):
                 cell = stats_sheet.cell(row_idx, col_idx, value)
-                cell.font = Font(name="맑은 고딕", size=9)
+                cell.font = Font(name=font_name, size=9)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
