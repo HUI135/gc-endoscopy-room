@@ -728,11 +728,8 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
                 if (row_idx, col_idx) in changed_cells_set:
                     cell.fill = highlight_fill
                 
-                # 당직 셀 스타일링
-                if (slot_name.endswith('_당직') and slot_name.startswith('8:30')) or slot_name == '온콜':
-                    cell.font = duty_font
-                elif slot_name.endswith('_당직') and slot_name.startswith('13:30') and not is_special_day:
-                    # 오후 당직이지만 special day가 아닌 경우에만 핑크색 & 볼드체 적용
+                # 당직 셀 스타일링 (토요/휴일에는 당직 열에 duty_font 적용 안 함)
+                if (slot_name.endswith('_당직') or slot_name == '온콜') and value and not (current_date_str in special_dates):
                     cell.font = duty_font
                 else:
                     cell.font = default_font

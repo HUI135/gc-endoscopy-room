@@ -1567,14 +1567,6 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
 
         # 데이터 렌더링
         for row_idx, row_data in enumerate(result_data, 2):
-
-            # 날짜를 datetime 객체로 변환하여 요일 계산
-            try:
-                date_obj = datetime.strptime(f"2025년 {current_date_str}", '%Y년 %m월 %d일')
-                is_special_day = current_date_str in special_dates
-            except (ValueError, TypeError):
-                is_special_day = False
-
             has_person = any(val for val in row_data[2:] if val)
             current_date_str = row_data[0]
             assignment_cells = row_data[2:]
@@ -1612,11 +1604,8 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 if (formatted_current_date, cell_shift_type, str(value).strip()) in swapped_assignments:
                     cell.fill = highlight_fill
 
-                # 당직 셀 스타일링
-                if (slot_name.endswith('_당직') and slot_name.startswith('8:30')) or slot_name == '온콜':
-                    cell.font = duty_font
-                elif slot_name.endswith('_당직') and slot_name.startswith('13:30') and not is_special_day:
-                    # 오후 당직이지만 special day가 아닌 경우에만 핑크색 & 볼드체 적용
+                # 수정된 코드
+                if (slot_name.endswith('_당직') or slot_name == '온콜') and value and not (current_date_str in special_dates):
                     cell.font = duty_font
                 else:
                     cell.font = default_font
