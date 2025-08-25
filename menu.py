@@ -33,6 +33,9 @@ def menu():
         if st.sidebar.button("🏠 Home", use_container_width=True, disabled=(current_page_basename == "Home.py")):
             st.switch_page("Home.py")
         
+        if st.sidebar.button("🤖 챗봇에게 물어보기", use_container_width=True, disabled=(current_page_basename == "0 🤖_챗봇에게_물어보기.py")):
+            st.switch_page("pages/0 🤖_챗봇에게_물어보기.py")
+
         if st.sidebar.button("📅 마스터 수정", use_container_width=True, disabled=(current_page_basename == "1 📅_마스터_수정.py")):
             st.switch_page("pages/1 📅_마스터_수정.py")
 

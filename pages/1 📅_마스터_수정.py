@@ -36,7 +36,7 @@ def get_gspread_client():
         credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
         return gspread.authorize(credentials)
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (클라이언트 초기화): {str(e)}")
         st.stop()
     except Exception as e:
@@ -61,7 +61,7 @@ def load_master_data_page1(_gc, url):
         worksheet_master = sheet.worksheet("마스터")
         return pd.DataFrame(worksheet_master.get_all_records())
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (마스터 데이터): {str(e)}")
         st.stop()
     except Exception as e:
@@ -77,7 +77,7 @@ def refresh_data():
         data = worksheet1.get_all_records()
         return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (데이터 새로고침): {str(e)}")
         st.stop()
     except Exception as e:
@@ -94,13 +94,10 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
     has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
     if has_weekly:
         weekly_df = df_user_master[df_user_master["주차"] == "매주"]
-        # 요일별 근무여부 딕셔너리 생성
         weekly_schedule = weekly_df.set_index("요일")["근무여부"].to_dict()
-        # 누락된 요일이 있다면 "근무없음"으로 채우기
         for 요일 in 요일리스트:
             if 요일 not in weekly_schedule:
                 weekly_schedule[요일] = "근무없음"
-        # 모든 주에 대해 동일한 "매주" 스케줄 적용
         for week in week_labels:
             master_data[week] = weekly_schedule
     else:
@@ -116,28 +113,17 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
     _, last_day = calendar.monthrange(year, month)
     status_colors = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
 
-    # 첫 번째 일요일 찾기
-    first_sunday = None
-    for day in range(1, last_day + 1):
-        date_obj = datetime.date(year, month, day)
-        if date_obj.weekday() == 6:  # 일요일
-            first_sunday = day
-            break
-
     for day in range(1, last_day + 1):
         date_obj = datetime.date(year, month, day)
         weekday = date_obj.weekday()
         if weekday in weekday_map:
             day_name = weekday_map[weekday]
-            # 주차 계산: 첫 번째 일요일 기준
-            if first_sunday and day < first_sunday:
-                week_num = 0  # 첫 번째 일요일 이전은 1주차
-            elif first_sunday:
-                week_num = (day - first_sunday) // 7 + 1  # 첫 번째 일요일 이후 주차 계산
-            else:
-                week_num = (day - 1) // 7
+            # 주차 계산: 단순화 (ISO 주차 사용)
+            week_num = date_obj.isocalendar()[1] - datetime.date(year, month, 1).isocalendar()[1]
+            if week_num < 0:
+                week_num = 0  # 첫 주차 보정
             if week_num >= len(week_labels):
-                continue
+                week_num = len(week_labels) - 1  # 마지막 주차로 제한
             week = week_labels[week_num]
             status = master_data.get(week, {}).get(day_name, "근무없음")
             if status != "근무없음":
@@ -167,7 +153,7 @@ except NameError as e:
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 except gspread.exceptions.APIError as e:
-    st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+    st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
     st.error(f"Google Sheets API 오류 (초기 설정): {str(e)}")
     st.stop()
 except Exception as e:
@@ -191,12 +177,12 @@ if df_user_master.empty:
             worksheet1.clear()
             worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
         except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
             st.error(f"Google Sheets API 오류 (초기 데이터 업데이트): {str(e)}")
             st.stop()
         st.session_state["df_master"] = df_master
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (초기 데이터 추가): {str(e)}")
         st.stop()
     except Exception as e:
@@ -208,18 +194,24 @@ if df_user_master.empty:
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
 요일리스트 = ["월", "화", "수", "목", "금"]
 today = datetime.date.today()
-month_str = today.strftime("%Y년 %-m월")  # 당월로 변경
-year, month = today.year, today.month  # 당월로 변경
-_, last_day = calendar.monthrange(today.year, today.month)  # 당월로 변경
-dates = pd.date_range(start=today.replace(day=1), end=today.replace(day=last_day))  # 당월로 변경
+month_str = today.strftime("%Y년 %-m월")  # 당월
+year, month = today.year, today.month  # 당월
+_, last_day = calendar.monthrange(today.year, today.month)  # 당월
+dates = pd.date_range(start=today.replace(day=1), end=today.replace(day=last_day))  # 당월
 week_nums = sorted(set(d.isocalendar()[1] for d in dates))
 
-# 캘린더 이벤트 생성 (당월 반영)
+# ✅ 주차 리스트
+has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
+week_labels = [f"{i+1}주" for i in range(len(week_nums))]  # 당월 주차 수에 맞게 설정
+
+# 디버깅: 데이터 및 이벤트 확인
+st.write("디버깅: df_user_master 데이터", df_user_master)
 events = generate_calendar_events(df_user_master, year, month, week_labels)
+st.write("디버깅: 생성된 이벤트", events)
 
 calendar_options = {
     "initialView": "dayGridMonth",
-    "initialDate": today.strftime("%Y-%m-%d"),  # 당월로 변경
+    "initialDate": today.strftime("%Y-%m-%d"),  # 당월
     "editable": False,
     "selectable": False,
     "eventDisplay": "block",
@@ -230,6 +222,7 @@ calendar_options = {
     "showNonCurrentDates": True,
     "fixedWeekCount": False
 }
+
 st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
 
 # 새로고침 버튼 (맨 상단)
@@ -247,17 +240,13 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
-
-# ✅ 주차 리스트
-has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
-week_labels = [f"{i+1}주" for i in range(len(week_nums))]  # 항상 주차 수에 맞게 설정
 
 # ✅ "매주" & "근무없음" 여부 확인
 all_no_work = False
@@ -288,40 +277,18 @@ if not df_user_master.empty and not has_weekly:
                 worksheet1.clear()
                 worksheet1.update([df_master.columns.values.tolist()] + df_master.values.tolist())
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (매주 변환): {str(e)}")
                 st.stop()
             st.session_state["df_master"] = df_master
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (매주 변환): {str(e)}")
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"매주 변환 중 오류 발생: {str(e)}")
         st.stop()
-
-next_month = today.replace(day=1) + relativedelta(months=1)
-year, month = next_month.year, next_month.month
-
-# 캘린더 이벤트 생성 (실시간 반영)
-events = generate_calendar_events(df_user_master, year, month, week_labels)
-
-calendar_options = {
-    "initialView": "dayGridMonth",
-    "initialDate": next_month.strftime("%Y-%m-%d"),
-    "editable": False,
-    "selectable": False,
-    "eventDisplay": "block",
-    "dayHeaderFormat": {"weekday": "short"},
-    "themeSystem": "bootstrap",
-    "height": 500,
-    "headerToolbar": {"left": "", "center": "", "right": ""},
-    "showNonCurrentDates": True,
-    "fixedWeekCount": False
-}
-
-st_calendar(events=events, options=calendar_options)
 
 # ✅ 캘린더 섹션
 st.divider()
@@ -361,7 +328,7 @@ with st.expander("📅 월 단위로 일괄 설정"):
                 worksheet1.clear()
                 worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
                 st.stop()
             
@@ -374,7 +341,7 @@ with st.expander("📅 월 단위로 일괄 설정"):
             st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
             st.rerun()  # 페이지 새로고침
         except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
             st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
             st.stop()
         except Exception as e:
@@ -424,7 +391,7 @@ with st.expander("📅 주 단위로 설정"):
                 worksheet1.clear()
                 worksheet1.update([df_result.columns.values.tolist()] + df_result.values.tolist())
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
                 st.stop()
             
@@ -436,7 +403,7 @@ with st.expander("📅 주 단위로 설정"):
             st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
             st.rerun()  # 페이지 새로고침
         except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
             st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
             st.stop()
         except Exception as e:

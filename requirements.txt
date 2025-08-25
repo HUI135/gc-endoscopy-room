@@ -9,3 +9,10 @@ openpyxl==3.1.5
 streamlit-calendar
 google-api-python-client
 st-pages
+langchain
+langchain-core
+langchain-community
+langchain-openai
+faiss-cpu
+openai
+gitpython

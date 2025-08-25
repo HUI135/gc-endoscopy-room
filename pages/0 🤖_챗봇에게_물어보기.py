@@ -9,7 +9,7 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
 # GitHub 리포지토리 URL과 브랜치 (당신의 리포로 바꾸세요)
-REPO_URL = "https://github.com/your-username/your-repo.git"
+REPO_URL = "https://github.com/HUI135/gc-endoscopy-room.git"
 BRANCH = "main"
 
 # API 키 (Streamlit 시크릿으로 관리 추천)
