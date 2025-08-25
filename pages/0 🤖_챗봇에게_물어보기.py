@@ -13,7 +13,7 @@ REPO_URL = "https://github.com/HUI135/gc-endoscopy-room.git"
 BRANCH = "main"
 
 # API 키 (Streamlit 시크릿으로 관리 추천)
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]  # 또는 os.environ["OPENAI_API_KEY"]
+OPENAI_API_KEY = st.secrets["gpt"]["openai_api_key"]
 
 # 지식 베이스 로드 함수 (앱 시작 시 한 번만)
 @st.cache_resource
