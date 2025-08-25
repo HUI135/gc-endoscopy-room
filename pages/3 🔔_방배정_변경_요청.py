@@ -24,7 +24,8 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-MONTH_STR = "2025년 4월"
+today = date.today()
+month_str = today.strftime("%Y년 %-m월")
 YEAR_STR = MONTH_STR.split('년')[0]
 REQUEST_SHEET_NAME = f"{MONTH_STR} 방배정 변경요청"
 

@@ -303,9 +303,9 @@ try:
         st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
         st.stop()
     name = st.session_state["name"]
-    today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
+    today = datetime.date.today()
+    month_str = today.strftime("%Y년 %-m월")
     next_month = today.replace(day=1) + relativedelta(months=1)
-    month_str = next_month.strftime("%Y년 %-m월")
     next_month_start = next_month
     _, last_day = calendar.monthrange(next_month.year, next_month.month)
     next_month_end = next_month.replace(day=last_day)

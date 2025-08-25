@@ -5,7 +5,7 @@ import gspread
 from collections import Counter
 from google.oauth2.service_account import Credentials
 import time
-from datetime import datetime
+from datetime import datetime, date
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -414,7 +414,8 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
     return pd.DataFrame(stats_data)[sorted_columns]
 
 # --- UI 및 데이터 핸들링 ---
-month_str = "2025년 4월"
+today = date.today()
+month_str = today.strftime("%Y년 %-m월")
 st.header("🔄 방 배정 변경", divider='rainbow')
 
 # 새로고침 버튼

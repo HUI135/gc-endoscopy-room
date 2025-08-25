@@ -171,7 +171,8 @@ if st.button("🔄 새로고침(R)"):
 
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
-month_str = "2025년 4월"
+today = datetime.date.today()
+month_str = today.strftime("%Y년 %-m월")
 
 if "data_loaded" not in st.session_state:
     try:
@@ -293,7 +294,7 @@ df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", 
 names_in_master = df_master["이름"].unique() if not df_master.empty else []
 
 # 익월 범위 지정
-today = datetime.datetime.strptime('2025-03-31', '%Y-%m-%d').date()
+today = datetime.date.today()
 next_month = today.replace(day=1) + relativedelta(months=1)
 next_month_start = next_month
 _, last_day = calendar.monthrange(next_month.year, next_month.month)

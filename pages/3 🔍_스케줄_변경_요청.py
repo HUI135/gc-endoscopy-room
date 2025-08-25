@@ -24,7 +24,8 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-MONTH_STR = "2025년 4월"
+today = datetime.date.today()
+month_str = today.strftime("%Y년 %-m월")
 YEAR_STR = MONTH_STR.split('년')[0]
 AM_COLS = [str(i) for i in range(1, 13)] + ['온콜']
 PM_COLS = [f'오후{i}' for i in range(1, 6)]

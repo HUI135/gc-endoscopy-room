@@ -207,14 +207,29 @@ if df_user_master.empty:
 # ✅ 월 정보
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
 요일리스트 = ["월", "화", "수", "목", "금"]
-today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
-
-next_month = today.replace(day=1) + pd.DateOffset(months=1)
-_, last_day = calendar.monthrange(next_month.year, next_month.month)
-dates = pd.date_range(start=next_month, end=next_month.replace(day=last_day))
+today = datetime.date.today()
+month_str = today.strftime("%Y년 %-m월")  # 당월로 변경
+year, month = today.year, today.month  # 당월로 변경
+_, last_day = calendar.monthrange(today.year, today.month)  # 당월로 변경
+dates = pd.date_range(start=today.replace(day=1), end=today.replace(day=last_day))  # 당월로 변경
 week_nums = sorted(set(d.isocalendar()[1] for d in dates))
-month_str = next_month.strftime("%Y년 %-m월")
 
+# 캘린더 이벤트 생성 (당월 반영)
+events = generate_calendar_events(df_user_master, year, month, week_labels)
+
+calendar_options = {
+    "initialView": "dayGridMonth",
+    "initialDate": today.strftime("%Y-%m-%d"),  # 당월로 변경
+    "editable": False,
+    "selectable": False,
+    "eventDisplay": "block",
+    "dayHeaderFormat": {"weekday": "short"},
+    "themeSystem": "bootstrap",
+    "height": 500,
+    "headerToolbar": {"left": "", "center": "", "right": ""},
+    "showNonCurrentDates": True,
+    "fixedWeekCount": False
+}
 st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
 
 # 새로고침 버튼 (맨 상단)

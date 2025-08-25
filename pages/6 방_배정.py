@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 from collections import Counter
 import random
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -141,7 +141,8 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
             st.warning(f"Google Sheets API 오류 (시도 {attempt+1}/{retries}): {e.response.status_code} - {e.response.text}")
             time.sleep(delay)
         except gspread.exceptions.WorksheetNotFound as e:
-            st.error(f"시트를 찾을 수 없습니다: {str(e)}")
+            st.error(f"{str(e)} 시트를 찾을 수 없습니다. 스케줄 배정을 먼저 진행해주세요.")
+            st.stop()
             time.sleep(delay)
         except Exception as e:
             st.error(f"데이터 로드 중 오류 (시도 {attempt+1}/{retries}): {type(e).__name__} - {e}")
@@ -398,9 +399,16 @@ def save_to_gsheet(name, categories, selected_save_dates, month_str, worksheet):
         return None
 
 # 메인
-month_str = "2025년 4월"
-next_month_start = date(2025, 4, 1)
-next_month_end = date(2025, 4, 30)
+today = date.today()
+month_str = today.strftime("%Y년 %-m월")
+this_month_start = today.replace(day=1)
+# 다음달의 첫째날 = 이번달 첫째날 + (이번달 일수)
+if today.month == 12:  # 12월이면 다음해 1월
+    next_month_start = date(today.year + 1, 1, 1)
+else:
+    next_month_start = date(today.year, today.month + 1, 1)
+# 다음달의 마지막날 = 다음달 첫째날 - 하루
+next_month_end = (next_month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
 # 세션 상태 초기화
 initialize_session_state()

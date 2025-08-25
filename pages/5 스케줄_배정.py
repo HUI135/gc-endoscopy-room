@@ -38,7 +38,8 @@ if not st.session_state.get("login_success", False):
 
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
-month_str = "2025년 4월"
+today = datetime.date.today()
+month_str = today.strftime("%Y년 %-m월")
 
 # Google Sheets 클라이언트 초기화
 @st.cache_resource # 이 함수 자체를 캐싱하여 불필요한 초기화 반복 방지
@@ -118,7 +119,7 @@ def load_data_page5():
         try:
             worksheet2 = sheet.worksheet(f"{month_str} 요청")
         except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"⚠️ '{month_str} 요청' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            st.warning(f"⚠️ '{month_str} 요청' 시트를 찾을 수 없습니다. 시트를 새로 생성합니다.")
             try:
                 worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
                 worksheet2.append_row(["이름", "분류", "날짜정보"])
@@ -164,7 +165,7 @@ def load_data_page5():
         try:
             worksheet4 = sheet.worksheet(f"{month_str} 누적")
         except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없습니다. 시트를 새로 생성합니다.")
             try:
                 worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
                 worksheet4.append_row([f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
