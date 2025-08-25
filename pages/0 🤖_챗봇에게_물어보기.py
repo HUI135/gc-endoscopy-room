@@ -13,7 +13,7 @@ REPO_URL = "https://github.com/HUI135/gc-endoscopy-room.git"
 BRANCH = "main"
 
 # API 키 (Streamlit 시크릿으로 관리 추천)
-openai_api_key = st.secrets["openai_api_key"]  # 또는 os.environ["openai_api_key"]
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]  # 또는 os.environ["OPENAI_API_KEY"]
 
 # 지식 베이스 로드 함수 (앱 시작 시 한 번만)
 @st.cache_resource
@@ -32,7 +32,7 @@ def load_knowledge_base():
     splits = text_splitter.split_documents(docs)
 
     # 임베딩과 벡터 스토어 생성
-    embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+    embeddings = OpenAIEmbeddings(OPENAI_API_KEY=OPENAI_API_KEY)
     vectorstore = FAISS.from_documents(splits, embeddings)
 
     return vectorstore
@@ -44,7 +44,7 @@ st.title("My Streamlit App with GitHub-Based Chatbot")
 vectorstore = load_knowledge_base()
 
 # LLM 설정
-llm = ChatOpenAI(model="gpt-3.5-turbo", openai_api_key=openai_api_key)
+llm = ChatOpenAI(model="gpt-3.5-turbo", OPENAI_API_KEY=OPENAI_API_KEY)
 
 # 프롬프트 템플릿 (앱 기능 설명이나 FAQ에 맞춤)
 system_prompt = (
