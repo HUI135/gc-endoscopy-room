@@ -8,14 +8,7 @@ from langchain.vectorstores import FAISS
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-import menu
-
-st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
-
-import os
-st.session_state.current_page = os.path.basename(__file__)
-
-menu.menu()
+import shutil
 
 # =========================
 # 0) 상수 설정
@@ -40,8 +33,9 @@ try:
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": "hello"}],
     )
+    st.write("OpenAI 연결 성공:", resp.choices[0].message.content)
 except Exception as e:
-    st.error(f"시스템 연결 오류: {e}")
+    st.error(f"OpenAI 연결 오류: {e}")
     st.stop()
 
 # =========================
@@ -50,38 +44,57 @@ except Exception as e:
 @st.cache_resource(show_spinner="데이터를 준비하는 중...")
 def load_knowledge_base():
     repo_path = "./temp_repo"
-    loader = GitLoader(
-        clone_url=REPO_URL,
-        repo_path=repo_path,
-        branch=BRANCH,
-        file_filter=lambda p: p.endswith((".py", ".md", ".txt"))
-    )
-    docs = loader.load()
+    try:
+        # 기존 클론 제거
+        if os.path.exists(repo_path):
+            shutil.rmtree(repo_path, ignore_errors=True)
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    splits = text_splitter.split_documents(docs)
+        # GitLoader로 클론 및 파일 로드
+        loader = GitLoader(
+            clone_url=REPO_URL,
+            repo_path=repo_path,
+            branch=BRANCH,
+            file_filter=lambda p: (
+                p.endswith((".py", ".md", ".txt")) and
+                ".git" not in p and
+                ".gitignore" not in p and
+                "submodule" not in p.lower()
+            )
+        )
+        docs = loader.load()
 
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small", api_key=OPENAI_API_KEY)
-    vectorstore = FAISS.from_documents(splits, embeddings)
-    return vectorstore
+        if not docs:
+            st.error("⚠️ 프로젝트에서 데이터를 불러오지 못했습니다. Streamlit Cloud의 'Manage app'에서 로그를 확인하거나 관리자에게 문의하세요.")
+            return None
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        splits = text_splitter.split_documents(docs)
+
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small", api_key=OPENAI_API_KEY)
+        vectorstore = FAISS.from_documents(splits, embeddings)
+        return vectorstore
+    except Exception as e:
+        st.error("⚠️ 프로젝트 데이터를 불러오는 중 오류가 발생했습니다. Streamlit Cloud의 'Manage app'에서 로그를 확인하거나 관리자에게 문의하세요.")
+        return None
 
 # =========================
-# 3) Streamlit UI 설정
+# 3) Streamlit UI
 # =========================
-
-# 메인 레이아웃
-st.header("🤖 챗봇에게 물어보기", divider='rainbow')
-st.write("- 챗봇에게 궁금한 점을 물어보세요! 예: 앱 기능, 프로젝트 정보 등")
-st.write()
+st.subheader("🤖 챗봇에게 물어보기", divider="rainbow")
 
 # 데이터 로드
-with st.spinner("데이터를 준비하는 중..."):
-    vectorstore = load_knowledge_base()
+vectorstore = load_knowledge_base()
+if vectorstore is None:
+    st.stop()
 
 # =========================
-# 4) 챗봇 설정
+# 4) LLM & 체인 구성
 # =========================
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0,
+    api_key=OPENAI_API_KEY,
+)
 
 system_prompt = (
     "You are a friendly assistant for the GC Endoscopy app. "
@@ -101,34 +114,27 @@ rag_chain = create_retrieval_chain(vectorstore.as_retriever(), question_answer_c
 # 5) 채팅 UI
 # =========================
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "안녕하세요! GC Endoscopy 프로젝트에 대해 궁금한 점이 있으면 물어보세요! 😊"}
-    ]
+    st.session_state.messages = []
 
-# 채팅 영역
-chat_container = st.container()
-with chat_container:
-    for m in st.session_state.messages:
-        with st.chat_message(m["role"], avatar="🏥" if m["role"] == "assistant" else None):
-            st.markdown(m["content"])
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
 
 # 입력창
-user_input = st.chat_input("궁금한 점을 입력하세요 (예: 이 앱은 무엇인가요?)")
-if user_input:
+if user_input := st.chat_input("궁금한 점을 입력하세요 (예: 앱 기능, 프로젝트 정보 등)"):
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with chat_container:
-        with st.chat_message("user"):
-            st.markdown(user_input)
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-        with st.chat_message("assistant", avatar="🏥"):
-            with st.spinner("답변을 준비하는 중..."):
-                try:
-                    response = rag_chain.invoke({"input": user_input})
-                    answer = response["answer"]
-                except Exception as e:
-                    answer = f"문제가 발생했습니다: {e}"
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+    with st.chat_message("assistant"):
+        with st.spinner("답변을 준비하는 중..."):
+            try:
+                response = rag_chain.invoke({"input": user_input})
+                answer = response["answer"]
+            except Exception as e:
+                answer = f"문제가 발생했습니다. 다시 시도해 주세요."
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
 
 # 스타일링
 st.markdown(
