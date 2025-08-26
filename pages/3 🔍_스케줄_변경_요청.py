@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import time
 from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 import uuid
 import re
 from zoneinfo import ZoneInfo
@@ -24,8 +25,11 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
+# --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
 today = date.today()
-month_str = today.strftime("%Y년 %-m월")
+next_month_date = today.replace(day=1) + relativedelta(months=1)
+month_str = next_month_date.strftime("%Y년 %-m월")
+# --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
 YEAR_STR = month_str.split('년')[0]
 AM_COLS = [str(i) for i in range(1, 13)] + ['온콜']
 PM_COLS = [f'오후{i}' for i in range(1, 6)]

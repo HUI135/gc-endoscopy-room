@@ -88,11 +88,20 @@ try:
         st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
         st.stop()
     name = st.session_state["name"]
+    
+    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+    # 오늘 날짜를 기준으로 다음 달 1일을 계산합니다.
     today = datetime.date.today()
-    month_str = today.strftime("%Y년 %-m월")
-    month_start = today.replace(day=1)
-    _, last_day = calendar.monthrange(today.year, today.month)
-    month_end = today.replace(day=last_day)
+    next_month_date = today.replace(day=1) + relativedelta(months=1)
+
+    # 모든 날짜 관련 변수를 다음 달 기준으로 설정합니다.
+    month_str = next_month_date.strftime("%Y년 %-m월")
+    month_start = next_month_date
+    year, month = next_month_date.year, next_month_date.month
+    _, last_day = calendar.monthrange(year, month)
+    month_end = next_month_date.replace(day=last_day)
+    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
+
     week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end)))
     week_labels = [f"{i+1}주" for i in range(len(week_nums))]
 except NameError as e:
@@ -111,7 +120,10 @@ def create_calendar_events(df_master, df_request):
     
     # 마스터 데이터에서 이벤트 생성
     if not df_master.empty:
-        year, month = today.year, today.month
+        # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+        # year, month = today.year, today.month # 기존 코드
+        # year, month 변수는 이미 위에서 다음 달 기준으로 설정됨
+        # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
         c = calendar.Calendar(firstweekday=6)
         month_calendar = c.monthdatescalendar(year, month)
 
@@ -194,7 +206,7 @@ def initialize_data():
         st.session_state["df_master"] = load_master_data(gc, url)
         st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
         if st.session_state["df_request"].empty:
-            st.warning("⚠️ 요청사항 데이터가 비어 있습니다. Google Sheet를 확인해주세요.")
+            st.warning(f"⚠️ 요청사항 데이터가 비어 있습니다. {month_str} 요청사항 시트를 새로 생성합니다.")
         st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy() if not st.session_state["df_request"].empty else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
         st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy() if not st.session_state["df_master"].empty else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
     except NameError as e:
@@ -256,7 +268,9 @@ def add_request_callback():
 
             if 선택주차 and 선택요일:
                 c = calendar.Calendar(firstweekday=6)
-                month_calendar = c.monthdatescalendar(today.year, today.month)
+                # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+                month_calendar = c.monthdatescalendar(year, month) # today.year, today.month 대신 다음 달 기준 year, month 사용
+                # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
 
                 요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
                 선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
@@ -270,7 +284,9 @@ def add_request_callback():
                     
                     if "매주" in 선택주차 or 주차_이름 in 선택주차:
                         for date in week:
-                            if date.month == today.month and date.weekday() in 선택된_요일_인덱스:
+                            # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+                            if date.month == month and date.weekday() in 선택된_요일_인덱스: # today.month 대신 다음 달 기준 month 사용
+                            # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
                                 날짜목록.append(date.strftime("%Y-%m-%d"))
 
             날짜정보 = ", ".join(sorted(list(set(날짜목록))))
@@ -435,10 +451,14 @@ events_combined = create_calendar_events(df_user_master, df_user_request)
 
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
-    calendar_options = {"initialView": "dayGridMonth", "initialDate": today.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}}
+    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}}
+    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
     st_calendar(options=calendar_options)
 else:
-    calendar_options = {"initialView": "dayGridMonth", "initialDate": today.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
+    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
+    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
     st_calendar(events=events_combined, options=calendar_options)
 
 st.divider()

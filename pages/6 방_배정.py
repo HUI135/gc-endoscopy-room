@@ -13,6 +13,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 import menu
 import numpy as np
+from dateutil.relativedelta import relativedelta
 
 st.set_page_config(page_title="방 배정", page_icon="", layout="wide")
 
@@ -99,59 +100,63 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
 
 # 데이터 로드 함수
 def load_data_page6_no_cache(month_str, retries=3, delay=5):
-    for attempt in range(retries):
+    try:
+        gc = get_gspread_client()
+        if gc is None:
+            raise Exception("Failed to initialize gspread client")
+        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+
+        # 스케줄 시트
         try:
-            gc = get_gspread_client()
-            if gc is None:
-                raise Exception("Failed to initialize gspread client")
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-
-            # 스케줄 시트
             worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
-            df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
-            if df_schedule.empty:
-                raise Exception(f"{month_str} 스케줄 시트가 비어 있습니다.")
+        except gspread.exceptions.WorksheetNotFound:
+            st.info("스케줄이 아직 배정되지 않았습니다.")
+            return "STOP", None, None, None, None # 실행 중단을 위한 특별 반환 값
 
-            # 방배정 요청 시트
-            try:
-                worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
-            except gspread.exceptions.WorksheetNotFound:
-                st.warning(f"{month_str} 방배정 요청 시트를 찾을 수 없어 새로 생성합니다.")
-                worksheet_room_request = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows=100, cols=10)
-                worksheet_room_request.update('A1', [["이름", "분류", "날짜정보"]])
-            
-            df_room_request = pd.DataFrame(worksheet_room_request.get_all_records())
-            if "우선순위" in df_room_request.columns:
-                df_room_request = df_room_request.drop(columns=["우선순위"])
+        df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
+        if df_schedule.empty:
+            raise Exception(f"{month_str} 스케줄 시트가 비어 있습니다.")
 
-            # 누적 시트
-            worksheet_cumulative = sheet.worksheet(f"{month_str} 누적")
-            df_cumulative = pd.DataFrame(worksheet_cumulative.get_all_records())
-            if df_cumulative.empty:
-                df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-            else:
-                df_cumulative.rename(columns={f"{month_str}": "이름"}, inplace=True)
+        # 방배정 요청 시트
+        try:
+            worksheet_room_request = sheet.worksheet(f"{month_str} 방배정 요청")
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"{month_str} 방배정 요청 시트를 찾을 수 없어 새로 생성합니다.")
+            worksheet_room_request = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows=100, cols=10)
+            worksheet_room_request.update('A1', [["이름", "분류", "날짜정보"]])
+        
+        df_room_request = pd.DataFrame(worksheet_room_request.get_all_records())
+        if "우선순위" in df_room_request.columns:
+            df_room_request = df_room_request.drop(columns=["우선순위"])
 
-            # 스케줄 변경요청 시트
-            try:
-                worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케줄 변경요청")
-            except gspread.exceptions.WorksheetNotFound:
-                st.warning(f"{month_str} 스케줄 변경요청 시트를 찾을 수 없어 새로 생성합니다.")
-                worksheet_swap_requests = sheet.add_worksheet(title=f"{month_str} 스케줄 변경요청", rows=100, cols=10)
-                worksheet_swap_requests.update('A1', [["RequestID", "요청일시", "요청자", "변경 요청", "변경 요청한 스케줄"]])
-            
-            df_swap_requests = pd.DataFrame(worksheet_swap_requests.get_all_records())
-            if df_swap_requests.empty:
-                st.info(f"{month_str} 스케줄 변경요청이 아직 존재하지 않습니다.")
+        # 누적 시트
+        worksheet_cumulative = sheet.worksheet(f"{month_str} 누적")
+        df_cumulative = pd.DataFrame(worksheet_cumulative.get_all_records())
+        if df_cumulative.empty:
+            df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+        else:
+            df_cumulative.rename(columns={f"{month_str}": "이름"}, inplace=True)
 
-            return df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests
-        except gspread.exceptions.APIError as e:
-            st.warning(f"Google Sheets API 오류 (시도 {attempt+1}/{retries}): {e.response.status_code} - {e.response.text}")
-            time.sleep(delay)
-        except Exception as e:
-            st.error(f"데이터 로드 중 오류 (시도 {attempt+1}/{retries}): {type(e).__name__} - {e}")
-            time.sleep(delay)
-    st.error("데이터 로드 실패: 재시도 횟수 초과")
+        # 스케줄 변경요청 시트
+        try:
+            worksheet_swap_requests = sheet.worksheet(f"{month_str} 스케줄 변경요청")
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"{month_str} 스케줄 변경요청 시트를 찾을 수 없어 새로 생성합니다.")
+            worksheet_swap_requests = sheet.add_worksheet(title=f"{month_str} 스케줄 변경요청", rows=100, cols=10)
+            worksheet_swap_requests.update('A1', [["RequestID", "요청일시", "요청자", "변경 요청", "변경 요청한 스케줄"]])
+        
+        df_swap_requests = pd.DataFrame(worksheet_swap_requests.get_all_records())
+        if df_swap_requests.empty:
+            st.info(f"{month_str} 스케줄 변경요청이 아직 존재하지 않습니다.")
+
+        return df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests
+
+    except gspread.exceptions.APIError as e:
+        st.warning(f"Google Sheets API 오류: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        st.error(f"데이터 로드 중 오류: {type(e).__name__} - {e}")
+        
+    st.error("데이터 로드 실패: 새로고침 버튼을 눌러 다시 시도해주세요.")
     return None, None, None, None, None
 
 # 근무 가능 일자 계산
@@ -404,13 +409,16 @@ def save_to_gsheet(name, categories, selected_save_dates, month_str, worksheet):
 
 # 메인
 today = date.today()
-month_str = today.strftime("%Y년 %-m월")
-this_month_start = today.replace(day=1)
-# 당월 마지막 날 계산
-if today.month == 12:  # 12월이면 다음해 1월
-    this_month_end = date(today.year, 12, 31)
+next_month_date = today.replace(day=1) + relativedelta(months=1)
+month_str = next_month_date.strftime("%Y년 %-m월")
+this_month_start = next_month_date.replace(day=1)
+
+# 다음 달의 마지막 날 계산
+if this_month_start.month == 12:
+    this_month_end = date(this_month_start.year, 12, 31)
 else:
-    this_month_end = (date(today.year, today.month + 1, 1) - timedelta(days=1))
+    this_month_end = (date(this_month_start.year, this_month_start.month + 1, 1) - timedelta(days=1))
+
 # 다음 달 계산 (기존 코드 유지, 필요 시 사용)
 if today.month == 12:
     next_month_start = date(today.year + 1, 1, 1)
@@ -425,31 +433,29 @@ initialize_session_state()
 if not st.session_state["data_loaded"]:
     with st.spinner("데이터를 로드하고 있습니다..."):
         result = load_data_page6_no_cache(month_str)
-        if result[0] is None:
-            st.error("데이터 로드에 실패했습니다. 새로고침 버튼을 눌러 다시 시도해주세요.")
-            st.stop()
+    
+    if result[0] == "STOP":
+        st.stop()
+
+    if result[0] is None:
+        st.error("데이터 로드에 실패했습니다. 새로고침 버튼을 눌러 다시 시도해주세요.")
+        st.stop()
+    
+    df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = result
+    if df_schedule.empty:
+        st.error(f"⚠️ 로드된 스케줄 데이터가 비어있습니다. Google Sheets의 '{month_str} 스케줄' 시트를 확인하거나, 새로고침 버튼을 눌러 다시 시도해주세요.")
+        st.stop()  # 무한 루프 방지
+
+    st.session_state["df_schedule_original"] = df_schedule.copy()
+    st.session_state["df_schedule"] = df_schedule
+    st.session_state["df_room_request"] = df_room_request
+    st.session_state["worksheet_room_request"] = worksheet_room_request
+    st.session_state["df_cumulative"] = df_cumulative
+    st.session_state["df_swap_requests"] = df_swap_requests
+    st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
+    st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+    st.session_state["data_loaded"] = True
         
-        df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = result
-        if df_schedule.empty:
-            st.error("⚠️ 로드된 스케줄 데이터가 비어있습니다. Google Sheets의 '{month_str} 스케줄' 시트를 확인하거나, 새로고침 버튼을 눌러 다시 시도해주세요.")
-            st.stop()  # 무한 루프 방지
-
-        st.session_state["df_schedule_original"] = df_schedule.copy()
-        st.session_state["df_schedule"] = df_schedule
-        st.session_state["df_room_request"] = df_room_request
-        st.session_state["worksheet_room_request"] = worksheet_room_request
-        st.session_state["df_cumulative"] = df_cumulative
-        st.session_state["df_swap_requests"] = df_swap_requests
-        st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
-        st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-        st.session_state["data_loaded"] = True
-else:
-    df_schedule = st.session_state["df_schedule"]
-    df_room_request = st.session_state["df_room_request"]
-    worksheet_room_request = st.session_state["worksheet_room_request"]
-    df_cumulative = st.session_state["df_cumulative"]
-    df_swap_requests = st.session_state["df_swap_requests"]
-
 st.header("🚪 방 배정", divider='rainbow')
 
 # 새로고침 버튼
@@ -460,32 +466,36 @@ if st.button("🔄 새로고침 (R)"):
         st.session_state["data_loaded"] = False
         with st.spinner("데이터를 새로고침하는 중입니다..."):
             result = load_data_page6_no_cache(month_str)
-            if result[0] is None:
-                st.error("데이터 로드에 실패했습니다. 잠시 후 새로고침 버튼을 다시 눌러 시도해주세요.")
-                st.stop()
-            
-            df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = result
-            if df_schedule.empty:
-                st.error("⚠️ 로드된 스케줄 데이터가 비어있습니다. Google Sheets의 '{month_str} 스케줄' 시트를 확인하거나, 새로고침 버튼을 눌러 다시 시도해주세요.")
-                st.stop()  # 무한 루프 방지
-            
-            st.session_state["df_schedule_original"] = df_schedule.copy()
-            st.session_state["df_schedule"] = df_schedule
-            st.session_state["df_room_request"] = df_room_request
-            st.session_state["worksheet_room_request"] = worksheet_room_request
-            st.session_state["df_cumulative"] = df_cumulative
-            st.session_state["df_swap_requests"] = df_swap_requests
-            st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
-            st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
-            st.session_state["swapped_assignments_log"] = []
-            st.session_state["swapped_assignments"] = set()
-            st.session_state["manual_change_log"] = []
-            st.session_state["final_change_log"] = []
-            st.session_state["data_loaded"] = True
-            st.session_state["weekend_room_settings"] = {}
-            st.success("데이터가 새로고침되었습니다.")
-            time.sleep(1)
-            st.rerun()
+        
+        if result[0] == "STOP":
+            st.stop()
+
+        if result[0] is None:
+            st.error("데이터 로드에 실패했습니다. 잠시 후 새로고침 버튼을 다시 눌러 시도해주세요.")
+            st.stop()
+        
+        df_schedule, df_room_request, worksheet_room_request, df_cumulative, df_swap_requests = result
+        if df_schedule.empty:
+            st.error(f"⚠️ 로드된 스케줄 데이터가 비어있습니다. Google Sheets의 '{month_str} 스케줄' 시트를 확인하거나, 새로고침 버튼을 눌러 다시 시도해주세요.")
+            st.stop()  # 무한 루프 방지
+        
+        st.session_state["df_schedule_original"] = df_schedule.copy()
+        st.session_state["df_schedule"] = df_schedule
+        st.session_state["df_room_request"] = df_room_request
+        st.session_state["worksheet_room_request"] = worksheet_room_request
+        st.session_state["df_cumulative"] = df_cumulative
+        st.session_state["df_swap_requests"] = df_swap_requests
+        st.session_state["df_schedule_md"] = create_df_schedule_md(df_schedule)
+        st.session_state["df_schedule_md_initial"] = st.session_state["df_schedule_md"].copy()
+        st.session_state["swapped_assignments_log"] = []
+        st.session_state["swapped_assignments"] = set()
+        st.session_state["manual_change_log"] = []
+        st.session_state["final_change_log"] = []
+        st.session_state["data_loaded"] = True
+        st.session_state["weekend_room_settings"] = {}
+        st.success("데이터가 새로고침되었습니다.")
+        time.sleep(1)
+        st.rerun()
     except Exception as e:
         st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
         st.stop()

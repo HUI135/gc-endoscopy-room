@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import time
 from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 import re
 import uuid
 from zoneinfo import ZoneInfo
@@ -25,7 +26,8 @@ if not st.session_state.get("login_success", False):
 
 # --- 상수 및 기본 설정 ---
 today = date.today()
-month_str = today.strftime("%Y년 %-m월")
+next_month_date = today.replace(day=1) + relativedelta(months=1)
+month_str = next_month_date.strftime("%Y년 %-m월")
 YEAR_STR = month_str.split('년')[0]
 REQUEST_SHEET_NAME = f"{month_str} 방배정 변경요청"
 

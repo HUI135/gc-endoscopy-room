@@ -1,9 +1,10 @@
+from googleapiclient.discovery import build
+import time
 import numpy as np
 import streamlit as st
 import pandas as pd
 import calendar
 import datetime
-import time
 from dateutil.relativedelta import relativedelta
 from streamlit_calendar import calendar as st_calendar
 from google.oauth2.service_account import Credentials
@@ -303,11 +304,16 @@ try:
         st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
         st.stop()
     name = st.session_state["name"]
+    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
     today = datetime.date.today()
-    month_str = today.strftime("%Y년 %-m월")
-    month_start = today.replace(day=1)
-    _, last_day = calendar.monthrange(today.year, today.month)
-    month_end = today.replace(day=last_day)
+    next_month_date = today.replace(day=1) + relativedelta(months=1)
+
+    month_str = next_month_date.strftime("%Y년 %-m월")
+    month_start = next_month_date
+    year, month = next_month_date.year, next_month_date.month
+    _, last_day = calendar.monthrange(year, month)
+    month_end = next_month_date.replace(day=last_day)
+    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
     week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end)))
     week_labels = [f"{i+1}주" for i in range(len(week_nums))]
 except NameError as e:
@@ -360,9 +366,11 @@ if st.button("🔄 새로고침 (R)"):
         st.stop()
 
 # UI 렌더링 시작
-master_events = generate_master_events(st.session_state["df_user_master"], today.year, today.month, week_labels)
-request_events = generate_request_events(st.session_state["df_user_request"], today)
-room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], today)
+# --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels)
+request_events = generate_request_events(st.session_state["df_user_request"], next_month_date)
+room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month_date)
+# --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
 all_events = master_events + request_events + room_request_events
 
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
@@ -372,7 +380,9 @@ if not all_events:
 else:
     calendar_options = {
         "initialView": "dayGridMonth",
-        "initialDate": today.strftime("%Y-%m-%d"),
+        # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+        "initialDate": month_start.strftime("%Y-%m-%d"),
+        # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
         "editable": False,
         "selectable": False,
         "eventDisplay": "block",

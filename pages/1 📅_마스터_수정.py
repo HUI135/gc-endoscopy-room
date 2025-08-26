@@ -11,7 +11,6 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
-import chatbot
 
 st.set_page_config(page_title="마스터 수정", page_icon="📅", layout="wide")
 
@@ -208,21 +207,23 @@ if df_user_master.empty:
 # ✅ 월 정보 및 주차 리스트
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
 요일리스트 = ["월", "화", "수", "목", "금"]
-today = datetime.datetime.strptime("2025-03-10", "%Y-%m-%d").date()
-year, month = today.year, today.month
-_, last_day = calendar.monthrange(today.year, today.month)
-dates = pd.date_range(start=today.replace(day=1), end=today.replace(day=last_day))
+today = datetime.date.today()
+next_month_date = today.replace(day=1) + relativedelta(months=1)
+
+year, month = next_month_date.year, next_month_date.month
+_, last_day = calendar.monthrange(year, month)
+dates = pd.date_range(start=next_month_date.replace(day=1), end=next_month_date.replace(day=last_day))
 week_nums = sorted(set(d.isocalendar()[1] for d in dates))
-month_str = today.strftime("%Y년 %-m월")
+month_str = next_month_date.strftime("%Y년 %-m월")
 has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
 week_labels = [f"{i+1}주" for i in range(len(week_nums))]  # 항상 주차 수에 맞게 설정
 
-# 캘린더 이벤트 생성 (당월 반영)
+# 캘린더 이벤트 생성 (익월 반영)
 events = generate_calendar_events(df_user_master, year, month, week_labels)
 
 calendar_options = {
     "initialView": "dayGridMonth",
-    "initialDate": today.strftime("%Y-%m-%d"),
+    "initialDate": next_month_date.strftime("%Y-%m-%d"),
     "editable": False,
     "selectable": False,
     "eventDisplay": "block",
@@ -301,7 +302,7 @@ if not df_user_master.empty and not has_weekly:
         st.error(f"매주 변환 중 오류 발생: {str(e)}")
         st.stop()
 
-# 캘린더 이벤트 생성 (당월 반영)
+# 캘린더 이벤트 생성 (익월 반영)
 events = generate_calendar_events(df_user_master, year, month, week_labels)
 
 st_calendar(events=events, options=calendar_options)
@@ -426,7 +427,3 @@ with st.expander("📅 주 단위로 설정"):
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
             st.stop()
-
-
-# 플로팅 챗봇 창 렌더링
-chatbot.render_chatbot()

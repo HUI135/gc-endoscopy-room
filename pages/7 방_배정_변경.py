@@ -12,6 +12,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 import menu
 import os
+from dateutil.relativedelta import relativedelta
 
 # --- 페이지 기본 설정 ---
 st.set_page_config(page_title="방 배정 변경", page_icon="🔄", layout="wide")
@@ -88,58 +89,33 @@ def load_data_for_change_page(month_str):
     try:
         gc = get_gspread_client()
         sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (스프레드시트 열기): {e.response.status_code} - {e.response.text}")
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"스프레드시트 URL 로드 중 오류: {type(e).__name__} - {e}")
-        st.stop()
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"스프레드시트 열기 실패: {type(e).__name__} - {e}")
-        st.stop()
+        return "STOP", None
 
     try:
         worksheet_final = sheet.worksheet(f"{month_str} 방배정")
         df_final = pd.DataFrame(worksheet_final.get_all_records())
+        if df_final.empty:
+            st.info("방배정이 아직 수행되지 않았습니다.")
+            return "STOP", None
         df_final = df_final.fillna('')
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 로드): {e.response.status_code} - {e.response.text}")
-        st.stop()
     except gspread.exceptions.WorksheetNotFound:
-        st.warning(f"'{month_str} 방배정' 시트가 없습니다. 빈 DataFrame으로 초기화합니다.")
-        df_final = pd.DataFrame()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"'{month_str} 방배정' 시트 로드 중 오류: {type(e).__name__} - {e}")
-        st.stop()
+        st.info("방배정이 아직 수행되지 않았습니다.")
+        return "STOP", None
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
-        st.stop()
+        return "STOP", None
 
     try:
         worksheet_req = sheet.worksheet(f"{month_str} 방배정 변경요청")
         df_req = pd.DataFrame(worksheet_req.get_all_records())
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 ('{month_str} 방배정 변경요청' 시트 로드): {e.response.status_code} - {e.response.text}")
-        st.stop()
     except gspread.exceptions.WorksheetNotFound:
         st.warning(f"'{month_str} 방배정 변경요청' 시트가 없습니다. 빈 테이블로 시작합니다.")
-        time.sleep(1)
         df_req = pd.DataFrame(columns=['RequestID', '요청일시', '요청자', '요청자 사번', '변경 요청', '변경 요청한 방배정'])
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"'{month_str} 방배정 변경요청' 시트 로드 중 오류: {type(e).__name__} - {e}")
-        st.stop()
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"'{month_str} 방배정 변경요청' 시트 로드 실패: {type(e).__name__} - {e}")
-        st.stop()
+        df_req = pd.DataFrame()
 
     return df_final, df_req
 
@@ -415,16 +391,20 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
 
 # --- UI 및 데이터 핸들링 ---
 today = date.today()
-month_str = today.strftime("%Y년 %-m월")
-st.header("🔄 방 배정 변경", divider='rainbow')
+next_month_date = today.replace(day=1) + relativedelta(months=1)
+month_str = next_month_date.strftime("%Y년 %-m월")
+st.header(f"🔄 {month_str} 방 배정 변경", divider='rainbow')
 
-# 새로고침 버튼
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
-if st.button("🔄 새로고침 (R)"):
-    st.cache_data.clear()
-    st.session_state.change_data_loaded = False
-    df_final, df_req = load_data_for_change_page(month_str)
+# 데이터 로드 및 새로고침 로직 통합
+def load_and_initialize_data():
+    with st.spinner("데이터를 로드하고 있습니다..."):
+        df_final, df_req = load_data_for_change_page(month_str)
+    
+    if df_final == "STOP":
+        st.stop()
+        
     df_special = load_special_schedules(month_str)
+    
     st.session_state.df_final_assignment = df_final
     st.session_state.df_change_requests = df_req
     st.session_state.df_special_schedules = df_special
@@ -432,9 +412,20 @@ if st.button("🔄 새로고침 (R)"):
     st.session_state.df_before_apply = df_final.copy()
     st.session_state.has_changes_to_revert = False
     st.session_state.change_data_loaded = True
+
+# 새로고침 버튼
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
+if st.button("🔄 새로고침 (R)"):
+    st.cache_data.clear()
+    st.session_state.change_data_loaded = False
     st.rerun()
 
+# 초기 데이터 로드
+if not st.session_state.change_data_loaded:
+    load_and_initialize_data()
+
 st.divider()
+
 st.subheader("📋 방배정 변경 요청 목록")
 if not st.session_state.df_change_requests.empty:
     df_display = st.session_state.df_change_requests.copy()

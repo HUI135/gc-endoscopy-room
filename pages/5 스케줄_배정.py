@@ -39,7 +39,9 @@ if not st.session_state.get("login_success", False):
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
 today = datetime.date.today()
-month_str = today.strftime("%Y년 %-m월")
+month_dt = today.replace(day=1) + relativedelta(months=1)
+month_str = month_dt.strftime("%Y년 %-m월")
+_, last_day = calendar.monthrange(month_dt.year, month_dt.month)
 
 # Google Sheets 클라이언트 초기화
 @st.cache_resource # 이 함수 자체를 캐싱하여 불필요한 초기화 반복 방지
@@ -409,9 +411,10 @@ st.download_button(
 # 누적 근무 횟수 추적용 딕셔너리 초기화
 current_cumulative = {'오전': {}, '오후': {}}
 
-# 당월(8월) 평일 생성
+# 익월(다음 달) 평일 생성
 _, last_day = calendar.monthrange(today.year, today.month)
-dates = pd.date_range(start=today.replace(day=1), end=today.replace(day=last_day))
+next_month = today.replace(day=1) + relativedelta(months=1)
+dates = pd.date_range(start=next_month, end=next_month.replace(day=calendar.monthrange(next_month.year, next_month.month)[1]))
 weekdays = [d for d in dates if d.weekday() < 5]
 week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in dates}
 day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
@@ -613,9 +616,16 @@ st.markdown("**📅 토요/휴일 스케줄 입력**")
 # 전체 인원 목록 준비
 all_names = sorted(list(st.session_state["df_master"]["이름"].unique()))
 
-month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+# month_str과 month_dt 정의
+today = datetime.date.today()
+month_dt = today.replace(day=1) + relativedelta(months=1)
+month_format = "%#m" if platform.system() == "Windows" else "%-m"
+month_str = month_dt.strftime(f"%Y년 {month_format}월")
+_, last_day = calendar.monthrange(month_dt.year, month_dt.month)  # month_dt의 연도와 월로 last_day 계산
 
-# 날짜 및 인원 입력
+# 토요/휴일 스케줄 입력 UI
+st.write(" ")
+st.markdown("**📅 토요/휴일 스케줄 입력**")
 special_schedules = []
 for i in range(st.session_state.special_schedule_count):
     cols = st.columns([2, 3])
@@ -623,9 +633,8 @@ for i in range(st.session_state.special_schedule_count):
         selected_date = st.date_input(
             label=f"날짜 선택",
             value=None,
-            min_value=month_dt.date(),
-            max_value=month_dt.replace(day=last_day).date(),
-            key=f"special_date_{i}",
+            min_value=month_dt,  # month_dt.date() → month_dt
+            max_value=month_dt.replace(day=last_day),  # .date() 제거            key=f"special_date_{i}",
             help="주말, 공휴일 등 정규 스케줄 외 근무가 필요한 날짜를 선택하세요."
         )
     with cols[1]:
@@ -637,7 +646,6 @@ for i in range(st.session_state.special_schedule_count):
             )
             if selected_workers:
                 special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
-
 # 입력 필드 추가 버튼
 if st.button("➕ 토요/휴일 스케줄 추가"):
     st.session_state.special_schedule_count += 1
@@ -971,12 +979,13 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         # --- 0단계: 모든 초기화 ---
         df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근무자', '상태', '메모', '색상'])
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
-        all_month_dates = pd.date_range(start=month_dt, end=month_dt.replace(day=calendar.monthrange(month_dt.year, month_dt.month)[1]))
+        _, last_day = calendar.monthrange(month_dt.year, month_dt.month)  # month_dt에 맞게 last_day 계산
+        all_month_dates = pd.date_range(start=month_dt, end=month_dt.replace(day=last_day))
         weekdays = [d for d in all_month_dates if d.weekday() < 5]
         active_weekdays = [d for d in weekdays if d.strftime('%Y-%m-%d') not in holiday_dates]
         day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
         week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in all_month_dates}
-        
+
         initial_master_assignments = {}
         for date in active_weekdays:
             date_str, day_name, week_num = date.strftime('%Y-%m-%d'), day_map[date.weekday()], week_numbers[date.date()]
@@ -1244,13 +1253,35 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
 
         # ... 이하 G-Sheet 저장 및 다운로드 버튼 표시 로직
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
-        # 익월 설정
+        # 다다음달 설정
         next_month_dt = (month_dt + relativedelta(months=1)).replace(day=1)
         next_month_str = next_month_dt.strftime("%Y년 %-m월")
-        # 스케줄 저장은 당월로
+        # 스케줄 저장은 익월로
         month_start = month_dt.replace(day=1)
-        _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
-        month_end = month_dt.replace(day=last_day)
+        month_end = month_dt.replace(day=last_day)  # last_day 사용
+
+        # 날짜 및 인원 입력
+        special_schedules = []
+        for i in range(st.session_state.special_schedule_count):
+            cols = st.columns([2, 3])
+            with cols[0]:
+                selected_date = st.date_input(
+                    label=f"날짜 선택",
+                    value=None,
+                    min_value=month_dt,
+                    max_value=month_dt.replace(day=last_day),
+                    key=f"special_date_{i}",
+                    help="주말, 공휴일 등 정규 스케줄 외 근무가 필요한 날짜를 선택하세요."
+                )
+            with cols[1]:
+                if selected_date:
+                    selected_workers = st.multiselect(
+                        label=f"근무 인원 선택",
+                        options=all_names,
+                        key=f"special_workers_{i}"
+                    )
+                    if selected_workers:
+                        special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
 
         try:
             url = st.secrets["google_sheet"]["url"]

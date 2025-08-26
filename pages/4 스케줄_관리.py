@@ -77,39 +77,29 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
 
 def load_request_data_page4():
     try:
-        gc = get_gspread_client(cache_buster=str(uuid.uuid4()))  # 캐시 갱신
+        gc = get_gspread_client() 
         sheet = gc.open_by_url(url)
         
         # 매핑 시트 로드
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
-        mapping_values = mapping.get_all_values()  # 원시 데이터 가져오기
-        if not mapping_values:
-            df_map = pd.DataFrame(columns=["이름", "사번"])
-        elif len(mapping_values) == 1:
+        mapping_values = mapping.get_all_values()
+        if not mapping_values or len(mapping_values) <= 1:
             df_map = pd.DataFrame(columns=["이름", "사번"])
         else:
-            # 첫 번째 행을 헤더로 사용
             headers = mapping_values[0]
             data = mapping_values[1:]
-            if not data or all(not row for row in data):
-                df_map = pd.DataFrame(columns=["이름", "사번"])
+            df_map = pd.DataFrame(data, columns=headers)
+            if "이름" in df_map.columns and "사번" in df_map.columns:
+                df_map = df_map[["이름", "사번"]]
             else:
-                df_map = pd.DataFrame(data, columns=headers)
-                # 필요한 열만 유지
-                if "이름" in df_map.columns and "사번" in df_map.columns:
-                    df_map = df_map[["이름", "사번"]]
-                else:
-                    df_map = pd.DataFrame(columns=["이름", "사번"])
+                df_map = pd.DataFrame(columns=["이름", "사번"])
         
-        # 매핑 시트가 비어 있는 경우 경고 표시
+        # 매핑 시트가 비어 있는 경우
         if df_map.empty:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error("매핑 시트에 데이터가 없습니다.")
+            st.error("매핑 시트에 데이터가 없습니다. 스케줄 관리를 진행할 수 없습니다.")
             st.session_state["df_map"] = df_map
-            st.session_state["warning_displayed"] = True  # 경고 표시 상태 저장
-            time.sleep(2)  # 메시지 표시를 위해 대기
-            st.stop()
+            return False # st.stop() 대신 False 반환
             
         st.session_state["df_map"] = df_map
         
@@ -127,52 +117,43 @@ def load_request_data_page4():
         st.session_state["df_master"] = df_master
         st.session_state["worksheet1"] = worksheet1
         
-    except gspread.exceptions.APIError as e:
+        return True # 성공 시 True 반환
+
+    except APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (데이터 로드): {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.session_state["warning_displayed"] = True
-        time.sleep(2)
-        st.stop()
-    except gspread.exceptions.WorksheetNotFound:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error("요청된 시트를 찾을 수 없습니다.")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.session_state["warning_displayed"] = True
-        time.sleep(2)
-        st.stop()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"데이터 로드 중 NameError 발생: {str(e)}")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.session_state["warning_displayed"] = True
-        time.sleep(2)
-        st.stop()
+        return False # st.stop() 대신 False 반환
+    except WorksheetNotFound as e:
+        st.error(f"필수 시트를 찾을 수 없습니다: {e}. '매핑'과 '마스터' 시트가 있는지 확인해주세요.")
+        return False # st.stop() 대신 False 반환
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.session_state["df_map"] = pd.DataFrame(columns=["이름", "사번"])
-        st.session_state["warning_displayed"] = True
-        time.sleep(2)
-        st.stop()
-
-# 새로고침 버튼
-if st.button("🔄 새로고침(R)"):
-    with st.spinner("데이터를 다시 불러오는 중입니다..."):
-        try:
-            load_request_data_page4()
-            st.session_state["data_loaded"] = True
-            st.success("데이터가 성공적으로 새로고침되었습니다!")
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ Google Sheets API 요청이 지연되고 있습니다. 잠시 후 다시 시도하세요.")
-            st.error(f"오류 상세: {str(e)}")
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"새로고침 중 오류 발생: {str(e)}")
-
+        st.error(f"데이터 로드 중 오류 발생: {str(e)}")
+        return False # st.stop() 대신 False 반환
+   
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
 today = datetime.date.today()
-month_str = today.strftime("%Y년 %-m월")
+month_str = (today.replace(day=1) + relativedelta(months=1)).strftime("%Y년 %-m월")
+
+# 새로고침 버튼
+if st.button("🔄 새로고침 (R)"):
+    success = False
+    with st.spinner("데이터를 다시 불러오는 중입니다..."):
+        try:
+            # 이제 함수가 성공 여부를 반환합니다.
+            success = load_request_data_page4()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"새로고침 중 예측하지 못한 오류 발생: {str(e)}")
+            success = False
+    
+    # 스피너가 끝난 후, 성공했을 때만 다음 동작을 수행합니다.
+    if success:
+        st.session_state["data_loaded"] = True
+        st.success("데이터가 성공적으로 새로고침되었습니다!")
+        time.sleep(1) # 사용자가 메시지를 볼 수 있도록 잠시 대기
+        st.rerun()
 
 if "data_loaded" not in st.session_state:
     try:
@@ -505,7 +486,7 @@ if st.button("💾 저장", key="save"):
         st.error(f"마스터 저장 중 오류 발생: {str(e)}")
         st.stop()
 
-# 요청사항 관리 탭 (기존 로직 유지, 필요 시 추가 수정)
+# 요청사항 관리 탭
 st.divider()
 st.subheader("📋 요청사항 관리")
 st.write("- 명단 및 마스터에 등록되지 않은 인원 중 스케줄 배정이 필요한 경우, 관리자가 이름을 수기로 입력하여 요청사항을 추가해야 합니다.\n- '꼭 근무'로 요청된 사항은 해당 인원이 마스터가 없거나 모두 '근무없음' 상태더라도 반드시 배정됩니다.")
