@@ -409,14 +409,12 @@ st.download_button(
 # 누적 근무 횟수 추적용 딕셔너리 초기화
 current_cumulative = {'오전': {}, '오후': {}}
 
-# 2025년 4월 평일 생성
-next_month = datetime.datetime(2025, 4, 1)
-_, last_day = calendar.monthrange(next_month.year, next_month.month)
-dates = pd.date_range(start=next_month, end=next_month.replace(day=last_day))
+# 당월(8월) 평일 생성
+_, last_day = calendar.monthrange(today.year, today.month)
+dates = pd.date_range(start=today.replace(day=1), end=today.replace(day=last_day))
 weekdays = [d for d in dates if d.weekday() < 5]
 week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in dates}
 day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금'}
-
 # df_final 초기화
 df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근무자', '상태', '메모', '색상'])
 
@@ -519,7 +517,6 @@ def transform_schedule_data(df, df_excel, month_start, month_end):
     
     # 전체 날짜 범위 생성
     date_range = pd.date_range(start=month_start, end=month_end)
-    # 날짜를 "4월 1일" 형태로 포맷팅
     date_list = [f"{d.month}월 {d.day}일" for d in date_range]
     weekday_list = [d.strftime('%a') for d in date_range]
     weekday_map = {'Mon': '월', 'Tue': '화', 'Wed': '수', 'Thu': '목', 'Fri': '금', 'Sat': '토', 'Sun': '일'}
@@ -602,15 +599,6 @@ names_in_master = set(df_master["이름"].unique().tolist())
 names_in_request = set(df_request["이름"].unique().tolist())
 all_names = sorted(list(names_in_master.union(names_in_request)))  # 중복 제거 후 정렬
 
-# 근무 배정 로직 (날짜 관련 변수 설정)
-month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
-_, last_day = calendar.monthrange(month_dt.year, month_dt.month)
-all_month_dates = pd.date_range(start=month_dt, end=month_dt.replace(day=last_day))
-weekdays = [d for d in all_month_dates if d.weekday() < 5]
-# 이 부분: 키를 .date() 객체로 생성
-week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in all_month_dates}
-day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
-
 # --- UI 개선: 토요/휴일 스케줄 입력 ---
 # 세션 상태 초기화
 if "special_schedule_count" not in st.session_state:
@@ -624,6 +612,8 @@ st.markdown("**📅 토요/휴일 스케줄 입력**")
 
 # 전체 인원 목록 준비
 all_names = sorted(list(st.session_state["df_master"]["이름"].unique()))
+
+month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
 
 # 날짜 및 인원 입력
 special_schedules = []
@@ -1254,11 +1244,13 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
 
         # ... 이하 G-Sheet 저장 및 다운로드 버튼 표시 로직
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+        # 익월 설정
         next_month_dt = (month_dt + relativedelta(months=1)).replace(day=1)
         next_month_str = next_month_dt.strftime("%Y년 %-m월")
-        next_month_start = month_dt.replace(day=1)
+        # 스케줄 저장은 당월로
+        month_start = month_dt.replace(day=1)
         _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
-        next_month_end = month_dt.replace(day=last_day)
+        month_end = month_dt.replace(day=last_day)
 
         try:
             url = st.secrets["google_sheet"]["url"]
@@ -1278,8 +1270,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
             st.stop()
 
-        df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, next_month_start, next_month_end)
-
+        df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, month_start, month_end)
         try:
             try:
                 worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
@@ -1289,7 +1280,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             data_to_save = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.astype(str).values.tolist()
             worksheet_schedule.update('A1', data_to_save, value_input_option='RAW')
         except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
             st.error(f"Google Sheets API 오류 ({month_str} 스케줄 저장): {e.response.status_code} - {e.response.text}")
             st.stop()
         except NameError as e:
@@ -1302,7 +1293,6 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             st.stop()
 
         df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True)
-
         try:
             try:
                 worksheet_cumulative = sheet.worksheet(f"{next_month_str} 누적")
@@ -1312,7 +1302,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             cumulative_data_to_save = [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist()
             worksheet_cumulative.update('A1', cumulative_data_to_save, value_input_option='USER_ENTERED')
         except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
             st.error(f"Google Sheets API 오류 ({next_month_str} 누적 저장): {e.response.status_code} - {e.response.text}")
             st.stop()
         except NameError as e:
@@ -1334,7 +1324,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         st.divider()
         st.success(f"✅ {month_str} 스케줄 테이블이 Google Sheets에 저장되었습니다.")
 
-        st.markdown("""<style>.download-button > button { ... }</style>""", unsafe_allow_html=True)
+        st.markdown("""<style>.download-button > button { background-color: #4CAF50; color: white; border-radius: 5px; padding: 10px; font-size: 16px; }</style>""", unsafe_allow_html=True)
         if st.session_state.assigned and not st.session_state.downloaded:
             with st.container():
                 st.download_button(
