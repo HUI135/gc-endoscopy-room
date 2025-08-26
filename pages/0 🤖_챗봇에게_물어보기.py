@@ -12,6 +12,23 @@ import git
 import shutil
 import glob
 import logging
+import time
+import menu
+
+st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
+
+import os
+st.session_state.current_page = os.path.basename(__file__)
+
+menu.menu()
+
+# 로그인 체크 및 자동 리디렉션
+if not st.session_state.get("login_success", False):
+    st.warning("⚠️ Home 페이지에서 먼저 로그인해주세요.")
+    st.error("1초 후 Home 페이지로 돌아갑니다...")
+    time.sleep(1)
+    st.switch_page("Home.py")  # Home 페이지로 이동
+    st.stop()
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
