@@ -122,8 +122,12 @@ if vectorstore is None:
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
 system_prompt = (
     "You are a friendly assistant for the GC Endoscopy app, designed to help users of the Gangnam Center endoscopy services. "
-    "Answer questions clearly and simply, focusing on how to use the app (e.g., booking appointments, viewing hospital information) "
-    "or general information about endoscopy procedures. Use the provided project information only when relevant to the user's question.\n\n{context}"
+    "Answer questions clearly and simply, focusing on how to use the app (e.g., booking appointments, viewing hospital information, submitting requests like schedule or room assignment changes) "
+    "or general information about endoscopy procedures. "
+    "Only if the user explicitly states 'I am an admin' or 'administrator' (e.g., 'I am an admin, how do I manage schedules?'), "
+    "provide clear and simple answers about admin features (e.g., managing schedules, assigning rooms) based on relevant project information. "
+    "Otherwise, do not mention admin-specific features, as they are password-protected and not accessible to general users. "
+    "Use the provided project information only when relevant to the user's question.\n\n{context}"
 )
 prompt = ChatPromptTemplate.from_messages(
     [("system", system_prompt), ("human", "{input}")]
@@ -139,26 +143,29 @@ if "messages" not in st.session_state:
         {"role": "assistant", "content": "안녕하세요! 강남센터 내시경실 시스템에 대해 궁금한 점이 있으면 물어보세요! 😊"}
     ]
 
-# 이전 대화 내용 표시
-for message in st.session_state.messages:
-    with st.chat_message(message["role"], avatar="🏥" if message["role"] == "assistant" else None):
-        st.markdown(message["content"])
+# 채팅 영역을 박스로 감싸기
+chat_container = st.container()
+with chat_container:
+    # 이전 대화 내용 표시
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"], avatar="🏥" if message["role"] == "assistant" else None):
+            st.markdown(message["content"])
 
-# 사용자 입력 처리
-if user_input := st.chat_input("궁금한 점을 입력하세요 (예: 이 앱은 무엇인가요?)"):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    # 사용자 입력 처리
+    if user_input := st.chat_input("궁금한 점을 입력하세요 (예: 이 앱은 무엇인가요?)"):
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-    with st.chat_message("assistant", avatar="🏥"):
-        with st.spinner("답변을 준비하는 중..."):
-            try:
-                response = rag_chain.invoke({"input": user_input})
-                answer = response["answer"]
-            except Exception as e:
-                answer = f"문제가 발생했습니다: {e}"
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant", avatar="🏥"):
+            with st.spinner("답변을 준비하는 중..."):
+                try:
+                    response = rag_chain.invoke({"input": user_input})
+                    answer = response["answer"]
+                except Exception as e:
+                    answer = f"문제가 발생했습니다: {e}"
+                st.markdown(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
 
 # 스타일링
 st.markdown(
