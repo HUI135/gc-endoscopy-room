@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 from openai import OpenAI
-# [수정] DirectoryLoader 대신 Document 객체를 직접 사용합니다.
 from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -60,16 +59,13 @@ def load_knowledge_base():
     repo_path = "./temp_repo"
     try:
         if os.path.exists(repo_path):
-            shutil.rmtree(repo_path)
+            shutil.rmtree(repo_path, ignore_errors=True)
 
         git.Repo.clone_from(REPO_URL, repo_path, branch=BRANCH)
 
-        # [핵심 수정] DirectoryLoader 대신 파일을 직접 읽어 Document 객체를 생성합니다.
         docs = []
         file_extensions_to_load = ['.py', '.md', '.txt']
         
-        loaded_files_list = []
-
         for root, _, files in os.walk(repo_path):
             if ".git" in root:
                 continue
@@ -81,12 +77,11 @@ def load_knowledge_base():
                             content = f.read()
                         doc = Document(page_content=content, metadata={"source": file_path})
                         docs.append(doc)
-                        loaded_files_list.append(file_path)
                     except Exception as e:
-                        st.warning(f"'{file_path}' 파일을 읽는 중 오류 발생: {e}")
-        
+                        st.warning(f"'{file_name}' 파일을 읽는 중 오류 발생: {e}")
+
         if not docs:
-            st.warning("⚠️ 리포지토리에서 텍스트 파일을 로드하지 못했습니다.")
+            st.warning("⚠️ 리포지토리에서 .py, .md, .txt 파일을 로드하지 못했습니다. 리포지토리 내용을 확인하세요.")
             return None
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -104,9 +99,8 @@ def load_knowledge_base():
         st.code(traceback.format_exc())
         return None
     finally:
-        # 작업 완료 후 임시 폴더 정리
         if os.path.exists(repo_path):
-            shutil.rmtree(repo_path)
+            shutil.rmtree(repo_path, ignore_errors=True)
 
 # =========================
 # 3) Streamlit UI 설정
@@ -127,8 +121,9 @@ if vectorstore is None:
 # =========================
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
 system_prompt = (
-    "You are a friendly assistant for the GC Endoscopy app. "
-    "Answer questions clearly and simply using the provided project information.\n\n{context}"
+    "You are a friendly assistant for the GC Endoscopy app, designed to help users of the Gangnam Center endoscopy services. "
+    "Answer questions clearly and simply, focusing on how to use the app (e.g., booking appointments, viewing hospital information) "
+    "or general information about endoscopy procedures. Use the provided project information only when relevant to the user's question.\n\n{context}"
 )
 prompt = ChatPromptTemplate.from_messages(
     [("system", system_prompt), ("human", "{input}")]
@@ -169,21 +164,27 @@ if user_input := st.chat_input("궁금한 점을 입력하세요 (예: 이 앱�
 st.markdown(
     """
     <style>
+    /* 대화창 박스 */
     .stChatMessage {
         border-radius: 12px;
         padding: 12px;
         margin-bottom: 12px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border: 1px solid #e0e0e0; /* 얇은 회색 테두리 */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* 부드러운 그림자 */
     }
     [data-testid="chat-message-container-user"] {
-        background-color: #d9e6ff;
+        background-color: #d9e6ff; /* 연한 파랑 */
     }
     [data-testid="chat-message-container-assistant"] {
-        background-color: #f5f5f5;
+        background-color: #f5f5f5; /* 연한 회색 */
     }
-    .stTitle {
-        color: #2c3e50;
-        font-weight: bold;
+    /* 입력창 박스 */
+    [data-testid="stTextInput"] {
+        background-color: #ffffff; /* 흰색 배경 */
+        border: 1px solid #e0e0e0; /* 얇은 회색 테두리 */
+        border-radius: 8px; /* 둥근 테두리 */
+        box-shadow: 0 4px 4px rgba(0,0,0,0.1); /* 부드러운 그림자 */
+        padding: 10px;
     }
     </style>
     """,
