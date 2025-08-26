@@ -14,7 +14,7 @@ import git
 import shutil
 import traceback
 
-st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
+# st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
 
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
@@ -113,7 +113,7 @@ st.divider()
 vectorstore = load_knowledge_base()
 
 if vectorstore is None:
-    st.error("데이터베이스 초기화에 실패했습니다. 위의 로그를 확인하여 원인을 파악하거나 관리자에게 문의하세요.")
+    st.error("데이터베이스 초기화에 실패했습니다. 위의 로그를 확인하여 원인을 파악하거나 관리자에게 문의하세요.") 
     st.stop()
 
 # =========================
@@ -151,21 +151,25 @@ with chat_container:
         with st.chat_message(message["role"], avatar="🏥" if message["role"] == "assistant" else None):
             st.markdown(message["content"])
 
+# 입력창을 별도의 컨테이너로 분리
+input_container = st.container()
+with input_container:
     # 사용자 입력 처리
     if user_input := st.chat_input("궁금한 점을 입력하세요 (예: 이 앱은 무엇인가요?)"):
         st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+        with chat_container:  # 사용자 메시지와 답변을 chat_container에 추가
+            with st.chat_message("user"):
+                st.markdown(user_input)
 
-        with st.chat_message("assistant", avatar="🏥"):
-            with st.spinner("답변을 준비하는 중..."):
-                try:
-                    response = rag_chain.invoke({"input": user_input})
-                    answer = response["answer"]
-                except Exception as e:
-                    answer = f"문제가 발생했습니다: {e}"
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+            with st.chat_message("assistant", avatar="🏥"):
+                with st.spinner("답변을 준비하는 중..."):
+                    try:
+                        response = rag_chain.invoke({"input": user_input})
+                        answer = response["answer"]
+                    except Exception as e:
+                        answer = f"문제가 발생했습니다: {e}"
+                    st.markdown(answer)
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
 
 # 스타일링
 st.markdown(
@@ -186,12 +190,16 @@ st.markdown(
         background-color: #f5f5f5; /* 연한 회색 */
     }
     /* 입력창 박스 */
-    [data-testid="stTextInput"] {
+    [data-testid="stChatInput"] {
         background-color: #ffffff; /* 흰색 배경 */
         border: 1px solid #e0e0e0; /* 얇은 회색 테두리 */
         border-radius: 8px; /* 둥근 테두리 */
         box-shadow: 0 4px 4px rgba(0,0,0,0.1); /* 부드러운 그림자 */
         padding: 10px;
+        position: sticky; /* 입력창을 하단에 고정 */
+        bottom: 0; /* 페이지 하단에 고정 */
+        z-index: 1000; /* 다른 요소 위에 표시 */
+        margin-top: 20px; /* 대화 내용과 간격 */
     }
     </style>
     """,

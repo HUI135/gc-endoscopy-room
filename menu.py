@@ -47,8 +47,8 @@ def menu():
         if st.sidebar.button("🔔 방배정 변경 요청", use_container_width=True, disabled=(current_page_basename == "3 🔔_방배정_변경_요청.py")):
             st.switch_page("pages/3 🔔_방배정_변경_요청.py")
         
-        if st.sidebar.button("🤖 챗봇에게 물어보기", use_container_width=True, disabled=(current_page_basename == "0 🤖_챗봇에게_물어보기.py")):
-            st.switch_page("pages/0 🤖_챗봇에게_물어보기.py")
+        if st.sidebar.button("🤖 챗봇에게 물어보기", use_container_width=True, disabled=(current_page_basename == "3 🤖_챗봇에게_물어보기.py")):
+            st.switch_page("pages/3 🤖_챗봇에게_물어보기.py")
             
         # 관리자 메뉴
         if st.session_state.get("is_admin", False):

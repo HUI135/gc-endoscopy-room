@@ -4,14 +4,17 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
-import menu # 1단계에서 만든 menu.py를 import
+import menu
+import chatbot
+import os
 
+# set_page_config는 가장 먼저 호출
 st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
 
-import os
+# 그 이후에 다른 Streamlit 명령 포함 가능
 st.session_state.current_page = os.path.basename(__file__)
 
-# menu.py의 menu() 함수를 호출하여 사이드바를 생성합니다.
+# menu.py의 menu() 함수 호출
 menu.menu()
 
 # --- 기본 설정 및 함수 (기존과 동일) ---
@@ -20,7 +23,6 @@ ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
 ADMINISTRATOR1 = st.secrets["passwords"]["administrator1"]
 ADMINISTRATOR2 = st.secrets["passwords"]["administrator2"]
 ADMINISTRATOR3 = st.secrets["passwords"]["administrator3"]
-
 
 @st.cache_resource
 def get_gspread_client():
@@ -93,7 +95,6 @@ if not st.session_state["login_success"]:
 
 # --- 로그인 성공 후 처리 ---
 if st.session_state["login_success"]:
-
     st.markdown(f"#### 👋 {st.session_state['name']}님, 안녕하세요!")
     st.info("왼쪽 사이드바의 메뉴에서 원하시는 작업을 선택해주세요.")
     
@@ -111,3 +112,6 @@ if st.session_state["login_success"]:
                         st.rerun()
                     else:
                         st.error("관리자 비밀번호가 틀렸습니다.")
+
+# 플로팅 챗봇 창 렌더링
+chatbot.render_chatbot()

@@ -18,3 +18,4 @@ openai
 gitpython
 tiktoken
 unstructured[all]
+streamlit-js-eval

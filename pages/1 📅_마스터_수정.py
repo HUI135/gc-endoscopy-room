@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
+import chatbot
 
 st.set_page_config(page_title="마스터 수정", page_icon="📅", layout="wide")
 
@@ -425,3 +426,7 @@ with st.expander("📅 주 단위로 설정"):
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
             st.stop()
+
+
+# 플로팅 챗봇 창 렌더링
+chatbot.render_chatbot()
