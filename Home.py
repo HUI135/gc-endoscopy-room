@@ -5,7 +5,6 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
-import chatbot
 import os
 
 # set_page_config는 가장 먼저 호출
@@ -112,6 +111,3 @@ if st.session_state["login_success"]:
                         st.rerun()
                     else:
                         st.error("관리자 비밀번호가 틀렸습니다.")
-
-# 플로팅 챗봇 창 렌더링
-chatbot.render_chatbot()
