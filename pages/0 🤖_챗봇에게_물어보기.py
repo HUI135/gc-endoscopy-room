@@ -1,75 +1,91 @@
+import os
 import streamlit as st
+from openai import OpenAI
 from langchain_community.document_loaders import GitLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
-from langchain_openai import ChatOpenAI
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.vectorstores import FAISS
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from openai import OpenAI
-import os, streamlit as st
+import menu
 
-# 1) secrets 체크
+st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
+
+import os
+st.session_state.current_page = os.path.basename(__file__)
+
+menu.menu()
+
+# =========================
+# 0) 상수 설정
+# =========================
+REPO_URL = "https://github.com/HUI135/gc-endoscopy-room.git"
+BRANCH = "main"
+
+# =========================
+# 1) API 키 설정 및 검사
+# =========================
 if "gpt" not in st.secrets or "openai_api_key" not in st.secrets["gpt"]:
-    st.write("현재 secrets 키들:", list(st.secrets.keys()))
-    st.write("gpt 섹션:", st.secrets.get("gpt"))
-    raise KeyError('secrets에 [gpt].openai_api_key가 없습니다.')
+    st.error("⚠️ 시스템 설정 오류가 발생했습니다. 관리자에게 문의하세요.")
+    st.stop()
 
-OPENAI_API_KEY = st.secrets["gpt"]["openai_api_key"].strip()  # 혹시 모를 개행 제거
-
-# 2) 환경변수에도 주입 (다른 라이브러리들이 자동 인식)
+OPENAI_API_KEY = st.secrets["gpt"]["openai_api_key"].strip()
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
-# 3) 내 클라이언트에는 직접 전달
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# 4) 테스트 호출 (쿼터/빌링 이슈도 친절히 표시)
+# OpenAI 연결 테스트
 try:
+    client = OpenAI(api_key=OPENAI_API_KEY)
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": "hello"}],
     )
-    st.write(resp.choices[0].message.content)
 except Exception as e:
-    st.error(f"OpenAI 호출 에러: {e}")
+    st.error(f"시스템 연결 오류: {e}")
+    st.stop()
 
-# 지식 베이스 로드 함수 (앱 시작 시 한 번만)
-@st.cache_resource
+# =========================
+# 2) 데이터 로드 (캐시)
+# =========================
+@st.cache_resource(show_spinner="데이터를 준비하는 중...")
 def load_knowledge_base():
-    # Git 리포지토리 클론 및 로드
+    repo_path = "./temp_repo"
     loader = GitLoader(
         clone_url=REPO_URL,
-        repo_path="./temp_repo",  # 임시 폴더
+        repo_path=repo_path,
         branch=BRANCH,
-        file_filter=lambda file_path: file_path.endswith((".py", ".md", ".txt"))  # 원하는 파일만 로드
+        file_filter=lambda p: p.endswith((".py", ".md", ".txt"))
     )
     docs = loader.load()
 
-    # 텍스트 쪼개기
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs)
 
-    # 임베딩과 벡터 스토어 생성
-    embeddings = OpenAIEmbeddings(OPENAI_API_KEY=OPENAI_API_KEY)
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small", api_key=OPENAI_API_KEY)
     vectorstore = FAISS.from_documents(splits, embeddings)
-
     return vectorstore
 
-# 메인 앱
-st.title("🤖 챗봇에게 물어보기")
-st.subheader("🤖 챗봇에게 물어보기", divider='rainbow')
+# =========================
+# 3) Streamlit UI 설정
+# =========================
 
-# 지식 베이스 로드
-vectorstore = load_knowledge_base()
+# 메인 레이아웃
+st.header("🤖 챗봇에게 물어보기", divider='rainbow')
+st.write("- 챗봇에게 궁금한 점을 물어보세요! 예: 앱 기능, 프로젝트 정보 등")
+st.write()
 
-# LLM 설정
-llm = ChatOpenAI(model="gpt-3.5-turbo", OPENAI_API_KEY=OPENAI_API_KEY)
+# 데이터 로드
+with st.spinner("데이터를 준비하는 중..."):
+    vectorstore = load_knowledge_base()
 
-# 프롬프트 템플릿 (앱 기능 설명이나 FAQ에 맞춤)
+# =========================
+# 4) 챗봇 설정
+# =========================
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+
 system_prompt = (
-    "You are an assistant for this Streamlit app. Use the following context to answer questions about the app's features, FAQ, or code from the GitHub repo."
-    "\n\n{context}"
+    "You are a friendly assistant for the GC Endoscopy app. "
+    "Answer questions clearly and simply using the provided project information.\n\n{context}"
 )
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -78,27 +94,65 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-# 체인 생성
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
 rag_chain = create_retrieval_chain(vectorstore.as_retriever(), question_answer_chain)
 
-# 채팅 히스토리 유지
+# =========================
+# 5) 채팅 UI
+# =========================
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = [
+        {"role": "assistant", "content": "안녕하세요! GC Endoscopy 프로젝트에 대해 궁금한 점이 있으면 물어보세요! 😊"}
+    ]
 
-# 이전 메시지 표시
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# 채팅 영역
+chat_container = st.container()
+with chat_container:
+    for m in st.session_state.messages:
+        with st.chat_message(m["role"], avatar="🏥" if m["role"] == "assistant" else None):
+            st.markdown(m["content"])
 
-# 사용자 입력
-if user_input := st.chat_input("Ask about the app features or FAQ:"):
+# 입력창
+user_input = st.chat_input("궁금한 점을 입력하세요 (예: 이 앱은 무엇인가요?)")
+if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    with chat_container:
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-    # RAG 체인으로 응답 생성
-    with st.chat_message("assistant"):
-        response = rag_chain.invoke({"input": user_input})
-        st.markdown(response["answer"])
-        st.session_state.messages.append({"role": "assistant", "content": response["answer"]})
+        with st.chat_message("assistant", avatar="🏥"):
+            with st.spinner("답변을 준비하는 중..."):
+                try:
+                    response = rag_chain.invoke({"input": user_input})
+                    answer = response["answer"]
+                except Exception as e:
+                    answer = f"문제가 발생했습니다: {e}"
+                st.markdown(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+
+# 스타일링
+st.markdown(
+    """
+    <style>
+    .stChatMessage {
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .stChatMessage[data-user="user"] {
+        background-color: #d9e6ff;
+        border-left: 4px solid #1e90ff;
+    }
+    .stChatMessage[data-user="assistant"] {
+        background-color: #f5f5f5;
+        border-left: 4px solid #2ecc71;
+    }
+    .stTitle {
+        color: #2c3e50;
+        font-weight: bold;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)

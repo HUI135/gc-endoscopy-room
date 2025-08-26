@@ -89,12 +89,12 @@ try:
         st.stop()
     name = st.session_state["name"]
     today = datetime.date.today()
-
-    next_month = today.replace(day=1) + relativedelta(months=1)
-    month_str = next_month.strftime("%Y년 %-m월")
-    next_month_start = next_month
-    _, last_day = calendar.monthrange(next_month.year, next_month.month)
-    next_month_end = next_month.replace(day=last_day)
+    month_str = today.strftime("%Y년 %-m월")
+    month_start = today.replace(day=1)
+    _, last_day = calendar.monthrange(today.year, today.month)
+    month_end = today.replace(day=last_day)
+    week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end)))
+    week_labels = [f"{i+1}주" for i in range(len(week_nums))]
 except NameError as e:
     st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
@@ -111,8 +111,7 @@ def create_calendar_events(df_master, df_request):
     
     # 마스터 데이터에서 이벤트 생성
     if not df_master.empty:
-        next_month_calc = today.replace(day=1) + relativedelta(months=1)
-        year, month = next_month_calc.year, next_month_calc.month
+        year, month = today.year, today.month
         c = calendar.Calendar(firstweekday=6)
         month_calendar = c.monthdatescalendar(year, month)
 
@@ -203,7 +202,7 @@ def initialize_data():
         st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
         st.stop()
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (데이터 초기화): {str(e)}")
         st.stop()
     except Exception as e:
@@ -226,7 +225,7 @@ def refresh_and_update():
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
         st.stop()
     except Exception as e:
@@ -257,7 +256,7 @@ def add_request_callback():
 
             if 선택주차 and 선택요일:
                 c = calendar.Calendar(firstweekday=6)
-                month_calendar = c.monthdatescalendar(next_month.year, next_month.month)
+                month_calendar = c.monthdatescalendar(today.year, today.month)
 
                 요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
                 선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
@@ -271,7 +270,7 @@ def add_request_callback():
                     
                     if "매주" in 선택주차 or 주차_이름 in 선택주차:
                         for date in week:
-                            if date.month == next_month.month and date.weekday() in 선택된_요일_인덱스:
+                            if date.month == today.month and date.weekday() in 선택된_요일_인덱스:
                                 날짜목록.append(date.strftime("%Y-%m-%d"))
 
             날짜정보 = ", ".join(sorted(list(set(날짜목록))))
@@ -320,7 +319,7 @@ def add_request_callback():
                     worksheet2.clear()
                     worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
                 except gspread.exceptions.APIError as e:
-                    st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                    st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                     st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
                     st.stop()
                 
@@ -328,7 +327,7 @@ def add_request_callback():
                 st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
             
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
                 st.stop()
             except Exception as e:
@@ -378,7 +377,7 @@ def delete_requests_callback():
                         worksheet2.clear()
                         worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
                     except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                         st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
                         st.stop()
                     
@@ -389,7 +388,7 @@ def delete_requests_callback():
                     return
             
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
                 st.stop()
             except Exception as e:
@@ -413,7 +412,7 @@ if "initial_load_done_page2" not in st.session_state:
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (초기 데이터 로드): {str(e)}")
         st.stop()
     except Exception as e:
@@ -436,10 +435,10 @@ events_combined = create_calendar_events(df_user_master, df_user_request)
 
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
-    calendar_options = {"initialView": "dayGridMonth", "initialDate": next_month.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}}
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": today.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}}
     st_calendar(options=calendar_options)
 else:
-    calendar_options = {"initialView": "dayGridMonth", "initialDate": next_month.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": today.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
     st_calendar(events=events_combined, options=calendar_options)
 
 st.divider()
@@ -471,9 +470,9 @@ with col3:
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
             def format_date(date_obj):
                 return f"{date_obj.strftime('%-m월 %-d일')} ({weekday_map[date_obj.weekday()]})"
-            st.multiselect("요청 일자", [next_month_start + datetime.timedelta(days=i) for i in range((next_month_end - next_month_start).days + 1)], format_func=format_date, key="date_multiselect")
+            st.multiselect("요청 일자", [month_start + datetime.timedelta(days=i) for i in range((month_end - month_start).days + 1)], format_func=format_date, key="date_multiselect")
         elif 방식 == "기간 선택":
-            st.date_input("요청 기간", value=(next_month_start, next_month_start + datetime.timedelta(days=1)), min_value=next_month_start, max_value=next_month_end, key="date_range")
+            st.date_input("요청 기간", value=(month_start, month_start + datetime.timedelta(days=1)), min_value=month_start, max_value=month_end, key="date_range")
         elif 방식 == "주/요일 선택":
             st.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
             st.multiselect("요일 선택", ["월", "화", "수", "목", "금", "토", "일"], key="day_select")

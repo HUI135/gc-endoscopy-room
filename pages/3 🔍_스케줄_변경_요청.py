@@ -24,12 +24,12 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-today = datetime.date.today()
+today = date.today()
 month_str = today.strftime("%Y년 %-m월")
-YEAR_STR = MONTH_STR.split('년')[0]
+YEAR_STR = month_str.split('년')[0]
 AM_COLS = [str(i) for i in range(1, 13)] + ['온콜']
 PM_COLS = [f'오후{i}' for i in range(1, 6)]
-REQUEST_SHEET_NAME = f"{MONTH_STR} 스케줄 변경요청"
+REQUEST_SHEET_NAME = f"{month_str} 스케줄 변경요청"
 
 # --- 함수 정의 ---
 def get_gspread_client():
@@ -243,7 +243,7 @@ except NameError as e:
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 
-st.header(f"📅 {user_name} 님의 {MONTH_STR} 스케줄 변경 요청", divider='rainbow')
+st.header(f"📅 {user_name} 님의 {month_str} 스케줄 변경 요청", divider='rainbow')
 
 if st.button("🔄 새로고침 (R)"):
     try:
@@ -263,7 +263,7 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-df_schedule = load_schedule_data(MONTH_STR)
+df_schedule = load_schedule_data(month_str)
 
 if df_schedule.empty:
     st.stop()
@@ -353,7 +353,7 @@ else:
                     "변경 요청한 스케줄": f"{my_assignment_info['date_obj'].strftime('%Y-%m-%d')} ({my_assignment_info['shift_type']})",
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
-                    if add_request_to_sheet(new_request, MONTH_STR):
+                    if add_request_to_sheet(new_request, month_str):
                         st.success("요청이 성공적으로 기록되었습니다.")
                         time.sleep(1.5)
                         st.rerun()
@@ -424,7 +424,7 @@ else:
                 "변경 요청한 스케줄": f"{colleague_assignment_info['date_obj'].strftime('%Y-%m-%d')} ({colleague_assignment_info['shift_type']})",
             }
             with st.spinner("요청을 기록하는 중입니다..."):
-                if add_request_to_sheet(new_request, MONTH_STR):
+                if add_request_to_sheet(new_request, month_str):
                     st.success("요청이 성공적으로 기록되었습니다.")
                     time.sleep(1.5)
                     st.rerun()
@@ -445,7 +445,7 @@ else:
                 return schedule_str
         return schedule_str
 
-    my_requests = get_my_requests(MONTH_STR, employee_id)
+    my_requests = get_my_requests(month_str, employee_id)
     
     if not my_requests:
         st.info("현재 접수된 변경 요청이 없습니다.")
@@ -482,7 +482,7 @@ else:
                 st.markdown("<div style='height: 35px;'></div>", unsafe_allow_html=True)
                 if st.button("🗑️ 삭제", key=f"del_{req_id}", use_container_width=True):
                     with st.spinner("요청을 삭제하는 중입니다..."):
-                        if delete_request_from_sheet(req_id, MONTH_STR):
+                        if delete_request_from_sheet(req_id, month_str):
                             st.success("요청이 성공적으로 삭제되었습니다.")
                             time.sleep(1.5)  # 2초 대기
                             st.rerun()

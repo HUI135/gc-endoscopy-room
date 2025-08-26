@@ -26,8 +26,8 @@ if not st.session_state.get("login_success", False):
 # --- 상수 및 기본 설정 ---
 today = date.today()
 month_str = today.strftime("%Y년 %-m월")
-YEAR_STR = MONTH_STR.split('년')[0]
-REQUEST_SHEET_NAME = f"{MONTH_STR} 방배정 변경요청"
+YEAR_STR = month_str.split('년')[0]
+REQUEST_SHEET_NAME = f"{month_str} 방배정 변경요청"
 
 # --- 함수 정의 ---
 def get_gspread_client():
@@ -85,24 +85,24 @@ def load_special_schedules(month_str):
     try:
         gc = get_gspread_client()
         if not gc:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
             return pd.DataFrame()
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(f"{month_str} 토요/휴일 일자")
         records = worksheet.get_all_records()
         if not records:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
             return pd.DataFrame()
         df = pd.DataFrame(records)
         if '날짜' not in df.columns or '근무 인원' not in df.columns:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)
         df['날짜_dt'] = pd.to_datetime(df['날짜'], format='%Y-%m-%d', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
     except gspread.exceptions.WorksheetNotFound:
-        st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+        st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
         return pd.DataFrame()
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -110,7 +110,7 @@ def load_special_schedules(month_str):
         st.stop()
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+        st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
         st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
@@ -348,7 +348,7 @@ except NameError as e:
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 
-st.header(f"📅 {user_name} 님의 {MONTH_STR} 방배정 변경 요청", divider='rainbow')
+st.header(f"📅 {user_name} 님의 {month_str} 방배정 변경 요청", divider='rainbow')
 
 if st.button("🔄 새로고침 (R)"):
     try:
@@ -368,8 +368,8 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-df_room = load_room_data(MONTH_STR)
-df_special = load_special_schedules(MONTH_STR)
+df_room = load_room_data(month_str)
+df_special = load_special_schedules(month_str)
 
 if df_room.empty:
     st.stop()
@@ -467,7 +467,7 @@ else:
                     "변경 요청한 방배정": my_assignment_info['sheet_str'],
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
-                    if add_room_request_to_sheet(new_request, MONTH_STR):
+                    if add_room_request_to_sheet(new_request, month_str):
                         st.success("교환 요청이 성공적으로 기록되었습니다.")
                         time.sleep(1.5)
                         st.rerun()
@@ -555,14 +555,14 @@ else:
                 "변경 요청한 방배정": colleague_assignment_info['sheet_str'],
             }
             with st.spinner("요청을 기록하는 중입니다..."):
-                if add_room_request_to_sheet(new_request, MONTH_STR):
+                if add_room_request_to_sheet(new_request, month_str):
                     st.success("요청이 성공적으로 기록되었습니다.")
                     time.sleep(1.5)
                     st.rerun()
 
     st.divider()
     st.markdown(f"#### 📝 {user_name}님의 방배정 변경 요청 목록")
-    my_requests = get_my_room_requests(MONTH_STR, employee_id)
+    my_requests = get_my_room_requests(month_str, employee_id)
 
     HTML_CARD_TEMPLATE = (
         '<div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 10px; background-color: #fcfcfc; margin-bottom: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">'
@@ -605,7 +605,7 @@ else:
                 st.markdown("<div style='height: 35px;'></div>", unsafe_allow_html=True)
                 if st.button("🗑️ 삭제", key=req.get('RequestID', str(uuid.uuid4())), use_container_width=True):
                     with st.spinner("요청을 삭제하는 중입니다..."):
-                        if delete_room_request_from_sheet(req.get('RequestID'), MONTH_STR):
+                        if delete_room_request_from_sheet(req.get('RequestID'), month_str):
                             st.success("요청이 성공적으로 삭제되었습니다.")
                             time.sleep(1.5)
                             st.rerun()
