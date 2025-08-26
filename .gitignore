@@ -2,3 +2,5 @@ __pycache__/\n*.pyc\n.env\n*.xlsx\n*.csv\noutput/\n*.pkl
 .streamlit/secrets.toml
 .streamlit/secrets.toml
 .streamlit/secrets.toml
+.streamlit/secrets.toml
+temp_repo/

@@ -7,6 +7,26 @@ from langchain.vectorstores import FAISS
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from openai import OpenAI
+import streamlit as st
+
+# secrets 검사 (지금 쓰신 것 유지 가능)
+if "gpt" not in st.secrets or "openai_api_key" not in st.secrets["gpt"]:
+    st.write("현재 secrets 키들:", list(st.secrets.keys()))
+    st.write("gpt 섹션:", st.secrets.get("gpt"))
+    raise KeyError('secrets에 [gpt].openai_api_key가 없습니다.')
+
+OPENAI_API_KEY = st.secrets["gpt"]["openai_api_key"]
+
+# ✅ 핵심: 클라이언트 만들 때 api_key를 직접 전달
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# 예시 호출
+resp = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "hello"}]
+)
+st.write(resp.choices[0].message.content)
 
 # GitHub 리포지토리 URL과 브랜치 (당신의 리포로 바꾸세요)
 REPO_URL = "https://github.com/HUI135/gc-endoscopy-room.git"
@@ -38,7 +58,8 @@ def load_knowledge_base():
     return vectorstore
 
 # 메인 앱
-st.title("My Streamlit App with GitHub-Based Chatbot")
+st.title("🤖 챗봇에게 물어보기")
+st.subheader("🤖 챗봇에게 물어보기", divider='rainbow')
 
 # 지식 베이스 로드
 vectorstore = load_knowledge_base()
