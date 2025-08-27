@@ -191,15 +191,16 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
                 is_special_date = not df_special[df_special['날짜_dt'].dt.date == date_obj.date()].empty
 
             if is_special_date:
-                # --- 토요/휴일 변경 로직 ---
-                row_indices = df_modified.index[df_modified['날짜'].str.contains(target_date_str)].tolist()
+                # --- [수정된 로직] 토요/휴일 변경 로직 ---
+                row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
                 if not row_indices:
                     st.warning(f"⚠️ 요청 처리 불가: 토요/휴일 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
                     time.sleep(1.5)
                     continue
                 target_row_idx = row_indices[0]
 
-                room_match = re.search(r'\((\d+)\)', target_slot)
+                # 요청 정보에서 방 번호 추출 (예: "8번방" -> "8" 또는 "8:30(8)" -> "8")
+                room_match = re.search(r'(\d+)', target_slot)
                 if not room_match:
                     st.warning(f"⚠️ 토요/휴일 요청 형식 오류: 방 번호를 찾을 수 없습니다. (요청: '{target_slot}')")
                     time.sleep(1.5)
@@ -207,49 +208,38 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
                 requested_room_num = room_match.group(1)
                 
                 target_cell_found = False
-                for col in df_modified.columns[2:]:  # 날짜, 요일 제외
-                    cell_value = str(df_modified.at[target_row_idx, col]).strip()
-                    if not cell_value:
-                        continue
-
-                    person_in_cell = re.sub(r'\[\d+\]', '', cell_value).strip()
-                    room_in_cell_match = re.search(r'\[(\d+)\]', cell_value)
+                # 날짜, 요일 제외하고 모든 열을 순회
+                for col in df_modified.columns[2:]:
+                    person_in_cell = str(df_modified.at[target_row_idx, col]).strip()
                     
-                    if room_in_cell_match:
-                        room_in_cell = room_in_cell_match.group(1)
-                        if person_in_cell == old_person and room_in_cell == requested_room_num:
-                            new_cell_value = f"{new_person}[{room_in_cell}]"
-                            df_modified.at[target_row_idx, col] = new_cell_value
-                            target_cell_found = True
-                            
-                            # df_special의 '근무 인원'도 업데이트
-                            special_row_indices = df_special.index[df_special['날짜_dt'].dt.date == date_obj.date()].tolist()
-                            if special_row_indices:
-                                special_row_idx = special_row_indices[0]
-                                worker_list_str = df_special.at[special_row_idx, '근무 인원']
-                                workers = [w.strip() for w in worker_list_str.split(',')]
-                                if old_person in workers:
-                                    updated_workers = [new_person if p == old_person else p for p in workers]
-                                    df_special.at[special_row_idx, '근무 인원'] = ', '.join(updated_workers)
-
-                            changed_log.append({
-                                '날짜': f"{target_date_str} ({'월화수목금토일'[date_obj.weekday()]})",
-                                '방배정': col,
-                                '변경 전 인원': cell_value,
-                                '변경 후 인원': new_cell_value,
-                                # '변경 유형': '일괄 적용',
-                                '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            })
-                            applied_count += 1
-                            break
+                    # 현재 셀의 근무자가 요청의 이전 근무자와 일치하는지 확인
+                    if person_in_cell == old_person:
+                        # 열 이름에서 방 번호 추출 (예: "8:30(8)" -> "8")
+                        col_room_match = re.search(r'\((\d+)\)', col)
+                        if col_room_match:
+                            room_in_col = col_room_match.group(1)
+                            # 열의 방 번호와 요청된 방 번호가 일치하는지 확인
+                            if room_in_col == requested_room_num:
+                                df_modified.at[target_row_idx, col] = new_person
+                                target_cell_found = True
+                                
+                                changed_log.append({
+                                    '날짜': f"{target_date_str} ({'월화수목금토일'[date_obj.weekday()]})",
+                                    '방배정': f"{requested_room_num}번방", # "8번방" 형식으로 로그 기록
+                                    '변경 전 인원': old_person,
+                                    '변경 후 인원': new_person,
+                                    '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                })
+                                applied_count += 1
+                                break # 해당 요청 처리가 끝났으므로 다음 요청으로 넘어감
 
                 if not target_cell_found:
-                    st.error(f"❌ 적용 실패: {target_date_str}에서 '{old_person}[{requested_room_num}]'을(를) 찾을 수 없습니다.")
+                    st.error(f"❌ 적용 실패: {target_date_str}의 '{requested_room_num}번방'에 '{old_person}'을(를) 찾을 수 없습니다.")
                     time.sleep(1.5)
                     error_found = True
 
             else:
-                # --- 평일 변경 로직 ---
+                # --- 평일 변경 로직 (기존과 동일) ---
                 row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
                 if not row_indices:
                     st.warning(f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
@@ -271,7 +261,6 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
                         '방배정': target_slot,
                         '변경 전 인원': old_person,
                         '변경 후 인원': new_person,
-                        # '변경 유형': '일괄 적용',
                         '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     })
                     applied_count += 1
@@ -549,6 +538,7 @@ has_unsaved_changes = (st.session_state.changed_cells_log is not None and len(st
 
 col_final1, col_final2 = st.columns(2)
 with col_final1:
+    # 이 코드는 기존의 `if st.button("✍️ 변경사항 저장", ...):` 블록 전체를 대체합니다.
     if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True, disabled=not has_unsaved_changes):
         final_df_to_save = st.session_state.df_final_assignment
         special_df_to_save = st.session_state.df_special_schedules
@@ -557,8 +547,14 @@ with col_final1:
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
                 
-                # 방배정 시트 업데이트
-                worksheet_final = sheet.worksheet(f"{month_str} 방배정 최종")
+                # --- [수정된 부분] ---
+                # '방배정 최종' 시트가 없으면 생성하도록 수정
+                try:
+                    worksheet_final = sheet.worksheet(f"{month_str} 방배정 최종")
+                except gspread.exceptions.WorksheetNotFound:
+                    st.info(f"'{month_str} 방배정 최종' 시트를 새로 생성합니다.")
+                    worksheet_final = sheet.add_worksheet(title=f"{month_str} 방배정 최종", rows=100, cols=len(final_df_to_save.columns))
+                
                 final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
                 update_sheet_with_retry(worksheet_final, final_data_list)
                 
@@ -598,6 +594,7 @@ with col_final2:
         if 'show_final_results' not in st.session_state:
             st.session_state['show_final_results'] = False
 
+# 이 코드는 기존의 `if st.session_state.get('show_final_results', ...):` 블록 전체를 대체합니다.
 if st.session_state.get('show_final_results', False) and not has_unsaved_changes:
     st.divider()
     final_df_to_save = st.session_state.df_final_assignment
@@ -619,17 +616,15 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
 
         import platform
 
-        # 플랫폼에 따라 폰트 선택
         if platform.system() == "Windows":
-            font_name = "맑은 고딕"  # Windows에서 기본 제공
+            font_name = "맑은 고딕"
         else:
-            font_name = "Arial"  # Mac에서 기본 제공, Windows에서도 사용 가능
+            font_name = "Arial"
 
         highlight_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
         duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")
         default_font = Font(name=font_name, size=9)
         
-        # 컬럼 헤더 작성
         columns = final_df_to_save.columns.tolist()
         for col_idx, header in enumerate(columns, 1):
             cell = sheet.cell(1, col_idx, header)
@@ -647,83 +642,90 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
             elif header.startswith('13:30'):
                 cell.fill = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
         
-        # 변경된 셀 정보: saved + current 로그 합침
         all_logs = st.session_state.saved_changes_log + st.session_state.changed_cells_log
         changed_cells_set = set()
         for log in all_logs:
-            if len(log) < 4:
-                continue
+            if len(log) < 4: continue
+            
             date_str = log['날짜']
-            slot_name_raw = log['방배정']  # '방 6 (열: 9:00)' 또는 '10:00'
+            slot_name_raw = log['방배정']
+            
             try:
                 date_without_week = date_str.split(' (')[0]
-                col_name_match = re.search(r'열: (.+)\)', slot_name_raw)
-                slot_name = col_name_match.group(1) if col_name_match else slot_name_raw
                 
-                if slot_name in columns and date_without_week in final_df_to_save['날짜'].values:
-                    row_idx = final_df_to_save.index[final_df_to_save['날짜'] == date_without_week].tolist()[0] + 2
-                    col_idx = columns.index(slot_name) + 1
-                    changed_cells_set.add((row_idx, col_idx))
+                if date_without_week in final_df_to_save['날짜'].values:
+                    df_row_index = final_df_to_save.index[final_df_to_save['날짜'] == date_without_week].tolist()[0]
+                    excel_row_idx = df_row_index + 2
+                    
+                    target_col_idx = -1
+                    
+                    if "번방" in slot_name_raw:
+                        room_num_match = re.search(r'(\d+)', slot_name_raw)
+                        if room_num_match:
+                            requested_room_num = room_num_match.group(1)
+                            for col_idx, col_name in enumerate(columns):
+                                if not col_name.startswith('13:30'):
+                                    col_room_match = re.search(r'\((\d+)\)', col_name)
+                                    if col_room_match and col_room_match.group(1) == requested_room_num:
+                                        target_col_idx = col_idx + 1
+                                        break
+                    else:
+                        if slot_name_raw in columns:
+                            target_col_idx = columns.index(slot_name_raw) + 1
+
+                    if target_col_idx != -1:
+                        changed_cells_set.add((excel_row_idx, target_col_idx))
+
             except (ValueError, IndexError) as e:
                 st.warning(f"⚠️ 로그 처리 중 오류 (무시됨): {e} - 로그: {log}")
                 continue
-        
-        # 토요/휴일 날짜 목록
-        special_dates = []
+
+        special_dates_list = []
         if st.session_state.df_special_schedules is not None and not st.session_state.df_special_schedules.empty:
-            special_dates = st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%-m월 %-d일').tolist() if os.name != 'nt' else st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%m월 %d일').apply(lambda x: x.lstrip("0").replace(" 0", " "))
+            special_dates_list = st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%#m월 %#d일').tolist() if os.name != 'nt' else st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%m월 %d일').apply(lambda x: x.lstrip("0").replace(" 0", " "))
 
-        # 데이터 작성 및 색칠
         for row_idx, row_data in enumerate(final_df_to_save.itertuples(index=False), 2):
-            has_person = any(val for val in row_data[2:] if val)
             current_date_str = row_data[0]
+            is_special_day = current_date_str in special_dates_list
             
-            # 날짜를 datetime 객체로 변환하여 요일 계산
-            try:
-                date_obj = datetime.strptime(f"2025년 {current_date_str}", '%Y년 %m월 %d일')
-                is_special_day = current_date_str in special_dates
-            except (ValueError, TypeError):
-                is_special_day = False
-
-            assignment_cells = row_data[2:]
-            personnel_in_row = [p for p in assignment_cells if p]
+            personnel_in_row = [p for p in row_data[2:] if p]
             is_no_person_day = not any(personnel_in_row)
-            SMALL_TEAM_THRESHOLD_FORMAT = 15
-            is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT)
-            
+            is_small_team_day = (0 < len(personnel_in_row) < 15)
+
             for col_idx, value in enumerate(row_data, 1):
                 cell = sheet.cell(row_idx, col_idx, value if value else None)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-                special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
-                no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-                default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
                 
                 if col_idx == 1:
                     cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
                 elif col_idx == 2:
                     if is_no_person_day:
-                        cell.fill = no_person_day_fill
-                    elif is_small_team_day:
-                        cell.fill = special_day_fill
+                        cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+                    elif is_small_team_day or is_special_day:
+                        cell.fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
                     else:
-                        cell.fill = default_yoil_fill
+                        cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
                 elif is_no_person_day and col_idx >= 3:
-                    cell.fill = no_person_day_fill
+                    cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
                 
-                slot_name = columns[col_idx-1]
-                
-                # 변경된 셀 색칠
                 if (row_idx, col_idx) in changed_cells_set:
                     cell.fill = highlight_fill
                 
-                if slot_name.startswith('8:30') and slot_name.endswith('_당직') and value:
-                    cell.font = duty_font  # 오전 당직은 항상 볼드체 + 핑크색
-                elif (slot_name.startswith('13:30') and slot_name.endswith('_당직') or slot_name == '온콜') and value and not (current_date_str in special_dates):
-                    cell.font = duty_font  # 오후 당직과 온콜은 평일에만 볼드체 + 핑크색
+                slot_name = columns[col_idx-1]
+                
+                # --- [수정된 부분] 서식 적용 로직 ---
+                if value:
+                    is_duty_slot = slot_name.endswith('_당직') or slot_name == '온콜'
+                    
+                    # 당직 폰트는 평일이고 당직 슬롯일 때만 적용
+                    if is_duty_slot and not is_special_day:
+                        cell.font = duty_font
+                    else:
+                        cell.font = default_font
                 else:
-                    cell.font = default_font  # 토요/휴일의 오후 당직/온콜 또는 비당직 열에는 기본 폰트 적용
-
+                    cell.font = default_font # 값이 없는 셀은 기본 폰트
+        
         # (이하 통계 시트 작성 코드는 동일)
         stats_sheet = wb.create_sheet("Stats")
         stats_columns = stats_df.columns.tolist()

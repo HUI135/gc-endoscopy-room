@@ -42,9 +42,10 @@ today = datetime.date.today()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_str = month_dt.strftime("%Y년 %-m월")
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
+month_start = month_dt
+month_end = month_dt.replace(day=last_day)
 
 # Google Sheets 클라이언트 초기화
-@st.cache_resource # 이 함수 자체를 캐싱하여 불필요한 초기화 반복 방지
 @st.cache_resource
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -67,9 +68,91 @@ def get_gspread_client():
         st.error(f"Google Sheets 클라이언트 초기화 또는 인증 실패: {type(e).__name__} - {e}")
         st.stop()
 
+# Google Sheets 업데이트 함수
+def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
+    for attempt in range(retries):
+        try:
+            worksheet.clear()  # 시트를 완전히 비우고 새 데이터로 덮어씌움
+            worksheet.update(data, "A1")
+            return True
+        except gspread.exceptions.APIError as e:
+            if attempt < retries - 1:
+                st.warning(f"⚠️ API 요청이 지연되고 있습니다. {delay}초 후 재시도합니다... ({attempt+1}/{retries})")
+                time.sleep(delay)
+                delay *= 2  # 지수 백오프
+            else:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (시트 업데이트): {str(e)}")
+                st.stop()
+        except Exception as e:
+            if attempt < retries - 1:
+                st.warning(f"⚠️ 업데이트 실패, {delay}초 후 재시도 ({attempt+1}/{retries}): {str(e)}")
+                time.sleep(delay)
+                delay *= 2
+            else:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"Google Sheets 업데이트 실패: {str(e)}")
+                st.stop()
+    return False
+
+def load_request_data_page5():
+    try:
+        gc = get_gspread_client() 
+        sheet = gc.open_by_url(url)
+        
+        # 매핑 시트 로드
+        mapping = sheet.worksheet("매핑")
+        st.session_state["mapping"] = mapping
+        mapping_values = mapping.get_all_values()
+        if not mapping_values or len(mapping_values) <= 1:
+            df_map = pd.DataFrame(columns=["이름", "사번"])
+        else:
+            headers = mapping_values[0]
+            data = mapping_values[1:]
+            df_map = pd.DataFrame(data, columns=headers)
+            if "이름" in df_map.columns and "사번" in df_map.columns:
+                df_map = df_map[["이름", "사번"]]
+            else:
+                df_map = pd.DataFrame(columns=["이름", "사번"])
+        
+        # 매핑 시트가 비어 있는 경우
+        if df_map.empty:
+            st.error("매핑 시트에 데이터가 없습니다. 스케줄 관리를 진행할 수 없습니다.")
+            st.session_state["df_map"] = df_map
+            return False # st.stop() 대신 False 반환
+            
+        st.session_state["df_map"] = df_map
+        
+        # 요청사항 시트 로드
+        worksheet2 = sheet.worksheet(f"{month_str} 요청")
+        request_data = worksheet2.get_all_records()
+        df_request = pd.DataFrame(request_data) if request_data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+        st.session_state["df_request"] = df_request
+        st.session_state["worksheet2"] = worksheet2
+        
+        # 마스터 시트 로드
+        worksheet1 = sheet.worksheet("마스터")
+        master_data = worksheet1.get_all_records()
+        df_master = pd.DataFrame(master_data) if master_data else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+        st.session_state["df_master"] = df_master
+        st.session_state["worksheet1"] = worksheet1
+        
+        return True # 성공 시 True 반환
+
+    except APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (데이터 로드): {str(e)}")
+        return False # st.stop() 대신 False 반환
+    except WorksheetNotFound as e:
+        st.error(f"필수 시트를 찾을 수 없습니다: {e}. '매핑'과 '마스터' 시트가 있는지 확인해주세요.")
+        return False # st.stop() 대신 False 반환
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"데이터 로드 중 오류 발생: {str(e)}")
+        return False # st.stop() 대신 False 반환
+   
 
 # 데이터 로드 함수 (세션 상태 활용으로 쿼터 절약)
-@st.cache_data(ttl=3600) # 데이터를 1시간 동안 캐시. 개발 중에는 ttl을 0으로 설정하거나 캐시를 자주 지우세요.
 @st.cache_data(ttl=3600)
 def load_data_page5():
     required_keys = ["df_master", "df_request", "df_cumulative", "df_shift", "df_supplement"]
@@ -358,54 +441,293 @@ df_supplement = st.session_state.get("df_supplement", pd.DataFrame())  # 세션 
 
 st.divider()
 st.subheader(f"✨ {month_str} 테이블 종합")
+with st.expander("📁 테이블 펼쳐보기"):
 
-# 데이터 전처리: 근무 테이블과 보충 테이블의 열 분리
-df_shift_processed = split_column_to_multiple(df_shift, "근무", "근무")
-df_supplement_processed = split_column_to_multiple(df_supplement, "보충", "보충")
+    # 데이터 전처리: 근무 테이블과 보충 테이블의 열 분리
+    df_shift_processed = split_column_to_multiple(df_shift, "근무", "근무")
+    df_supplement_processed = split_column_to_multiple(df_supplement, "보충", "보충")
 
-# Excel 다운로드 함수 (다중 시트)
-def excel_download(name, sheet1, name1, sheet2, name2, sheet3, name3, sheet4, name4):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        sheet1.to_excel(writer, sheet_name=name1, index=False)
-        sheet2.to_excel(writer, sheet_name=name2, index=False)
-        sheet3.to_excel(writer, sheet_name=name3, index=False)
-        sheet4.to_excel(writer, sheet_name=name4, index=False)
-    
-    excel_data = output.getvalue()
-    return excel_data
+    # Excel 다운로드 함수 (다중 시트)
+    def excel_download(name, sheet1, name1, sheet2, name2, sheet3, name3, sheet4, name4):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            sheet1.to_excel(writer, sheet_name=name1, index=False)
+            sheet2.to_excel(writer, sheet_name=name2, index=False)
+            sheet3.to_excel(writer, sheet_name=name3, index=False)
+            sheet4.to_excel(writer, sheet_name=name4, index=False)
+        
+        excel_data = output.getvalue()
+        return excel_data
 
-# 근무 테이블
+    # 근무 테이블
+    st.write(" ")
+    st.markdown("**✅ 근무 테이블**")
+    st.dataframe(df_shift, use_container_width=True, hide_index=True)
+
+    # 보충 테이블 (중복된 df_master 표시 제거, df_supplement 표시)
+    st.markdown("**☑️ 보충 테이블**")
+    st.dataframe(df_supplement, use_container_width=True, hide_index=True)
+
+    # 누적 테이블
+    st.markdown("**➕ 누적 테이블**")
+    st.dataframe(df_cumulative, use_container_width=True, hide_index=True)
+
+    # 다운로드 버튼 추가
+    excel_data = excel_download(
+        name=f"{month_str} 테이블 종합",
+        sheet1=df_shift_processed, name1="근무 테이블",
+        sheet2=df_supplement_processed, name2="보충 테이블",
+        sheet3=df_request, name3="요청사항 테이블",
+        sheet4=df_cumulative, name4="누적 테이블"
+    )
+    st.download_button(
+        label="📥 상단 테이블 다운로드",
+        data=excel_data,
+        file_name=f"{month_str} 테이블 종합.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# 요청사항 관리 탭
+st.divider()
+st.subheader("📋 요청사항 관리")
+st.write("- 명단 및 마스터에 등록되지 않은 인원 중 스케줄 배정이 필요한 경우, 관리자가 이름을 수기로 입력하여 요청사항을 추가해야 합니다.\n- '꼭 근무'로 요청된 사항은 해당 인원이 마스터가 없거나 모두 '근무없음' 상태더라도 반드시 배정됩니다.")
+
+if df_request["분류"].nunique() == 1 and df_request["분류"].iloc[0] == '요청 없음':
+    st.warning(f"⚠️ 아직까지 {month_str}에 작성된 요청사항이 없습니다.")
+
+요청분류 = ["휴가", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
+st.dataframe(df_request.reset_index(drop=True), use_container_width=True, hide_index=True, height=300)
+
+# 요청사항 추가 섹션
 st.write(" ")
-st.markdown("**✅ 근무 테이블**")
-st.dataframe(df_shift, use_container_width=True, hide_index=True)
+st.markdown("**🟢 요청사항 추가**")
+입력_모드 = st.selectbox("입력 모드", ["이름 선택", "이름 수기 입력"], key="input_mode_select")
 
-# 보충 테이블 (중복된 df_master 표시 제거, df_supplement 표시)
-st.markdown("**☑️ 보충 테이블**")
-st.dataframe(df_supplement, use_container_width=True, hide_index=True)
+col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
 
-# 요청사항 테이블
-st.markdown("**🙋‍♂️ 요청사항 테이블**")
-st.dataframe(df_request, use_container_width=True, hide_index=True)
+with col1:
+    if 입력_모드 == "이름 선택":
+        sorted_names = sorted(df_request["이름"].unique()) if not df_request.empty else []
+        이름 = st.selectbox("이름 선택", sorted_names, key="add_employee_select")
+        이름_수기 = ""
+    else:
+        이름_수기 = st.text_input("이름 입력", help="명단에 없는 새로운 인원에 대한 요청을 추가하려면 입력", key="new_employee_input")
+        이름 = ""
 
-# 누적 테이블
-st.markdown("**➕ 누적 테이블**")
-st.dataframe(df_cumulative, use_container_width=True, hide_index=True)
+with col2:
+    분류 = st.selectbox("요청 분류", 요청분류, key="request_category_select")
 
-# 다운로드 버튼 추가
-excel_data = excel_download(
-    name=f"{month_str} 테이블 종합",
-    sheet1=df_shift_processed, name1="근무 테이블",
-    sheet2=df_supplement_processed, name2="보충 테이블",
-    sheet3=df_request, name3="요청사항 테이블",
-    sheet4=df_cumulative, name4="누적 테이블"
-)
-st.download_button(
-    label="📥 상단 테이블 다운로드",
-    data=excel_data,
-    file_name=f"{month_str} 테이블 종합.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+날짜정보 = ""
+if 분류 != "요청 없음":
+    with col3:
+        방식 = st.selectbox("날짜 선택 방식", ["일자 선택", "기간 선택", "주/요일 선택"], key="method_select")
+    with col4:
+        if 방식 == "일자 선택":
+            weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+            def format_date(date_obj):
+                weekday = weekday_map[date_obj.weekday()]
+                return f"{date_obj.strftime('%-m월 %-d일')} ({weekday})"
+            
+            날짜_목록 = [
+                month_start + datetime.timedelta(days=i)
+                for i in range((month_end - month_start).days + 1)
+                if (month_start + datetime.timedelta(days=i)).weekday() < 5
+            ]
+            날짜 = st.multiselect(
+                "요청 일자",
+                날짜_목록,
+                format_func=format_date,
+                key="date_multiselect"
+            )
+            if 날짜:
+                날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜])
+        
+        elif 방식 == "기간 선택":
+            날짜범위 = st.date_input(
+                "요청 기간",
+                value=(month_start, month_start + datetime.timedelta(days=1)),
+                min_value=month_start,
+                max_value=month_end,
+                key="date_range"
+            )
+            if isinstance(날짜범위, tuple) and len(날짜범위) == 2:
+                시작, 종료 = 날짜범위
+                날짜정보 = f"{시작.strftime('%Y-%m-%d')} ~ {종료.strftime('%Y-%m-%d')}"
+        
+        elif 방식 == "주/요일 선택":
+            선택주차 = st.multiselect(
+                "주차 선택",
+                ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"],
+                key="week_select"
+            )
+            선택요일 = st.multiselect(
+                "요일 선택",
+                ["월", "화", "수", "목", "금"],
+                key="day_select"
+            )
+
+            # 수정된 부분: 선택주차 또는 선택요일이 있을 때만 로직 실행
+            if 선택주차 or 선택요일:
+                c = calendar.Calendar(firstweekday=6)
+                month_calendar = c.monthdatescalendar(month_str.year, month_str.month)
+
+                요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
+                
+                # 선택된 요일이 없으면 모든 요일(월~금)을 포함
+                선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일] if 선택요일 else list(요일_map.values())
+                
+                날짜목록 = []
+                for i, week in enumerate(month_calendar):
+                    주차_이름 = ""
+                    if i == 0: 주차_이름 = "첫째주"
+                    elif i == 1: 주차_이름 = "둘째주"
+                    elif i == 2: 주차_이름 = "셋째주"
+                    elif i == 3: 주차_이름 = "넷째주"
+                    elif i == 4: 주차_이름 = "다섯째주"
+                    
+                    # 선택된 주차가 없으면 모든 주차를 포함
+                    if not 선택주차 or "매주" in 선택주차 or 주차_이름 in 선택주차:
+                        for date_obj in week:
+                            if date_obj.month == month_str.month and date_obj.weekday() in 선택된_요일_인덱스:
+                                날짜목록.append(date_obj.strftime("%Y-%m-%d"))
+
+                if 날짜목록:
+                    날짜정보 = ", ".join(sorted(list(set(날짜목록))))
+                else:
+                    st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+
+else:
+    if "method_select" in st.session_state:
+        del st.session_state["method_select"]
+    if "date_multiselect" in st.session_state:
+        del st.session_state["date_multiselect"]
+    if "date_range" in st.session_state:
+        del st.session_state["date_range"]
+    if "week_select" in st.session_state:
+        del st.session_state["week_select"]
+    if "day_select" in st.session_state:
+        del st.session_state["day_select"]
+
+if 분류 == "요청 없음":
+    st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
+
+if st.button("📅 추가"):
+    with st.spinner("요청을 기록하는 중입니다..."):
+        try:
+            gc = get_gspread_client()
+            sheet = gc.open_by_url(url)
+            worksheet2 = sheet.worksheet(f"{month_str} 요청")
+            
+            최종_이름 = 이름 if 이름 else 이름_수기
+            if 최종_이름 and (분류 == "요청 없음" or 날짜정보):
+                if 분류 == "요청 없음":
+                    df_request = df_request[df_request["이름"] != 최종_이름]
+                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": ""}], columns=df_request.columns)
+                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+                elif 날짜정보:
+                    if not df_request[(df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음")].empty:
+                        df_request = df_request[~((df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음"))]
+                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": 날짜정보}], columns=df_request.columns)
+                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+                
+                df_request = df_request.sort_values(by=["이름", "날짜정보"])
+                if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                    time.sleep(1)
+                    load_request_data_page5()
+                    st.session_state["df_request"] = df_request
+                    st.session_state["worksheet2"] = worksheet2
+                    st.cache_data.clear()
+                    if "delete_employee_select" in st.session_state:
+                        del st.session_state["delete_employee_select"]
+                    if "delete_request_select" in st.session_state:
+                        del st.session_state["delete_request_select"]
+                    st.success("요청사항이 저장되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.warning("요청사항 저장 실패. 새로고침 후 다시 시도하세요.")
+                    st.stop()
+            else:
+                st.warning("이름을 선택하거나 입력한 후 요청사항을 입력해주세요.")
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (요청사항 추가): {e.response.status_code} - {e.response.text}")
+            st.stop()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 추가 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 추가 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
+
+# 요청사항 삭제 섹션
+st.write(" ")
+st.markdown("**🔴 요청사항 삭제**")
+if not df_request.empty:
+    col0, col1 = st.columns([1, 2])
+    with col0:
+        sorted_names = sorted(df_request["이름"].unique()) if not df_request.empty else []
+        selected_employee_id2 = st.selectbox("이름 선택", sorted_names, key="delete_request_employee_select")
+    with col1:
+        df_employee2 = df_request[df_request["이름"] == selected_employee_id2]
+        df_employee2_filtered = df_employee2[df_employee2["분류"] != "요청 없음"]
+        if not df_employee2_filtered.empty:
+            selected_rows = st.multiselect(
+                "요청사항 선택",
+                df_employee2_filtered.index,
+                format_func=lambda x: f"{df_employee2_filtered.loc[x, '분류']} - {df_employee2_filtered.loc[x, '날짜정보']}",
+                key="delete_request_select"
+            )
+        else:
+            st.info("📍 선택한 이름에 대한 요청사항이 없습니다.")
+            selected_rows = []
+else:
+    st.info("📍 당월 요청사항 없음")
+    selected_rows = []
+
+if st.button("📅 삭제"):
+    with st.spinner("요청을 삭제하는 중입니다..."):
+        try:
+            if selected_rows:
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(url)
+                worksheet2 = sheet.worksheet(f"{month_str} 요청")
+                
+                df_request = df_request.drop(index=selected_rows)
+                is_user_empty = df_request[df_request["이름"] == selected_employee_id2].empty
+                if is_user_empty:
+                    new_row = pd.DataFrame([{"이름": selected_employee_id2, "분류": "요청 없음", "날짜정보": ""}], columns=df_request.columns)
+                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+                df_request = df_request.sort_values(by=["이름", "날짜정보"])
+                
+                if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
+                    time.sleep(1)
+                    load_request_data_page5()
+                    st.session_state["df_request"] = df_request
+                    st.session_state["worksheet2"] = worksheet2
+                    st.cache_data.clear()
+                    st.success("요청사항이 삭제되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.warning("요청사항 삭제 실패. 새로고침 후 다시 시도하세요.")
+                    st.stop()
+            else:
+                st.warning("삭제할 요청사항을 선택해주세요.")
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (요청사항 삭제): {e.response.status_code} - {e.response.text}")
+            st.stop()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 삭제 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"요청사항 삭제 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
 
 # 근무 배정 로직
 # 누적 근무 횟수 추적용 딕셔너리 초기화

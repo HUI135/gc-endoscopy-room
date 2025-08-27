@@ -220,11 +220,19 @@ def delete_room_request_from_sheet(request_id, month_str):
         st.error(f"요청 삭제 중 오류 발생: {str(e)}")
         st.stop()
 
+# --- [수정된 함수] ---
 def get_person_room_assignments(df, person_name="", special_schedules_df=None):
     assignments = []
-    # 일반 스케줄 처리
+    
+    # 빠른 조회를 위해 토요/휴일 날짜를 세트로 만듭니다.
+    special_dates_set = set()
+    if special_schedules_df is not None and not special_schedules_df.empty:
+        special_dates_set = set(special_schedules_df['날짜_dt'].dt.date)
+
+    # 메인 방배정 시트(df_room)에서 모든 배정 정보를 처리합니다.
     if not df.empty:
         sorted_df = df.sort_values(by='날짜_dt').reset_index(drop=True)
+        
         def sort_key(col_name):
             match = re.search(r"(\d{1,2}:\d{2})", str(col_name))
             if match:
@@ -233,77 +241,44 @@ def get_person_room_assignments(df, person_name="", special_schedules_df=None):
             if '당직' in str(col_name) or '온콜' in str(col_name):
                 return datetime.strptime("23:59", "%H:%M").time()
             return datetime.max.time()
+            
         time_cols = sorted([col for col in df.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)], key=sort_key)
+        
         for _, row in sorted_df.iterrows():
             dt = row['날짜_dt']
+            if pd.isna(dt):
+                continue
+
             display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
             sheet_date_str = dt.strftime("%Y-%m-%d")
+            
+            is_special_date = dt.date() in special_dates_set
+
             for col in time_cols:
                 current_person = row.get(col)
-                if (not person_name and current_person) or (person_name and current_person == person_name):
+                if (not person_name and current_person) or (person_name and str(current_person).strip() == person_name):
+                    
+                    # 기본 표시 및 시트 저장 형식
+                    display_str = f"{display_date_str} - {col}"
+                    sheet_str = f"{sheet_date_str} ({col})"
+                    
+                    # 토요/휴일인 경우, 표시 형식을 "날짜 - X번방"으로 변경
+                    if is_special_date:
+                        room_match = re.search(r'\((\d+)\)', str(col))
+                        if room_match:
+                            room_number = room_match.group(1)
+                            display_str = f"{display_date_str} - {room_number}번방"
+                    
                     assignments.append({
                         'date_obj': dt.date(),
                         'column_name': str(col),
-                        'person_name': current_person,
-                        'display_str': f"{display_date_str} - {col}",
-                        'sheet_str': f"{sheet_date_str} ({col})"
+                        'person_name': str(current_person).strip(),
+                        'display_str': display_str,
+                        'sheet_str': sheet_str
                     })
 
-    # 토요/휴일 스케줄 처리
-    if special_schedules_df is not None and not special_schedules_df.empty:
-        for _, row in special_schedules_df.iterrows():
-            dt = row['날짜_dt']
-            display_date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
-            sheet_date_str = dt.strftime("%Y-%m-%d")
-            workers = row['근무 인원'].split(', ') if row['근무 인원'] else []
-            cleaned_workers = [re.sub(r'\[\d+\]', '', worker).strip() for worker in workers]
-            if not person_name or person_name in cleaned_workers:
-                regular_row = df[df['날짜_dt'].dt.date == dt.date()]
-                time_slots = ['당직', '8:15', '8:30', '9:00', '9:30']
-                if not regular_row.empty:
-                    regular_row_dict = regular_row.iloc[0].to_dict()
-                    current_time_idx = 0
-                    for col in regular_row_dict:
-                        if col in ['날짜', '요일', '날짜_dt']:
-                            continue
-                        if regular_row_dict[col] == '':
-                            if current_time_idx < len(time_slots) - 1:
-                                current_time_idx += 1
-                            continue
-                        match = re.search(r'\[(\d+)\]', str(regular_row_dict[col]))
-                        if match:
-                            room_number = match.group(1)
-                            worker_name = re.sub(r'\[\d+\]', '', str(regular_row_dict[col])).strip()
-                            if (not person_name and worker_name) or (person_name and worker_name == person_name):
-                                time_slot = time_slots[current_time_idx]
-                                display_str = f"{display_date_str} - {time_slot}({room_number})" if time_slot != '당직' else f"{display_date_str} - 당직"
-                                sheet_str = f"{sheet_date_str} ({time_slot}({room_number}))" if time_slot != '당직' else f"{sheet_date_str} (당직)"
-                                assignments.append({
-                                    'date_obj': dt.date(),
-                                    'column_name': f"{time_slot}({room_number})" if time_slot != '당직' else '당직',
-                                    'person_name': worker_name,
-                                    'display_str': display_str,
-                                    'sheet_str': sheet_str
-                                })
-                else:
-                    # df_room에 해당 날짜 데이터가 없어도 df_special의 근무 인원을 기반으로 배정 생성
-                    for worker in cleaned_workers:
-                        if (not person_name and worker) or (person_name and worker == person_name):
-                            # 기본적으로 9:00 시간대와 가상의 방 번호(예: 0)를 사용
-                            time_slot = '9:00'
-                            room_number = '0'
-                            display_str = f"{display_date_str} - {time_slot}({room_number})"
-                            sheet_str = f"{sheet_date_str} ({time_slot}({room_number}))"
-                            assignments.append({
-                                'date_obj': dt.date(),
-                                'column_name': f"{time_slot}({room_number})",
-                                'person_name': worker,
-                                'display_str': display_str,
-                                'sheet_str': sheet_str
-                            })
-
     return sorted(assignments, key=lambda x: (x['date_obj'], x['column_name']))
-    
+
 def get_shift_period(column_name):
     match = re.search(r"(\d{1,2}:\d{2})", str(column_name))
     if match:
