@@ -353,6 +353,21 @@ with st.form("fixed_form_namelist"):
                         st.stop()
 
                     # 요청사항 시트 업데이트
+                    if "worksheet2" not in st.session_state or st.session_state["worksheet2"] is None:
+                        try:
+                            worksheet2 = sheet.worksheet(f"{month_str} 요청")
+                        except gspread.exceptions.WorksheetNotFound:
+                            try:
+                                worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
+                                worksheet2.append_row(["이름", "분류", "날짜정보"])
+                            except gspread.exceptions.APIError as e:
+                                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                                st.error(f"Google Sheets API 오류 (요청사항 시트 생성): {str(e)}")
+                                st.stop()
+                        st.session_state["worksheet2"] = worksheet2
+                    else:
+                        worksheet2 = st.session_state["worksheet2"]
+
                     new_worksheet2_row = pd.DataFrame([[new_employee_name, "요청 없음", ""]], columns=df_request.columns)
                     df_request = pd.concat([df_request, new_worksheet2_row], ignore_index=True)
                     if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
@@ -365,7 +380,7 @@ with st.form("fixed_form_namelist"):
                     st.session_state["df_request"] = df_request
                     st.cache_data.clear()
 
-                    st.success(f"{new_employee_name}님이 추가되었습니다.")
+                    st.success(f"{new_employee_name}님이 추가되었습니다!")
                     time.sleep(1.5)
                     st.rerun()
             except gspread.exceptions.APIError as e:
@@ -380,7 +395,6 @@ with st.form("fixed_form_namelist"):
                 st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
                 st.error(f"명단 추가 중 오류 발생: {str(e)}")
                 st.stop()
-                st.rerun()
 
     with col_delete:
         st.markdown("**🔴 명단 삭제**")
@@ -406,6 +420,21 @@ with st.form("fixed_form_namelist"):
                     st.stop()
 
                 # 요청사항 시트에서 삭제
+                if "worksheet2" not in st.session_state or st.session_state["worksheet2"] is None:
+                    try:
+                        worksheet2 = sheet.worksheet(f"{month_str} 요청")
+                    except gspread.exceptions.WorksheetNotFound:
+                        try:
+                            worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
+                            worksheet2.append_row(["이름", "분류", "날짜정보"])
+                        except gspread.exceptions.APIError as e:
+                            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                            st.error(f"Google Sheets API 오류 (요청사항 시트 생성): {str(e)}")
+                            st.stop()
+                    st.session_state["worksheet2"] = worksheet2
+                else:
+                    worksheet2 = st.session_state["worksheet2"]
+
                 df_request = df_request[df_request["이름"] != selected_employee_name]
                 if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
                     st.error("요청사항 시트 업데이트 실패")
@@ -417,7 +446,7 @@ with st.form("fixed_form_namelist"):
                 st.session_state["df_request"] = df_request
                 st.cache_data.clear()
 
-                st.success(f"{selected_employee_name}님이 삭제되었습니다.")
+                st.success(f"{selected_employee_name}님이 삭제되었습니다!")
                 time.sleep(1.5)
                 st.rerun()
             except gspread.exceptions.APIError as e:
