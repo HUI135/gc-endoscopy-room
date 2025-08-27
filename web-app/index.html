@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GC 내시경실 근무 및 방 배정 시스템</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- 헤더 -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-calendar-alt"></i>
+                <h1>GC 내시경실 관리시스템</h1>
+            </div>
+            <nav class="nav">
+                <ul class="nav-links">
+                    <li><a href="#home" class="nav-link active" data-page="home">홈</a></li>
+                    <li><a href="#schedule" class="nav-link" data-page="schedule">스케줄 관리</a></li>
+                    <li><a href="#request" class="nav-link" data-page="request">요청사항</a></li>
+                    <li><a href="#room" class="nav-link" data-page="room">방 배정</a></li>
+                    <li><a href="#admin" class="nav-link admin-only" data-page="admin">관리자</a></li>
+                </ul>
+                <div class="user-info">
+                    <span id="user-name">로그인하세요</span>
+                    <button id="logout-btn" class="btn btn-outline">로그아웃</button>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- 메인 컨텐츠 -->
+    <main class="main">
+        <div class="container">
+            <!-- 홈 페이지 -->
+            <section id="page-home" class="page active">
+                <div class="login-container" id="login-section">
+                    <div class="login-card">
+                        <div class="login-header">
+                            <i class="fas fa-user-md"></i>
+                            <h2>시스템 로그인</h2>
+                            <p>사번을 입력하여 로그인해 주세요</p>
+                        </div>
+                        <form id="login-form" class="login-form">
+                            <div class="form-group">
+                                <label for="employee-id">사번</label>
+                                <input type="text" id="employee-id" name="employee-id" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="password">비밀번호</label>
+                                <input type="password" id="password" name="password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-sign-in-alt"></i> 로그인
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="dashboard" id="dashboard-section" style="display: none;">
+                    <div class="dashboard-header">
+                        <h2>대시보드</h2>
+                        <p id="welcome-message">환영합니다!</p>
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-calendar-check"></i>
+                            </div>
+                            <div class="stat-content">
+                                <h3 id="my-shifts">0</h3>
+                                <p>이번 달 근무일</p>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-door-open"></i>
+                            </div>
+                            <div class="stat-content">
+                                <h3 id="assigned-rooms">0</h3>
+                                <p>배정된 방</p>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                            <div class="stat-content">
+                                <h3 id="pending-requests">0</h3>
+                                <p>대기중인 요청</p>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-users"></i>
+                            </div>
+                            <div class="stat-content">
+                                <h3 id="total-staff">0</h3>
+                                <p>전체 직원</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="recent-activity">
+                        <h3><i class="fas fa-history"></i> 최근 활동</h3>
+                        <div id="activity-list" class="activity-list">
+                            <!-- 동적으로 생성될 활동 목록 -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 스케줄 관리 페이지 -->
+            <section id="page-schedule" class="page">
+                <div class="page-header">
+                    <h2><i class="fas fa-calendar-alt"></i> 스케줄 관리</h2>
+                    <p>개인 마스터 스케줄을 확인하고 수정할 수 있습니다.</p>
+                </div>
+                
+                <div class="schedule-container">
+                    <div class="schedule-controls">
+                        <select id="month-selector" class="form-select">
+                            <option value="">월 선택</option>
+                        </select>
+                        <button id="load-schedule" class="btn btn-primary">
+                            <i class="fas fa-sync"></i> 스케줄 불러오기
+                        </button>
+                        <button id="save-schedule" class="btn btn-success">
+                            <i class="fas fa-save"></i> 저장
+                        </button>
+                    </div>
+                    
+                    <div id="calendar-container" class="calendar-container">
+                        <!-- 캘린더가 여기에 동적으로 생성됩니다 -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 요청사항 페이지 -->
+            <section id="page-request" class="page">
+                <div class="page-header">
+                    <h2><i class="fas fa-paper-plane"></i> 요청사항 관리</h2>
+                    <p>휴가 및 기타 요청사항을 입력할 수 있습니다.</p>
+                </div>
+                
+                <div class="request-tabs">
+                    <button class="tab-btn active" data-tab="vacation">휴가 요청</button>
+                    <button class="tab-btn" data-tab="schedule-change">스케줄 변경</button>
+                    <button class="tab-btn" data-tab="room-request">방 배정 요청</button>
+                </div>
+
+                <div class="tab-content">
+                    <div id="vacation-tab" class="tab-pane active">
+                        <form id="vacation-form" class="request-form">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="vacation-date">휴가 날짜</label>
+                                    <input type="date" id="vacation-date" name="vacation-date" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="vacation-type">휴가 종류</label>
+                                    <select id="vacation-type" name="vacation-type" class="form-select" required>
+                                        <option value="">선택하세요</option>
+                                        <option value="annual">연차</option>
+                                        <option value="sick">병가</option>
+                                        <option value="special">특별휴가</option>
+                                    </select>
+                                </div>
+                                <div class="form-group full-width">
+                                    <label for="vacation-reason">사유</label>
+                                    <textarea id="vacation-reason" name="vacation-reason" rows="3" class="form-textarea"></textarea>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-paper-plane"></i> 요청 제출
+                            </button>
+                        </form>
+                    </div>
+
+                    <div id="schedule-change-tab" class="tab-pane">
+                        <form id="schedule-change-form" class="request-form">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="exchange-with">교환 대상</label>
+                                    <select id="exchange-with" name="exchange-with" class="form-select" required>
+                                        <option value="">직원 선택</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="my-date">내 근무일</label>
+                                    <input type="date" id="my-date" name="my-date" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="their-date">상대방 근무일</label>
+                                    <input type="date" id="their-date" name="their-date" required>
+                                </div>
+                                <div class="form-group full-width">
+                                    <label for="exchange-reason">교환 사유</label>
+                                    <textarea id="exchange-reason" name="exchange-reason" rows="3" class="form-textarea"></textarea>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-exchange-alt"></i> 교환 요청
+                            </button>
+                        </form>
+                    </div>
+
+                    <div id="room-request-tab" class="tab-pane">
+                        <form id="room-request-form" class="request-form">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="preferred-room">희망 방</label>
+                                    <select id="preferred-room" name="preferred-room" class="form-select" required>
+                                        <option value="">방 선택</option>
+                                        <option value="room1">1번 방</option>
+                                        <option value="room2">2번 방</option>
+                                        <option value="room3">3번 방</option>
+                                        <option value="room4">4번 방</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="preferred-time">희망 시간대</label>
+                                    <select id="preferred-time" name="preferred-time" class="form-select" required>
+                                        <option value="">시간대 선택</option>
+                                        <option value="morning">오전 (09:00-12:00)</option>
+                                        <option value="afternoon">오후 (13:00-17:00)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group full-width">
+                                    <label for="room-request-reason">요청 사유</label>
+                                    <textarea id="room-request-reason" name="room-request-reason" rows="3" class="form-textarea"></textarea>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-door-open"></i> 방 배정 요청
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 방 배정 페이지 -->
+            <section id="page-room" class="page">
+                <div class="page-header">
+                    <h2><i class="fas fa-door-open"></i> 방 배정 현황</h2>
+                    <p>현재 방 배정 상황을 확인할 수 있습니다.</p>
+                </div>
+                
+                <div class="room-layout">
+                    <div class="room-grid" id="room-grid">
+                        <!-- 방 배정 현황이 여기에 동적으로 생성됩니다 -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 관리자 페이지 -->
+            <section id="page-admin" class="page admin-only">
+                <div class="page-header">
+                    <h2><i class="fas fa-cog"></i> 관리자 페널</h2>
+                    <p>전체 시스템 관리 기능입니다.</p>
+                </div>
+                
+                <div class="admin-tabs">
+                    <button class="tab-btn active" data-tab="staff-management">직원 관리</button>
+                    <button class="tab-btn" data-tab="schedule-assignment">스케줄 배정</button>
+                    <button class="tab-btn" data-tab="room-assignment">방 배정</button>
+                    <button class="tab-btn" data-tab="reports">리포트</button>
+                </div>
+
+                <div class="admin-content">
+                    <div id="staff-management-tab" class="tab-pane active">
+                        <div class="management-header">
+                            <h3>직원 관리</h3>
+                            <button class="btn btn-primary" id="add-staff">
+                                <i class="fas fa-plus"></i> 직원 추가
+                            </button>
+                        </div>
+                        <div id="staff-table-container" class="table-container">
+                            <!-- 직원 테이블이 여기에 동적으로 생성됩니다 -->
+                        </div>
+                    </div>
+
+                    <div id="schedule-assignment-tab" class="tab-pane">
+                        <div class="assignment-controls">
+                            <button class="btn btn-primary" id="auto-assign">
+                                <i class="fas fa-magic"></i> 자동 배정
+                            </button>
+                            <button class="btn btn-success" id="save-assignments">
+                                <i class="fas fa-save"></i> 배정 저장
+                            </button>
+                        </div>
+                        <div id="assignment-result" class="assignment-result">
+                            <!-- 배정 결과가 여기에 표시됩니다 -->
+                        </div>
+                    </div>
+
+                    <div id="room-assignment-tab" class="tab-pane">
+                        <div class="room-controls">
+                            <div class="form-group">
+                                <label for="room-count">방 개수</label>
+                                <input type="number" id="room-count" min="1" max="10" value="4" class="form-input">
+                            </div>
+                            <button class="btn btn-primary" id="update-rooms">
+                                <i class="fas fa-sync"></i> 방 설정 업데이트
+                            </button>
+                        </div>
+                        <div id="room-assignment-grid" class="room-assignment-grid">
+                            <!-- 방 배정 그리드가 여기에 생성됩니다 -->
+                        </div>
+                    </div>
+
+                    <div id="reports-tab" class="tab-pane">
+                        <div class="report-controls">
+                            <select id="report-month" class="form-select">
+                                <option value="">월 선택</option>
+                            </select>
+                            <button class="btn btn-primary" id="generate-report">
+                                <i class="fas fa-chart-bar"></i> 리포트 생성
+                            </button>
+                            <button class="btn btn-success" id="export-excel">
+                                <i class="fas fa-file-excel"></i> Excel 다운로드
+                            </button>
+                        </div>
+                        <div id="report-content" class="report-content">
+                            <!-- 리포트 내용이 여기에 표시됩니다 -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- 푸터 -->
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2024 GC 내시경실 관리시스템. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <!-- 모달들 -->
+    <!-- 알림 모달 -->
+    <div id="notification-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div class="modal-header">
+                <i id="notification-icon" class="fas fa-info-circle"></i>
+                <h3 id="notification-title">알림</h3>
+            </div>
+            <div class="modal-body">
+                <p id="notification-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="closeModal('notification-modal')">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 확인 모달 -->
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <i class="fas fa-question-circle"></i>
+                <h3 id="confirm-title">확인</h3>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('confirm-modal')">취소</button>
+                <button class="btn btn-danger" id="confirm-yes">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 로딩 오버레이 -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>처리 중...</p>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

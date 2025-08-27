@@ -1,0 +1,36 @@
+{
+  "name": "gc-endoscopy-management",
+  "version": "1.0.0",
+  "description": "GC 내시경실 근무 및 방 배정 관리 시스템",
+  "main": "api/server.js",
+  "scripts": {
+    "start": "node api/server.js",
+    "dev": "nodemon api/server.js",
+    "install-deps": "npm install",
+    "setup": "npm install && npm start"
+  },
+  "keywords": [
+    "endoscopy",
+    "schedule",
+    "management",
+    "healthcare",
+    "room-assignment"
+  ],
+  "author": "GC Healthcare",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "googleapis": "^126.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "pm2": "^6.0.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
