@@ -84,8 +84,8 @@ st.divider()
 # --- 로그인 처리 ---
 if not st.session_state["login_success"]:
     with st.form("login_form"):
-        password = st.text_input("비밀번호를 입력해주세요.", type="password")
-        employee_id = st.text_input("사번(5자리)을 입력해주세요.")
+        password = st.text_input("🔹 비밀번호를 입력해주세요.", type="password")
+        employee_id = st.text_input("🔹 사번(5자리)을 입력해주세요.")
         submitted = st.form_submit_button("확인")
         if submitted:
             if password != USER_PASSWORD:
