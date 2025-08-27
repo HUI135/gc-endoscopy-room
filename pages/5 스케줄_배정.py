@@ -609,10 +609,6 @@ if "special_schedule_count" not in st.session_state:
 if "special_schedules" not in st.session_state:
     st.session_state.special_schedules = []
 
-# UI: 토요/휴일 스케줄 입력
-st.write(" ")
-st.markdown("**📅 토요/휴일 스케줄 입력**")
-
 # 전체 인원 목록 준비
 all_names = sorted(list(st.session_state["df_master"]["이름"].unique()))
 
@@ -654,7 +650,6 @@ if st.button("➕ 토요/휴일 스케줄 추가"):
 if special_schedules:
     st.session_state.special_schedules = special_schedules  # 세션 상태 업데이트
 
-# Google Sheets 저장 함수 수정
 # Google Sheets 저장 함수 수정
 def save_special_schedules_to_sheets(special_schedules, month_str, client):
     try:
@@ -1259,29 +1254,6 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         # 스케줄 저장은 익월로
         month_start = month_dt.replace(day=1)
         month_end = month_dt.replace(day=last_day)  # last_day 사용
-
-        # 날짜 및 인원 입력
-        special_schedules = []
-        for i in range(st.session_state.special_schedule_count):
-            cols = st.columns([2, 3])
-            with cols[0]:
-                selected_date = st.date_input(
-                    label=f"날짜 선택",
-                    value=None,
-                    min_value=month_dt,
-                    max_value=month_dt.replace(day=last_day),
-                    key=f"special_date_{i}",
-                    help="주말, 공휴일 등 정규 스케줄 외 근무가 필요한 날짜를 선택하세요."
-                )
-            with cols[1]:
-                if selected_date:
-                    selected_workers = st.multiselect(
-                        label=f"근무 인원 선택",
-                        options=all_names,
-                        key=f"special_workers_{i}"
-                    )
-                    if selected_workers:
-                        special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
 
         try:
             url = st.secrets["google_sheet"]["url"]

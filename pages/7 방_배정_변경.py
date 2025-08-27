@@ -400,7 +400,7 @@ def load_and_initialize_data():
     with st.spinner("데이터를 로드하고 있습니다..."):
         df_final, df_req = load_data_for_change_page(month_str)
     
-    if df_final == "STOP":
+    if isinstance(df_final, str) and df_final == "STOP":
         st.stop()
         
     df_special = load_special_schedules(month_str)
@@ -591,7 +591,7 @@ with col_final2:
     
     if st.button("🚀 방배정 수행 및 결과 보기", type="primary", use_container_width=True, disabled=has_unsaved_changes):
         with st.spinner("방 배정 중..."):
-            time.sleep(2)
+            time.sleep(3)
             st.session_state['show_final_results'] = True
     else:
         # 이 버튼을 누르지 않은 경우 show_final_results 상태를 유지하거나 False로 설정

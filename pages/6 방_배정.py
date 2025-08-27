@@ -111,10 +111,10 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
             worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
         except gspread.exceptions.WorksheetNotFound:
             st.info("스케줄이 아직 배정되지 않았습니다.")
-            return "STOP", None, None, None, None # 실행 중단을 위한 특별 반환 값
+            return "STOP", None, None, None, None  # 실행 중단을 위한 특별 반환 값
 
         df_schedule = pd.DataFrame(worksheet_schedule.get_all_records())
-        if df_schedule.empty:
+        if df_schedule.empty:  # Fixed line
             raise Exception(f"{month_str} 스케줄 시트가 비어 있습니다.")
 
         # 방배정 요청 시트
@@ -434,10 +434,10 @@ if not st.session_state["data_loaded"]:
     with st.spinner("데이터를 로드하고 있습니다..."):
         result = load_data_page6_no_cache(month_str)
     
-    if result[0] == "STOP":
+    if isinstance(result[0], str) and result[0] == "STOP":  # 수정된 부분
         st.stop()
 
-    if result[0] is None:
+    if result[0] is None:  # 데이터 로드 실패 처리
         st.error("데이터 로드에 실패했습니다. 새로고침 버튼을 눌러 다시 시도해주세요.")
         st.stop()
     
@@ -467,7 +467,7 @@ if st.button("🔄 새로고침 (R)"):
         with st.spinner("데이터를 새로고침하는 중입니다..."):
             result = load_data_page6_no_cache(month_str)
         
-        if result[0] == "STOP":
+        if isinstance(result[0], str) and result[0] == "STOP":  # 수정된 부분
             st.stop()
 
         if result[0] is None:
@@ -770,7 +770,8 @@ if special_schedules:
     room_options = [str(i) for i in range(1, 13)]
 
     for idx, (date_obj, date_str, personnel_for_day) in enumerate(special_schedules):
-        date_row = df_schedule[df_schedule['날짜'] == date_str]
+        # st.session_state에서 df_schedule을 가져오도록 수정
+        date_row = st.session_state["df_schedule"][st.session_state["df_schedule"]['날짜'] == date_str]
         if not date_row.empty and '요일' in date_row.columns and not date_row['요일'].isna().iloc[0]:
             weekday = date_row['요일'].iloc[0]
         else:
@@ -875,7 +876,7 @@ st.write(" ")
 st.markdown("**🟢 방 배정 요청 추가**")
 col1, col2, col3, col_button_add = st.columns([2.5, 2.5, 3.5, 1])
 with col1:
-    names = sorted([str(name).strip() for name in df_schedule.iloc[:, 2:].stack().dropna().unique() if str(name).strip()])
+    names = sorted([str(name).strip() for name in st.session_state["df_schedule"].iloc[:, 2:].stack().dropna().unique() if str(name).strip()])
     name = st.selectbox("근무자", names, key="request_employee_select", index=None, placeholder="근무자 선택")
 with col2:
     categories = st.multiselect("요청 분류", 요청분류, key="request_category_select")
@@ -883,7 +884,7 @@ with col3:
     selected_save_dates = []
     if name:
         st.cache_data.clear()
-        available_dates = get_user_available_dates(name, df_schedule, this_month_start, this_month_end)
+        available_dates = get_user_available_dates(name, st.session_state["df_schedule"], this_month_start, this_month_end)
         date_options = [display_str for display_str, _ in available_dates]
         dates = st.multiselect("요청 일자", date_options, key="request_date_select")
         selected_save_dates = [save_str for display_str, save_str in available_dates if display_str in dates]
@@ -902,7 +903,6 @@ if add_button_clicked:
         if df_room_request is not None:
             st.session_state["df_room_request"] = df_room_request
             st.cache_data.clear()
-            st.success("요청사항이 기록되었습니다.")
             time.sleep(1.5)
             st.rerun()
 

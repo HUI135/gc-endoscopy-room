@@ -173,7 +173,6 @@ with input_container:
                     st.markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
 
-# 스타일링
 st.markdown(
     """
     <style>
@@ -182,26 +181,53 @@ st.markdown(
         border-radius: 12px;
         padding: 12px;
         margin-bottom: 12px;
-        border: 1px solid #e0e0e0; /* 얇은 회색 테두리 */
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* 부드러운 그림자 */
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     [data-testid="chat-message-container-user"] {
-        background-color: #d9e6ff; /* 연한 파랑 */
+        background-color: #d9e6ff;
     }
     [data-testid="chat-message-container-assistant"] {
-        background-color: #f5f5f5; /* 연한 회색 */
+        background-color: #f5f5f5;
     }
-    /* 입력창 박스 */
+    /* 입력창 컨테이너 */
     [data-testid="stChatInput"] {
-        background-color: #ffffff; /* 흰색 배경 */
-        border: 1px solid #e0e0e0; /* 얇은 회색 테두리 */
-        border-radius: 8px; /* 둥근 테두리 */
-        box-shadow: 0 4px 4px rgba(0,0,0,0.1); /* 부드러운 그림자 */
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        box-shadow: 0 4px 4px rgba(0,0,0,0.1);
         padding: 10px;
-        position: sticky; /* 입력창을 하단에 고정 */
-        bottom: 0; /* 페이지 하단에 고정 */
-        z-index: 1000; /* 다른 요소 위에 표시 */
-        margin-top: 20px; /* 대화 내용과 간격 */
+        position: sticky;
+        bottom: 0;
+        z-index: 1000;
+        margin-top: 20px;
+        box-sizing: border-box;
+        overflow: hidden; /* 내부 요소가 컨테이너 벗어남 방지 */
+    }
+    /* 입력창 내부 입력 필드 */
+    [data-testid="stChatInput"] input {
+        width: calc(100% - 80px); /* 버튼 공간(약 40px) + 여백 확보 */
+        border: 1px solid #e0e0e0; /* 내부 테두리 유지 */
+        border-radius: 4px; /* 둥근 내부 테두리 */
+        padding: 8px;
+        box-sizing: border-box;
+        margin-left:15px;
+        outline: none;
+        display: inline-block; /* 버튼과 나란히 배치 */
+        vertical-align: middle;
+    }
+    /* 전송 버튼 */
+    [data-testid="stChatInput"] button {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        margin-left: 15px; /* 입력 필드와 버튼 간 간격 */
+        margin-right: 15px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        vertical-align: middle;
     }
     </style>
     """,
