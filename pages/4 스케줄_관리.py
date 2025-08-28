@@ -13,6 +13,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import uuid
 import menu
 import io
+from collections import Counter
 
 st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
 
@@ -30,6 +31,99 @@ if not st.session_state.get("login_success", False):
     time.sleep(1)
     st.switch_page("Home.py")
     st.stop()
+
+def generate_shift_table(df_master):
+    def split_shift(row):
+        shifts = []
+        if row["근무여부"] == "오전 & 오후":
+            shifts.extend([(row["이름"], row["주차"], row["요일"], "오전"), (row["이름"], row["주차"], row["요일"], "오후")])
+        elif row["근무여부"] in ["오전", "오후"]:
+            shifts.append((row["이름"], row["주차"], row["요일"], row["근무여부"]))
+        return shifts
+
+    shift_list = [shift for _, row in df_master.iterrows() for shift in split_shift(row)]
+    df_split = pd.DataFrame(shift_list, columns=["이름", "주차", "요일", "시간대"])
+
+    weekday_order = ["월", "화", "수", "목", "금"]
+    time_slots = ["오전", "오후"]
+    week_labels = [f"{i}주" for i in range(1, 6)]  # 최대 5주 가정
+    result = {}
+
+    for day in weekday_order:
+        for time in time_slots:
+            key = f"{day} {time}"
+            employees = {}
+            for name in df_split["이름"].unique():
+                every_week = df_split[
+                    (df_split["이름"] == name) & 
+                    (df_split["요일"] == day) & 
+                    (df_split["시간대"] == time) & 
+                    (df_split["주차"] == "매주")
+                ]
+                specific_weeks = sorted(
+                    df_split[
+                        (df_split["이름"] == name) & 
+                        (df_split["요일"] == day) & 
+                        (df_split["시간대"] == time) & 
+                        (df_split["주차"].isin(week_labels))
+                    ]["주차"].tolist(),
+                    key=lambda x: int(x.replace("주", ""))
+                )
+                if not every_week.empty:
+                    employees[name] = None
+                elif specific_weeks:
+                    if set(specific_weeks) == set(week_labels):
+                        employees[name] = None
+                    else:
+                        employees[name] = specific_weeks
+
+            employee_list = []
+            for name, weeks in employees.items():
+                if weeks:
+                    employee_list.append(f"{name}({','.join(weeks)})")
+                else:
+                    employee_list.append(name)
+            
+            result[key] = ", ".join(sorted(employee_list)) if employee_list else ""
+    
+    return pd.DataFrame(list(result.items()), columns=["시간대", "근무"])
+
+def generate_supplement_table(df_result, names_in_master):
+    supplement = []
+    weekday_order = ["월", "화", "수", "목", "금"]
+    shift_list = ["오전", "오후"]
+    names_in_master = set(names_in_master)
+
+    for day in weekday_order:
+        for shift in shift_list:
+            time_slot = f"{day} {shift}"
+            row = df_result[df_result["시간대"] == time_slot].iloc[0]
+            employees = set(emp.split("(")[0].strip() for emp in row["근무"].split(", ") if emp)
+            supplement_employees = names_in_master - employees
+
+            if shift == "오후":
+                morning_slot = f"{day} 오전"
+                morning_employees = set(df_result[df_result["시간대"] == morning_slot].iloc[0]["근무"].split(", ") 
+                                       if morning_slot in df_result["시간대"].values else [])
+                supplement_employees = {emp if emp in morning_employees else f"{emp}🔺" for emp in supplement_employees}
+
+            supplement.append({"시간대": time_slot, "보충": ", ".join(sorted(supplement_employees)) if supplement_employees else ""})
+
+    return pd.DataFrame(supplement)
+
+def split_column_to_multiple(df, column_name, prefix):
+    if column_name not in df.columns:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.stop()
+        return df
+    
+    split_data = df[column_name].str.split(", ", expand=True)
+    max_cols = split_data.shape[1]
+    new_columns = [f"{prefix}{i+1}" for i in range(max_cols)]
+    split_data.columns = new_columns
+    df = df.drop(columns=[column_name])
+    df = pd.concat([df, split_data], axis=1)
+    return df
 
 # Google Sheets 클라이언트 초기화
 @st.cache_resource
@@ -411,107 +505,6 @@ def load_data_page4():
 
         st.session_state["data_loaded"] = True
 
-def generate_shift_table(df_master):
-    def split_shift(row):
-        shifts = []
-        if row["근무여부"] == "오전 & 오후":
-            shifts.extend([(row["이름"], row["주차"], row["요일"], "오전"), (row["이름"], row["주차"], row["요일"], "오후")])
-        elif row["근무여부"] in ["오전", "오후"]:
-            shifts.append((row["이름"], row["주차"], row["요일"], row["근무여부"]))
-        return shifts
-
-    shift_list = [shift for _, row in df_master.iterrows() for shift in split_shift(row)]
-    df_split = pd.DataFrame(shift_list, columns=["이름", "주차", "요일", "시간대"])
-
-    weekday_order = ["월", "화", "수", "목", "금"]
-    time_slots = ["오전", "오후"]
-    week_labels = [f"{i}주" for i in range(1, 6)]  # 최대 5주 가정
-    result = {}
-
-    for day in weekday_order:
-        for time in time_slots:
-            key = f"{day} {time}"
-            employees = {}
-            for name in df_split["이름"].unique():
-                # "매주" 데이터 확인
-                every_week = df_split[
-                    (df_split["이름"] == name) & 
-                    (df_split["요일"] == day) & 
-                    (df_split["시간대"] == time) & 
-                    (df_split["주차"] == "매주")
-                ]
-                
-                # 주 단위 데이터 확인
-                specific_weeks = sorted(
-                    df_split[
-                        (df_split["이름"] == name) & 
-                        (df_split["요일"] == day) & 
-                        (df_split["시간대"] == time) & 
-                        (df_split["주차"].isin(week_labels))
-                    ]["주차"].tolist(),
-                    key=lambda x: int(x.replace("주", ""))
-                )
-                
-                # "매주" 데이터가 있으면 모든 주차 포함
-                if not every_week.empty:
-                    employees[name] = None  # 주차 표기 없이 이름만
-                # 주 단위 데이터가 있고, "매주" 데이터가 없으면
-                elif specific_weeks:
-                    # 모든 주차 포함 시 주차 표기 생략
-                    if set(specific_weeks) == set(week_labels):
-                        employees[name] = None
-                    else:
-                        employees[name] = specific_weeks
-
-            # 결과 병합
-            employee_list = []
-            for name, weeks in employees.items():
-                if weeks:  # 주 단위 데이터
-                    employee_list.append(f"{name}({','.join(weeks)})")
-                else:  # "매주" 또는 모든 주차 동일
-                    employee_list.append(name)
-            
-            result[key] = ", ".join(sorted(employee_list)) if employee_list else ""
-    
-    return pd.DataFrame(list(result.items()), columns=["시간대", "근무"])
-
-def generate_supplement_table(df_result, names_in_master):
-    supplement = []
-    weekday_order = ["월", "화", "수", "목", "금"]
-    shift_list = ["오전", "오후"]
-    names_in_master = set(names_in_master)
-
-    for day in weekday_order:
-        for shift in shift_list:
-            time_slot = f"{day} {shift}"
-            row = df_result[df_result["시간대"] == time_slot].iloc[0]
-            employees = set(emp.split("(")[0].strip() for emp in row["근무"].split(", ") if emp)
-            supplement_employees = names_in_master - employees
-
-            if shift == "오후":
-                morning_slot = f"{day} 오전"
-                morning_employees = set(df_result[df_result["시간대"] == morning_slot].iloc[0]["근무"].split(", ") 
-                                        if morning_slot in df_result["시간대"].values else [])
-                supplement_employees = {emp if emp in morning_employees else f"{emp}🔺" for emp in supplement_employees}
-
-            supplement.append({"시간대": time_slot, "보충": ", ".join(sorted(supplement_employees)) if supplement_employees else ""})
-
-    return pd.DataFrame(supplement)
-
-def split_column_to_multiple(df, column_name, prefix):
-    if column_name not in df.columns:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.stop()
-        return df
-    
-    split_data = df[column_name].str.split(", ", expand=True)
-    max_cols = split_data.shape[1]
-    new_columns = [f"{prefix}{i+1}" for i in range(max_cols)]
-    split_data.columns = new_columns
-    df = df.drop(columns=[column_name])
-    df = pd.concat([df, split_data], axis=1)
-    return df
-
 # 세션 상태에서 데이터 가져오기
 df_map = st.session_state.get("df_map", pd.DataFrame(columns=["이름", "사번"]))
 mapping = st.session_state.get("mapping")
@@ -764,20 +757,40 @@ with st.expander("📅 월 단위로 일괄 설정"):
     has_weekly_specific = any(w in df_user_master["주차"].values for w in [f"{i}주" for i in week_nums])
     
     # 기본값 설정: df_user_master에서 최신 데이터 가져오기
-    default_bulk = {요일: "근무없음" for 요일 in 요일리스트}
-    if has_weekly and not has_weekly_specific:
+    every_week_df = df_user_master[df_user_master["주차"] == "매주"]
+    default_bulk = {}
+    if has_weekly_specific:
+        week_labels = [f"{i}주" for i in week_nums]
+        for day in 요일리스트:
+            day_values = []
+            for week in week_labels:
+                week_df = df_user_master[df_user_master["주차"] == week]
+                day_specific = week_df[week_df["요일"] == day]
+                if not day_specific.empty:
+                    day_values.append(day_specific.iloc[0]["근무여부"])
+                elif not every_week_df.empty:
+                    day_every = every_week_df[every_week_df["요일"] == day]
+                    if not day_every.empty:
+                        day_values.append(day_every.iloc[0]["근무여부"])
+                    else:
+                        day_values.append("근무없음")
+                else:
+                    day_values.append("근무없음")
+            if day_values:
+                if all(v == day_values[0] for v in day_values):
+                    default_bulk[day] = day_values[0]
+                else:
+                    most_common = Counter(day_values).most_common(1)[0][0]
+                    default_bulk[day] = most_common
+            else:
+                default_bulk[day] = "근무없음"
+    elif has_weekly:
         weekly_df = df_user_master[df_user_master["주차"] == "매주"]
         default_bulk = weekly_df.set_index("요일")["근무여부"].to_dict()
-    elif has_weekly_specific:
-        week_labels = [f"{i}주" for i in week_nums]
-        for week in week_labels:
-            week_df = df_user_master[df_user_master["주차"] == week]
-            if not week_df.empty:
-                default_bulk = week_df.set_index("요일")["근무여부"].to_dict()
-                break
-        else:
-            weekly_df = df_user_master[df_user_master["주차"] == "매주"]
-            default_bulk = weekly_df.set_index("요일")["근무여부"].to_dict() if not weekly_df.empty else default_bulk
+    # For missing days, set to "근무없음"
+    for day in 요일리스트:
+        if day not in default_bulk:
+            default_bulk[day] = "근무없음"
 
     if has_weekly and all(df_user_master[df_user_master["주차"] == "매주"]["근무여부"] == "근무없음"):
         st.info("마스터 입력이 필요합니다.")
@@ -832,58 +845,61 @@ with st.expander("📅 월 단위로 일괄 설정"):
             st.error(f"월 단위 저장 중 오류 발생: {str(e)}")
             st.stop()
 
-# 주 단위로 설정
 with st.expander("📅 주 단위로 설정"):
     st.markdown("**주 단위로 근무 여부가 다른 경우 아래 내용들을 입력해주세요.**")
     week_labels = [f"{i}주" for i in week_nums]
     
     # 최신 df_user_master 가져오기
     df_user_master = df_master[df_master["이름"] == selected_employee_name].copy()
-    st.session_state["df_user_master"] = df_user_master  # 세션 상태 동기화
+    st.session_state["df_user_master"] = df_user_master
     
-    # 기본값 설정: df_user_master에서 데이터 가져오기
+    # master_data 초기화: 요일별로 체크
     master_data = {}
-    # "매주" 데이터 먼저 처리
     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
-    default_weekly = every_week_df.set_index("요일")["근무여부"].to_dict() if not every_week_df.empty else {요일: "근무없음" for 요일 in 요일리스트}
-    
     for week in week_labels:
+        master_data[week] = {}
         week_df = df_user_master[df_user_master["주차"] == week]
-        master_data[week] = week_df.set_index("요일")["근무여부"].to_dict() if not week_df.empty else default_weekly.copy()
-        # 요일 키 누락 방지
-        for 요일 in 요일리스트:
-            if 요일 not in master_data[week]:
-                master_data[week][요일] = default_weekly.get(요일, "근무없음")
+        for day in 요일리스트:
+            # 해당 주의 해당 요일 확인
+            day_specific = week_df[week_df["요일"] == day]
+            if not day_specific.empty:
+                master_data[week][day] = day_specific.iloc[0]["근무여부"]
+            # 없으면 매주에서 가져옴
+            elif not every_week_df.empty:
+                day_every = every_week_df[every_week_df["요일"] == day]
+                if not day_every.empty:
+                    master_data[week][day] = day_every.iloc[0]["근무여부"]
+                else:
+                    master_data[week][day] = "근무없음"
+            else:
+                master_data[week][day] = "근무없음"
 
     # UI: selectbox에 최신 데이터 반영
     for week in week_labels:
         st.markdown(f"**🗓 {week}**")
         col1, col2, col3, col4, col5 = st.columns(5)
-        master_data[week]["월"] = col1.selectbox(f"월", 근무옵션, index=근무옵션.index(master_data[week]["월"]), key=f"{week}_월_{selected_employee_name}_{uuid.uuid4()}")
-        master_data[week]["화"] = col2.selectbox(f"화", 근무옵션, index=근무옵션.index(master_data[week]["화"]), key=f"{week}_화_{selected_employee_name}_{uuid.uuid4()}")
-        master_data[week]["수"] = col3.selectbox(f"수", 근무옵션, index=근무옵션.index(master_data[week]["수"]), key=f"{week}_수_{selected_employee_name}_{uuid.uuid4()}")
-        master_data[week]["목"] = col4.selectbox(f"목", 근무옵션, index=근무옵션.index(master_data[week]["목"]), key=f"{week}_목_{selected_employee_name}_{uuid.uuid4()}")
-        master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금_{selected_employee_name}_{uuid.uuid4()}")
+        master_data[week]["월"] = col1.selectbox(f"월", 근무옵션, index=근무옵션.index(master_data[week]["월"]), key=f"{week}_월_{selected_employee_name}")
+        master_data[week]["화"] = col2.selectbox(f"화", 근무옵션, index=근무옵션.index(master_data[week]["화"]), key=f"{week}_화_{selected_employee_name}")
+        master_data[week]["수"] = col3.selectbox(f"수", 근무옵션, index=근무옵션.index(master_data[week]["수"]), key=f"{week}_수_{selected_employee_name}")
+        master_data[week]["목"] = col4.selectbox(f"목", 근무옵션, index=근무옵션.index(master_data[week]["목"]), key=f"{week}_목_{selected_employee_name}")
+        master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금_{selected_employee_name}")
 
+    # 나머지 저장 버튼 로직은 그대로
     if st.button("💾 주 단위 저장", key="save_weekly"):
         try:
             gc = get_gspread_client()
             sheet = gc.open_by_url(url)
             worksheet1 = sheet.worksheet("마스터")
             
-            # 요일별로 주 단위 근무 상태 확인
             rows = []
             for 요일 in 요일리스트:
                 week_shifts = [master_data[week][요일] for week in week_labels]
-                # 모든 주차가 동일하고 "근무없음"이 아니면 "매주"로 저장
-                if all(shift == week_shifts[0] for shift in week_shifts) and week_shifts[0] != "근무없음":
+                if all(shift == week_shifts[0] for shift in week_shifts):
                     rows.append({"이름": selected_employee_name, "주차": "매주", "요일": 요일, "근무여부": week_shifts[0]})
                 else:
                     for week in week_labels:
-                        if master_data[week][요일] != "근무없음":
-                            rows.append({"이름": selected_employee_name, "주차": week, "요일": 요일, "근무여부": master_data[week][요일]})
+                        rows.append({"이름": selected_employee_name, "주차": week, "요일": 요일, "근무여부": master_data[week][요일]})
             
-            # 기존 데이터 삭제 및 새 데이터 추가
             df_master = df_master[df_master["이름"] != selected_employee_name]
             updated_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
             updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
@@ -934,8 +950,6 @@ def excel_download(name, sheet1, name1, sheet2, name2, sheet3, name3, sheet4, na
     
     excel_data = output.getvalue()
     return excel_data
-
-# ... (기존 코드 유지: imports, 초기 설정, 함수들, 명단 관리, 마스터 관리 등은 변경 없음)
 
 # 기존 코드에서 누적 테이블 및 버튼 부분만 수정
 st.divider()

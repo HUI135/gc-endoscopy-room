@@ -344,6 +344,17 @@ if "initial_load_done" not in st.session_state:
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
+
+# UI 렌더링 시작
+# --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
+master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels)
+request_events = generate_request_events(st.session_state["df_user_request"], next_month_date)
+room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month_date)
+# --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
+all_events = master_events + request_events + room_request_events
+
+st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
+
 # 새로고침 버튼 로직
 if st.button("🔄 새로고침 (R)"):
     try:
@@ -364,16 +375,6 @@ if st.button("🔄 새로고침 (R)"):
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
-
-# UI 렌더링 시작
-# --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
-master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels)
-request_events = generate_request_events(st.session_state["df_user_request"], next_month_date)
-room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month_date)
-# --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
-all_events = master_events + request_events + room_request_events
-
-st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
 
 if not all_events:
     st.info("☑️ 표시할 스케줄 또는 요청사항이 없습니다.")
