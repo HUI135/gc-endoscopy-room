@@ -13,6 +13,7 @@ import menu
 import git
 import shutil
 import traceback
+import json
 
 # st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
 
@@ -124,10 +125,17 @@ if vectorstore is None:
 # 4) 챗봇 설정
 # =========================
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+
+# ✅ 세션의 관리자 여부를 프롬프트에 넘길 컨텍스트로 구성
+context = {
+    "is_admin": bool(st.session_state.get("is_admin", False))
+}
+
 system_prompt = (
     "You are a friendly assistant for the GC Endoscopy app, designed to support professors in managing schedules and room assignments for the Gangnam Center endoscopy room. "
     "This app does NOT provide hospital information or booking services; it is solely for scheduling and room assignment management within the endoscopy room. "
     "Always refer to users as 'professors' and never use the terms 'staff' or 'workers' in responses. "
+    "Always respond in Korean.\n"   # ← (권장) 한국어 고정
 
     "Answer questions clearly and simply for professors, focusing only on these pages: "
     "Home, 마스터 관리, 요청사항 입력, 방배정 요청, 스케줄 변경 요청, 방배정 변경 요청. "
