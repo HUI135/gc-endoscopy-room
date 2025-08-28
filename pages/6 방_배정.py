@@ -1600,12 +1600,12 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         # 색상 및 스타일 정의
         highlight_fill = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid")
         sky_blue_fill = PatternFill(start_color="CCEEFF", end_color="CCEEFF", fill_type="solid")
-        duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")
-        default_font = Font(name=font_name, size=9)
+        duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")  # 폰트 크기 9로 명시
+        default_font = Font(name=font_name, size=9)  # 폰트 크기 9로 명시
         special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
         no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
         default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-        
+
         # 세션에서 변경된 셀 위치를 가져옴
         swapped_assignments = st.session_state.get("swapped_assignments", set())
 
@@ -1665,7 +1665,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 if (formatted_current_date, cell_shift_type, str(value).strip()) in swapped_assignments:
                     cell.fill = highlight_fill
 
-                # 데이터 렌더링 내 if current_date_str in special_dates 부분 수정
+                # special_dates의 경우 폰트 설정 수정
                 if current_date_str in special_dates:
                     settings = st.session_state["weekend_room_settings"].get(current_date_str, {})
                     duty_room = settings.get("duty_room", None)
@@ -1673,18 +1673,18 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                     room_match = re.search(r'\((\d+)\)', slot_name)
                     if room_match:
                         room_num = room_match.group(1)
-                        if room_num == duty_room and value and duty_person and duty_person != "선택 안 함":
-                            cell.font = duty_font
+                        if room_num == duty_room and value and duty_person and duty_person != "선택 안 함" and value == duty_person:
+                            cell.font = Font(name=font_name, size=9, bold=True, color="FF00FF")  # 당직 인원: 크기 9, 굵은 글씨, 보라색
                         else:
-                            cell.font = default_font
+                            cell.font = Font(name=font_name, size=9)  # 일반 인원: 크기 9, 기본 스타일
                 else:
-                    # 기존 평일 당직 강조 로직 유지 (변경 없음)
+                    # 평일 당직 강조 로직
                     if slot_name.startswith('8:30') and slot_name.endswith('_당직') and value:
-                        cell.font = duty_font
+                        cell.font = Font(name=font_name, size=9, bold=True, color="FF00FF")  # 크기 9, 굵은 글씨, 보라색
                     elif (slot_name.startswith('13:30') and slot_name.endswith('_당직') or slot_name == '온콜') and value:
-                        cell.font = duty_font
+                        cell.font = Font(name=font_name, size=9, bold=True, color="FF00FF")  # 크기 9, 굵은 글씨, 보라색
                     else:
-                        cell.font = default_font
+                        cell.font = Font(name=font_name, size=9)  # 크기 9, 기본 스타일
 
                 # special_dates의 경우 value를 그대로 셀에 기록
                 if current_date_str in special_dates and col_idx > 2 and value:
@@ -1693,7 +1693,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                     formatted_date_for_comment = date_cache[current_date_str]
                     if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
                         cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
-        
+
         # --- Stats 시트 생성 ---
         stats_sheet = wb.create_sheet("Stats")
         stats_columns = stats_df.columns.tolist()
@@ -1713,18 +1713,18 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 cell.fill = PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid")
             else:
                 cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-            
+
         for row_idx, row in enumerate(stats_df.values, 2):
             for col_idx, value in enumerate(row, 1):
                 cell = stats_sheet.cell(row_idx, col_idx, value)
-                cell.font = Font(name=font_name, size=9)
+                cell.font = Font(name=font_name, size=9)  # 통계 시트도 크기 9로 통일
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
         output = BytesIO()
         wb.save(output)
         output.seek(0)
-        
+
         st.divider()
         st.download_button(
             label="📥 최종 방배정 다운로드",

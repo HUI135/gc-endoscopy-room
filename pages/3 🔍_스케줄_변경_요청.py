@@ -126,7 +126,7 @@ def add_request_to_sheet(request_data, month_str):
             if not current_headers or current_headers != headers:
                 try:
                     worksheet.update('A1:F1', [headers])
-                    st.info(f"'{REQUEST_SHEET_NAME}' 시트의 헤더를 올바른 형식으로 업데이트했습니다.")
+                    # st.info(f"'{REQUEST_SHEET_NAME}' 시트의 헤더를 올바른 형식으로 업데이트했습니다.")
                 except gspread.exceptions.APIError as e:
                     st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                     st.error(f"Google Sheets API 오류 (헤더 업데이트): {str(e)}")
@@ -135,7 +135,7 @@ def add_request_to_sheet(request_data, month_str):
             try:
                 worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
                 worksheet.append_row(headers)
-                st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
+                # st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (시트 생성): {str(e)}")
