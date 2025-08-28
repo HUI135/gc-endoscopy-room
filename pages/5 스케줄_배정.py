@@ -495,7 +495,7 @@ st.write("- 명단 및 마스터에 등록되지 않은 인원 중 스케줄 배
 if df_request["분류"].nunique() == 1 and df_request["분류"].iloc[0] == '요청 없음':
     st.warning(f"⚠️ 아직까지 {month_str}에 작성된 요청사항이 없습니다.")
 
-요청분류 = ["휴가", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
+요청분류 = ["휴가", "학회", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
 st.dataframe(df_request.reset_index(drop=True), use_container_width=True, hide_index=True, height=300)
 
 # 요청사항 추가 섹션
@@ -1329,7 +1329,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         for date in active_weekdays:
             date_str = date.strftime('%Y-%m-%d')
             requests_on_date = df_request[df_request['날짜정보'].apply(lambda x: date_str in parse_date_range(str(x)))]
-            vacationers = set(requests_on_date[requests_on_date['분류'] == '휴가']['이름'].tolist())
+            vacationers = set(requests_on_date[requests_on_date['분류'].isin(['휴가', '학회'])]['이름'].tolist())
             base_workers = initial_master_assignments.get((date_str, time_slot_am), set())
             must_work = set(requests_on_date[requests_on_date['분류'] == f'꼭 근무({time_slot_am})']['이름'].tolist())
             final_workers = (base_workers - vacationers) | (must_work - vacationers)
@@ -1349,7 +1349,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             date_str = date.strftime('%Y-%m-%d')
             morning_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
             requests_on_date = df_request[df_request['날짜정보'].apply(lambda x: date_str in parse_date_range(str(x)))]
-            vacationers = set(requests_on_date[requests_on_date['분류'] == '휴가']['이름'].tolist())
+            vacationers = set(requests_on_date[requests_on_date['분류'].isin(['휴가', '학회'])]['이름'].tolist())
             base_workers = initial_master_assignments.get((date_str, time_slot_pm), set())
             must_work = set(requests_on_date[requests_on_date['분류'] == f'꼭 근무({time_slot_pm})']['이름'].tolist())
             
