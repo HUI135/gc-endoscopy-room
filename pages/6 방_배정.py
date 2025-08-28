@@ -254,8 +254,9 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     
     am_cols = [str(i) for i in range(1, 13)] + ['오전당직(온콜)']
     pm_cols = [f'오후{i}' for i in range(1, 6)]
-    all_personnel_cols = am_cols + pm_cols
-    display_cols = ['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4']
+    
+    # special_schedules의 방 번호 컬럼 (예: 방(1), 방(2) 등)
+    special_cols = [col for col in original_schedule_df.columns if col.startswith('방(')]
     
     batch_change_log = []
     
@@ -294,16 +295,25 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 continue
             target_row_idx = target_row_indices[0]
             
-            time_period_cols = am_cols if time_period == '오전' else pm_cols
-            oncall_person = str(df_modified.at[target_row_idx, '오전당직(온콜)']).strip() if '오전당직(온콜)' in df_modified.columns and pd.notna(df_modified.at[target_row_idx, '오전당직(온콜)']) else ''
+            # special_schedules 날짜 여부 확인: 방 번호 컬럼이 존재하면 special_schedules로 간주
+            is_special_date = any(col in df_modified.columns for col in special_cols)
+            time_period_cols = special_cols if is_special_date and time_period == '오전' else (am_cols if time_period == '오전' else pm_cols)
             
-            existing_assignments = [str(df_modified.at[target_row_idx, col]).strip() for col in time_period_cols if col in df_modified.columns and str(df_modified.at[target_row_idx, col]).strip() and str(df_modified.at[target_row_idx, col]).strip() != oncall_person]
+            # 중복 배정 체크 시 요청자 제외
+            existing_assignments = []
+            for col in time_period_cols:
+                if col in df_modified.columns:
+                    value = str(df_modified.at[target_row_idx, col]).strip()
+                    if value and value != requester_name and value != 'nan':
+                        existing_assignments.append(value)
             existing_assignments = list(dict.fromkeys(existing_assignments))
-            if new_assignee in existing_assignments or new_assignee == oncall_person:
+            
+            if new_assignee in existing_assignments and (formatted_date_in_df, time_period, new_assignee) not in swapped_assignments:
                 st.warning(f"⚠️ '{new_assignee}'님은 이미 {formatted_date_in_df} {time_period} 시간대에 배정되어 있습니다. 변경을 적용할 수 없습니다.")
                 time.sleep(1)
                 continue
             
+            # 요청자 검색
             matched_cols = [col for col in time_period_cols if col in df_modified.columns and str(df_modified.at[target_row_idx, col]).strip() == requester_name]
             
             if not matched_cols:
@@ -553,7 +563,6 @@ if st.button("✍️ 변경사항 저장", type="primary", use_container_width=T
             st.info("ℹ️ 일괄 적용된 변경사항을 저장합니다.")
         else:
             st.info("ℹ️ 변경사항이 없습니다. 저장할 내용이 없습니다.")
-            st.stop()
 
     manual_change_log = []
     diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
@@ -759,6 +768,7 @@ try:
                 except ValueError as e:
                     st.warning(f"날짜 파싱 오류: {date_str}, 오류: {str(e)}")
                     continue
+                
 except gspread.exceptions.WorksheetNotFound:
     st.warning(f"{sheet_name} 시트가 없습니다. 토요/휴일 스케줄을 확인해주세요.")
 except Exception as e:
@@ -978,10 +988,12 @@ def assign_special_date(personnel_for_day, date_str, duty_person, settings):
     
     sorted_rooms = sorted(selected_rooms, key=lambda x: int(x))
     
+    # 당직 인원 배정
     if duty_person and duty_person != "선택 안 함" and duty_person in personnel_for_day and duty_room and duty_room != "선택 안 함":
         assignment_dict[duty_room] = f"{duty_person}[{duty_room}]"
         assigned_personnel.add(duty_person)
     
+    # 나머지 인원 배정
     remaining_personnel = [p for p in personnel_for_day if p not in assigned_personnel]
     random.shuffle(remaining_personnel)
     
@@ -1605,6 +1617,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         special_day_fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
         no_person_day_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
         default_yoil_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        special_person_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")  # special_schedules 근무자 셀 배경색
 
         # 세션에서 변경된 셀 위치를 가져옴
         swapped_assignments = st.session_state.get("swapped_assignments", set())
@@ -1641,6 +1654,11 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                 
+                # 날짜열과 요일열 폰트 크기 9로 고정
+                if col_idx == 1 or col_idx == 2:
+                    cell.font = Font(name=font_name, size=9)
+                
+                # 배경색 설정
                 if col_idx == 1:
                     cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
                 elif col_idx == 2:  # '요일' 열
@@ -1652,6 +1670,8 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                         cell.fill = default_yoil_fill
                 elif is_no_person_day and col_idx >= 3:
                     cell.fill = no_person_day_fill
+                elif current_date_str in special_dates and col_idx > 2 and value:  # special_schedules 근무자 셀 배경색
+                    cell.fill = special_person_fill
 
                 slot_name = columns[col_idx-1]
                 cell_shift_type = ''
@@ -1660,12 +1680,12 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 elif '13:30' in slot_name or '온콜' in slot_name:
                     cell_shift_type = '오후'
                 
-                # 셀의 배경색 적용
+                # 셀의 배경색 적용 (변경 요청 하이라이트)
                 formatted_current_date = current_date_str.strip()
                 if (formatted_current_date, cell_shift_type, str(value).strip()) in swapped_assignments:
                     cell.fill = highlight_fill
 
-                # special_dates의 경우 폰트 설정 수정
+                # special_dates의 경우 폰트 설정
                 if current_date_str in special_dates:
                     settings = st.session_state["weekend_room_settings"].get(current_date_str, {})
                     duty_room = settings.get("duty_room", None)

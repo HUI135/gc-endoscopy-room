@@ -946,24 +946,35 @@ st.write(" ")
 st.markdown("**📅 토요/휴일 스케줄 입력**")
 special_schedules = []
 for i in range(st.session_state.special_schedule_count):
-    cols = st.columns([2, 3])
+    cols = st.columns([1, 2, 1])
     with cols[0]:
         selected_date = st.date_input(
             label=f"날짜 선택",
             value=None,
-            min_value=month_dt,  # month_dt.date() → month_dt
-            max_value=month_dt.replace(day=last_day),  # .date() 제거            key=f"special_date_{i}",
+            min_value=month_dt,
+            max_value=month_dt.replace(day=last_day),
+            key=f"special_date_{i}",
             help="주말, 공휴일 등 정규 스케줄 외 근무가 필요한 날짜를 선택하세요."
         )
     with cols[1]:
+        selected_workers = []  # Initialize selected_workers as an empty list
         if selected_date:
             selected_workers = st.multiselect(
                 label=f"근무 인원 선택",
                 options=all_names,
                 key=f"special_workers_{i}"
             )
-            if selected_workers:
-                special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers))
+    with cols[2]:
+        selected_oncall = None
+        if selected_workers:  # Check if selected_workers is non-empty
+            selected_oncall = st.selectbox(
+                label=f"당직 인원 선택",
+                options=["당직 없음"] + selected_workers,
+                key=f"special_oncall_{i}"
+            )
+    if selected_date and selected_workers and selected_oncall is not None:
+        special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers, selected_oncall))
+
 # 입력 필드 추가 버튼
 if st.button("➕ 토요/휴일 스케줄 추가"):
     st.session_state.special_schedule_count += 1
@@ -986,13 +997,13 @@ def save_special_schedules_to_sheets(special_schedules, month_str, client):
         
         # 시트 초기화 및 헤더 설정
         worksheet.clear()
-        headers = ["날짜", "근무 인원"]
+        headers = ["날짜", "당직 인원"]
         worksheet.update('A1', [headers], value_input_option='RAW')
         
         # 스케줄 데이터가 있을 경우에만 저장
         if special_schedules:
             schedule_df = pd.DataFrame(
-                [(s[0], ", ".join(s[1])) for s in special_schedules],
+                [(s[0], s[2] if s[2] != "당직 없음" else "") for s in special_schedules],
                 columns=headers
             )
             data_to_save = schedule_df.values.tolist()
@@ -1374,14 +1385,22 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         for worker, count in current_cumulative.get('오후', {}).items():
             if worker in df_cumulative_next.index: df_cumulative_next.loc[worker, '오후누적'] += count
             else: df_cumulative_next.loc[worker] = [0, count, 0, 0]
+        # 토요/휴일 누적 업데이트 추가
+        for _, workers, oncall in special_schedules:
+            for worker in workers:
+                if worker in df_cumulative_next.index: df_cumulative_next.loc[worker, '오전누적'] += 1
+                else: df_cumulative_next.loc[worker] = [1, 0, 0, 0]
+            if oncall and oncall != "당직 없음":
+                if oncall in df_cumulative_next.index: df_cumulative_next.loc[oncall, '오전당직 (온콜)'] += 1
+                else: df_cumulative_next.loc[oncall] = [0, 0, 1, 0]
         df_cumulative_next.reset_index(inplace=True)
 
         if special_schedules:
-            for date_str, workers in special_schedules:
+            for date_str, workers, oncall in special_schedules:
                 if not df_final.empty: df_final = df_final[df_final['날짜'] != date_str].copy()
                 for worker in workers:
                     df_final = update_worker_status(df_final, date_str, '오전', worker, '근무', '', '특수근무색', day_map, week_numbers)
-        
+
         color_priority = {'🟠 주황색': 0, '🟢 초록색': 1, '🟡 노란색': 2, '기본': 3, '🔴 빨간색': 4, '🔵 파란색': 5, '🟣 보라색': 6, '특수근무색': -1}
         df_final['색상_우선순위'] = df_final['색상'].map(color_priority)
         df_final_unique = df_final.sort_values(by=['날짜', '시간대', '근무자', '색상_우선순위']).drop_duplicates(subset=['날짜', '시간대', '근무자'], keep='first')
@@ -1415,11 +1434,11 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
                 if i <= max_afternoon_workers: df_excel.at[idx, f'오후{i}'] = worker_name
             
             # 토요일 UI 입력 덮어쓰기
-            if row['요일'] == '토':
-                for special_date, workers in special_schedules:
-                    if date == special_date:
-                        workers_padded = workers[:10] + [''] * (10 - len(workers[:10]))
-                        for i in range(1, 11): df_excel.at[idx, str(i)] = workers_padded[i-1]
+            for special_date, workers, oncall in special_schedules:
+                if date == special_date:
+                    workers_padded = workers[:10] + [''] * (10 - len(workers[:10]))
+                    for i in range(1, 11): df_excel.at[idx, str(i)] = workers_padded[i-1]
+                    df_excel.at[idx, '오전당직(온콜)'] = oncall if oncall != "당직 없음" else ''
         
             oncall_counts = df_cumulative.set_index('이름')['오전당직 (온콜)'].to_dict()
             oncall_assignments = {worker: int(count) if count else 0 for worker, count in oncall_counts.items()}
@@ -1520,6 +1539,14 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             is_special_day = date_str_lookup in special_schedule_dates_set
             is_empty_day = df_final_unique[df_final_unique['날짜'] == date_str_lookup].empty and not is_special_day
 
+            # 토요/휴일 당직 인원 확인
+            oncall_worker = None
+            if is_special_day:
+                for s in special_schedules:
+                    if s[0] == date_str_lookup and s[2] != "당직 없음":
+                        oncall_worker = s[2]
+                        break
+
             # 행 전체 스타일 적용
             for col_idx, col_name in enumerate(df_excel.columns, 1):
                 cell = ws.cell(row=row_idx, column=col_idx)
@@ -1541,16 +1568,29 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
                         cell.fill = special_day_fill  # 특수근무일 '요일' 셀
                     else:
                         cell.fill = default_day_fill  # 일반 '요일' 셀
-                elif str(col_name).isdigit() or '오후' in str(col_name):
+                elif str(col_name).isdigit():  # 오전 근무자 열 (1~10)
                     worker = row[col_name]
-                    if worker:
-                        time_slot_lookup = '오전' if str(col_name).isdigit() else '오후'
+                    if worker and pd.notna(worker):
+                        if is_special_day and worker == oncall_worker:  # 토요/휴일 당직 인원
+                            cell.font = duty_font  # 핑크색 볼드체
+                        time_slot_lookup = '오전'
                         worker_data = df_final_unique[(df_final_unique['날짜'] == date_str_lookup) & (df_final_unique['시간대'] == time_slot_lookup) & (df_final_unique['근무자'] == worker)]
                         if not worker_data.empty:
                             color_name = worker_data.iloc[0]['색상']
                             cell.fill = PatternFill(start_color=color_map.get(color_name, 'FFFFFF'), end_color=color_map.get(color_name, 'FFFFFF'), fill_type='solid')
                             memo_text = worker_data.iloc[0]['메모']
-                            if memo_text:  # 메모가 있을 경우에만 추가 (특수근무는 메모가 ''이므로 추가 안됨)
+                            if memo_text:  # 메모가 있을 경우에만 추가
+                                cell.comment = Comment(memo_text, "Schedule Bot")
+                elif '오후' in str(col_name):  # 오후 근무자 열
+                    worker = row[col_name]
+                    if worker:
+                        time_slot_lookup = '오후'
+                        worker_data = df_final_unique[(df_final_unique['날짜'] == date_str_lookup) & (df_final_unique['시간대'] == time_slot_lookup) & (df_final_unique['근무자'] == worker)]
+                        if not worker_data.empty:
+                            color_name = worker_data.iloc[0]['색상']
+                            cell.fill = PatternFill(start_color=color_map.get(color_name, 'FFFFFF'), end_color=color_map.get(color_name, 'FFFFFF'), fill_type='solid')
+                            memo_text = worker_data.iloc[0]['메모']
+                            if memo_text:  # 메모가 있을 경우에만 추가
                                 cell.comment = Comment(memo_text, "Schedule Bot")
                 elif col_name == '오전당직(온콜)':
                     if row[col_name]:
