@@ -1704,51 +1704,75 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             SMALL_TEAM_THRESHOLD_FORMAT = 15
             is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT) or (current_date_str in special_dates)
 
-            for col_idx, value in enumerate(row_data, 1):
-                cell = sheet.cell(row_idx, col_idx, value)
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-                cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            # 데이터 렌더링
+            for row_idx, row_data in enumerate(result_data, 2):
+                current_date_str = row_data[0]
                 
-                # --- 배경색 및 폰트 스타일링 로직 통합 ---
-                
-                # 1. 배경색 설정
-                if col_idx == 1: # 날짜
-                    cell.fill = no_person_day_fill
-                elif col_idx == 2: # 요일
-                    if is_no_person_day: cell.fill = no_person_day_fill
-                    elif is_small_team_day: cell.fill = special_day_fill
-                    else: cell.fill = default_yoil_fill
-                elif is_no_person_day and col_idx >= 3:
-                    cell.fill = no_person_day_fill
-                elif current_date_str in special_dates and col_idx > 2 and value:
-                    cell.fill = special_person_fill
-                
-                # 변경 요청된 셀 하이라이트 (배경색 덮어쓰기)
-                slot_name = columns[col_idx-1]
-                cell_shift_type = ''
-                if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']): cell_shift_type = '오전'
-                elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']): cell_shift_type = '오후'
-                
-                if (current_date_str.strip(), cell_shift_type, str(value).strip()) in swapped_assignments:
-                    cell.fill = highlight_fill
-
-                # 2. 폰트 설정
-                cell.font = default_font # 기본 폰트 먼저 적용
-                
+                # 1. 그날의 당직 인원 정보를 정확히 가져옵니다.
+                duty_person_for_the_day = None
                 if current_date_str in special_dates:
-                    if duty_person_for_the_day and value == duty_person_for_the_day:
-                        cell.font = duty_font
-                else:
+                    try:
+                        date_obj_lookup = datetime.strptime(current_date_str, '%m월 %d일').replace(year=datetime.now().year)
+                        formatted_date_lookup = date_obj_lookup.strftime('%Y-%m-%d')
+                        duty_person_row = special_df[special_df['날짜'] == formatted_date_lookup]
+                        if not duty_person_row.empty:
+                            duty_person_raw = duty_person_row['당직 인원'].iloc[0]
+                            if pd.notna(duty_person_raw) and str(duty_person_raw).strip():
+                                duty_person_for_the_day = str(duty_person_raw).strip()
+                    except Exception as e:
+                        st.warning(f"Excel 스타일링 중 당직 인원 조회 오류: {e}")
+
+                assignment_cells = row_data[2:]
+                personnel_in_row = [p for p in assignment_cells if p]
+                is_no_person_day = not any(personnel_in_row)
+                SMALL_TEAM_THRESHOLD_FORMAT = 15
+                is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT) or (current_date_str in special_dates)
+
+                # 2. 셀마다 스타일을 적용합니다.
+                for col_idx, value in enumerate(row_data, 1):
+                    cell = sheet.cell(row_idx, col_idx, value)
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+                    
+                    # --- 배경색 먼저 적용 ---
+                    if col_idx == 1: # 날짜
+                        cell.fill = no_person_day_fill
+                    elif col_idx == 2: # 요일
+                        if is_no_person_day: cell.fill = no_person_day_fill
+                        elif is_small_team_day: cell.fill = special_day_fill
+                        else: cell.fill = default_yoil_fill
+                    elif is_no_person_day and col_idx >= 3:
+                        cell.fill = no_person_day_fill
+                    elif current_date_str in special_dates and col_idx > 2 and value:
+                        cell.fill = special_person_fill
+                    
                     slot_name = columns[col_idx-1]
-                    if (slot_name.endswith('_당직') or slot_name == '온콜') and value:
-                        cell.font = duty_font
+                    cell_shift_type = ''
+                    if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']): cell_shift_type = '오전'
+                    elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']): cell_shift_type = '오후'
+                    
+                    if (current_date_str.strip(), cell_shift_type, str(value).strip()) in swapped_assignments:
+                        cell.fill = highlight_fill
 
-                # 3. 코멘트 추가
-                if col_idx > 2 and value and date_cache.get(current_date_str):
-                    formatted_date_for_comment = date_cache[current_date_str]
-                    if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
-                        cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
-
+                    # --- 폰트 나중에 적용 (덮어쓰기 방지) ---
+                    cell.font = default_font # 기본 폰트 먼저 적용
+                    
+                    if value: # 셀에 값이 있을 때만 폰트 변경 고려
+                        if current_date_str in special_dates:
+                            # 토요/휴일: 조회해온 당직자와 셀의 이름이 같으면 핑크색 볼드체
+                            if duty_person_for_the_day and value == duty_person_for_the_day:
+                                cell.font = duty_font
+                        else:
+                            # 평일: 슬롯 이름으로 당직자를 판단하여 핑크색 볼드체
+                            if slot_name.endswith('_당직') or slot_name == '온콜':
+                                cell.font = duty_font
+                    
+                    # --- 코멘트 추가 ---
+                    if col_idx > 2 and value and date_cache.get(current_date_str):
+                        formatted_date_for_comment = date_cache[current_date_str]
+                        if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
+                            cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
+            
                 slot_name = columns[col_idx-1]
                 cell_shift_type = ''
                 if '8:30' in slot_name or '9:00' in slot_name or '9:30' in slot_name or '10:00' in slot_name:

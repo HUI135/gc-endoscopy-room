@@ -86,35 +86,29 @@ def load_room_data(month_str):
 def load_special_schedules(month_str):
     try:
         gc = get_gspread_client()
-        if not gc:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
-            return pd.DataFrame()
+        if not gc: return pd.DataFrame()
+        
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(f"{month_str} 토요/휴일 일자")
         records = worksheet.get_all_records()
-        if not records:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
-            return pd.DataFrame()
+        
+        if not records: return pd.DataFrame()
+        
         df = pd.DataFrame(records)
-        if '날짜' not in df.columns or '근무 인원' not in df.columns:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
-            return pd.DataFrame()
+        # '날짜' 열만 확인하고, '근무 인원' 열은 더 이상 확인하지 않습니다.
+        if '날짜' not in df.columns: return pd.DataFrame()
+
         df.fillna('', inplace=True)
         df['날짜_dt'] = pd.to_datetime(df['날짜'], format='%Y-%m-%d', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
+        
     except gspread.exceptions.WorksheetNotFound:
-        st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
+        st.info(f"'{month_str} 토요/휴일 일자' 시트가 없어 해당 정보를 불러올 수 없습니다.")
         return pd.DataFrame()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (토요/휴일 데이터 로드): {str(e)}")
-        st.stop()
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.info(f"{month_str} 토요/휴일 일자가 아직 설정되지 않았습니다.")
         st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
-        st.stop()
+        return pd.DataFrame()
 
 def get_my_room_requests(month_str, employee_id):
     if not employee_id:
@@ -233,16 +227,8 @@ def get_person_room_assignments(df, person_name="", special_schedules_df=None):
     if not df.empty:
         sorted_df = df.sort_values(by='날짜_dt').reset_index(drop=True)
         
-        def sort_key(col_name):
-            match = re.search(r"(\d{1,2}:\d{2})", str(col_name))
-            if match:
-                time_str = match.group(1)
-                return datetime.strptime(time_str.zfill(5), "%H:%M").time()
-            if '당직' in str(col_name) or '온콜' in str(col_name):
-                return datetime.strptime("23:59", "%H:%M").time()
-            return datetime.max.time()
-            
-        time_cols = sorted([col for col in df.columns if re.search(r"(\d{1,2}:\d{2})", str(col)) or '당직' in str(col) or '온콜' in str(col)], key=sort_key)
+        # 배정 열(시간 또는 방 이름)을 식별합니다.
+        assignment_cols = [col for col in df.columns if col not in ['날짜', '요일', '날짜_dt']]
         
         for _, row in sorted_df.iterrows():
             dt = row['날짜_dt']
@@ -254,20 +240,26 @@ def get_person_room_assignments(df, person_name="", special_schedules_df=None):
             
             is_special_date = dt.date() in special_dates_set
 
-            for col in time_cols:
-                current_person = row.get(col)
-                if (not person_name and current_person) or (person_name and str(current_person).strip() == person_name):
+            for col in assignment_cols:
+                current_person = str(row.get(col, '')).strip()
+                if not current_person: continue
+
+                if (not person_name) or (current_person == person_name):
                     
-                    # 기본 표시 및 시트 저장 형식
-                    display_str = f"{display_date_str} - {col}"
-                    sheet_str = f"{sheet_date_str} ({col})"
-                    
-                    # 토요/휴일인 경우, 표시 형식을 "날짜 - X번방"으로 변경
+                    # [핵심 수정] 토요/휴일인 경우, 표시 형식을 "날짜 - X번방"으로 변경
                     if is_special_date:
                         room_match = re.search(r'\((\d+)\)', str(col))
                         if room_match:
                             room_number = room_match.group(1)
                             display_str = f"{display_date_str} - {room_number}번방"
+                            sheet_str = f"{sheet_date_str} ({col})" # 시트 저장용은 기존 형식 유지
+                        else:
+                            display_str = f"{display_date_str} - {col}" # 방번호 파싱 실패 시 원본 표시
+                            sheet_str = f"{sheet_date_str} ({col})"
+                    else:
+                        # 평일은 기존 형식 유지
+                        display_str = f"{display_date_str} - {col}"
+                        sheet_str = f"{sheet_date_str} ({col})"
                     
                     assignments.append({
                         'date_obj': dt.date(),
@@ -278,7 +270,7 @@ def get_person_room_assignments(df, person_name="", special_schedules_df=None):
                     })
 
     return sorted(assignments, key=lambda x: (x['date_obj'], x['column_name']))
-
+    
 def get_shift_period(column_name):
     match = re.search(r"(\d{1,2}:\d{2})", str(column_name))
     if match:
@@ -466,11 +458,6 @@ else:
                 if value:
                     cleaned_value = re.sub(r'\[\d+\]', '', str(value)).strip()
                     all_colleagues_set.add(cleaned_value)
-        if not df_special.empty:
-            for workers in df_special['근무 인원']:
-                if workers:
-                    cleaned_workers = [re.sub(r'\[\d+\]', '', worker).strip() for worker in workers.split(', ')]
-                    all_colleagues_set.update(cleaned_workers)
 
     for colleague_name in sorted(list(all_colleagues_set)):
         compatible_colleague_names_them.append(colleague_name)

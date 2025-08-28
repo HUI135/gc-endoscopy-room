@@ -124,37 +124,39 @@ def load_special_schedules(month_str):
     try:
         gc = get_gspread_client()
         if not gc:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            st.info(f"'{month_str} 토요/휴일 일자' 시트가 없어 해당 정보를 불러올 수 없습니다.")
             return pd.DataFrame()
+        
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
         worksheet = spreadsheet.worksheet(f"{month_str} 토요/휴일 일자")
         records = worksheet.get_all_records()
+        
         if not records:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
             return pd.DataFrame()
+        
         df = pd.DataFrame(records)
+        # '날짜'와 '당직 인원' 열만 확인하고, '근무 인원' 열은 확인하지 않습니다.
         if '날짜' not in df.columns or '당직 인원' not in df.columns:
-            st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+            st.warning(f"'{month_str} 토요/휴일 일자' 시트 형식이 올바르지 않습니다. ('날짜', '당직 인원' 열 필요)")
             return pd.DataFrame()
+
         df.fillna('', inplace=True)
         df['날짜_dt'] = pd.to_datetime(df['날짜'], format='%Y-%m-%d', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
+        
     except gspread.exceptions.WorksheetNotFound:
-        st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
+        st.info(f"'{month_str} 토요/휴일 일자' 시트가 없어 해당 정보를 불러올 수 없습니다.")
         return pd.DataFrame()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (토요/휴일 데이터 로드): {e.response.status_code} - {e.response.text}")
-        st.stop()
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"토요/휴일 데이터 로드 중 오류 발생: {type(e).__name__} - {e}")
-        st.stop()
+        st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame()
 
 # --- 방배정 변경사항 적용 함수 (수정됨) ---
 def apply_assignment_swaps(df_assignment, df_requests, df_special):
     df_modified = df_assignment.copy()
+    # 수정할 수 있도록 원본의 복사본을 만듭니다.
+    df_special_modified = df_special.copy() if df_special is not None else pd.DataFrame()
     changed_log = []
     applied_count = 0
     error_found = False
@@ -164,116 +166,68 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
             swap_request_str = str(req.get('변경 요청', '')).strip()
             raw_slot_info = str(req.get('변경 요청한 방배정', '')).strip()
 
-            if not swap_request_str or not raw_slot_info:
-                st.warning(f"⚠️ 요청 처리 불가: '변경 요청' 또는 '변경 요청한 방배정' 컬럼이 비어 있습니다.")
-                time.sleep(1.5)
-                continue
-            if '➡️' not in swap_request_str:
-                st.warning(f"⚠️ '변경 요청' 형식이 올바르지 않습니다: '{swap_request_str}'. '이름1 ➡️ 이름2' 형식으로 입력해주세요.")
-                time.sleep(1.5)
-                continue
-
+            if '➡️' not in swap_request_str: continue
             old_person, new_person = [p.strip() for p in swap_request_str.split('➡️')]
+            
             slot_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', raw_slot_info)
-
-            if not slot_match:
-                st.warning(f"⚠️ '변경 요청한 방배정' 형식이 올바르지 않습니다: '{raw_slot_info}'. 'YYYY-MM-DD (슬롯정보)' 형식으로 입력해주세요.")
-                time.sleep(1.5)
-                continue
-
+            if not slot_match: continue
+            
             date_str, target_slot = slot_match.groups()
             date_obj = datetime.strptime(date_str, '%Y-%m-%d')
             target_date_str = f"{date_obj.month}월 {date_obj.day}일"
             
-            # special_schedules 확인
             is_special_date = False
             if df_special is not None and not df_special.empty and '날짜_dt' in df_special.columns:
                 is_special_date = not df_special[df_special['날짜_dt'].dt.date == date_obj.date()].empty
 
-            if is_special_date:
-                # --- [수정된 로직] 토요/휴일 변경 로직 ---
-                row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
-                if not row_indices:
-                    st.warning(f"⚠️ 요청 처리 불가: 토요/휴일 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
-                    time.sleep(1.5)
-                    continue
-                target_row_idx = row_indices[0]
+            row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
+            if not row_indices:
+                st.warning(f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
+                time.sleep(1.5)
+                continue
+            target_row_idx = row_indices[0]
 
-                # 요청 정보에서 방 번호 추출 (예: "8번방" -> "8" 또는 "8:30(8)" -> "8")
-                room_match = re.search(r'(\d+)', target_slot)
-                if not room_match:
-                    st.warning(f"⚠️ 토요/휴일 요청 형식 오류: 방 번호를 찾을 수 없습니다. (요청: '{target_slot}')")
-                    time.sleep(1.5)
-                    continue
-                requested_room_num = room_match.group(1)
+            target_col_found = None
+            for col in df_modified.columns[2:]:
+                person_in_cell = str(df_modified.at[target_row_idx, col]).strip()
+                if person_in_cell == old_person:
+                    if is_special_date:
+                        # 토요/휴일은 요청 슬롯이 실제 근무자와 일치하는지만 확인
+                        if target_slot == old_person:
+                           target_col_found = col
+                           break
+                    elif target_slot == col:
+                        target_col_found = col
+                        break
+            
+            if target_col_found:
+                df_modified.at[target_row_idx, target_col_found] = new_person
+                applied_count += 1
                 
-                target_cell_found = False
-                # 날짜, 요일 제외하고 모든 열을 순회
-                for col in df_modified.columns[2:]:
-                    person_in_cell = str(df_modified.at[target_row_idx, col]).strip()
-                    
-                    # 현재 셀의 근무자가 요청의 이전 근무자와 일치하는지 확인
-                    if person_in_cell == old_person:
-                        # 열 이름에서 방 번호 추출 (예: "8:30(8)" -> "8")
-                        col_room_match = re.search(r'\((\d+)\)', col)
-                        if col_room_match:
-                            room_in_col = col_room_match.group(1)
-                            # 열의 방 번호와 요청된 방 번호가 일치하는지 확인
-                            if room_in_col == requested_room_num:
-                                df_modified.at[target_row_idx, col] = new_person
-                                target_cell_found = True
-                                
-                                changed_log.append({
-                                    '날짜': f"{target_date_str} ({'월화수목금토일'[date_obj.weekday()]})",
-                                    '방배정': f"{requested_room_num}번방", # "8번방" 형식으로 로그 기록
-                                    '변경 전 인원': old_person,
-                                    '변경 후 인원': new_person,
-                                    '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                })
-                                applied_count += 1
-                                break # 해당 요청 처리가 끝났으므로 다음 요청으로 넘어감
+                # [핵심 수정] 변경된 사람이 토요/휴일 당직자였다면, df_special도 함께 업데이트
+                if is_special_date and not df_special_modified.empty:
+                    duty_row = df_special_modified[df_special_modified['날짜_dt'].dt.date == date_obj.date()]
+                    if not duty_row.empty:
+                        current_duty_person = str(duty_row['당직 인원'].iloc[0]).strip()
+                        if current_duty_person == old_person:
+                            df_special_modified.loc[duty_row.index, '당직 인원'] = new_person
+                            st.info(f"ℹ️ {target_date_str}의 토요/휴일 당직자가 '{new_person}' (으)로 함께 변경됩니다.")
 
-                if not target_cell_found:
-                    st.error(f"❌ 적용 실패: {target_date_str}의 '{requested_room_num}번방'에 '{old_person}'을(를) 찾을 수 없습니다.")
-                    time.sleep(1.5)
-                    error_found = True
-
+                changed_log.append({
+                    '날짜': f"{target_date_str} ({'월화수목금토일'[date_obj.weekday()]})",
+                    '방배정': target_slot,
+                    '변경 전 인원': old_person,
+                    '변경 후 인원': new_person,
+                    '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
             else:
-                # --- 평일 변경 로직 (기존과 동일) ---
-                row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
-                if not row_indices:
-                    st.warning(f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
-                    time.sleep(1.5)
-                    continue
-                target_row_idx = row_indices[0]
-
-                if target_slot not in df_modified.columns:
-                    st.error(f"❌ 적용 실패: 방배정 '{target_slot}'을(를) 방 배정표에서 찾을 수 없습니다.")
-                    time.sleep(1.5)
-                    error_found = True
-                    continue
-
-                current_assigned_person = str(df_modified.at[target_row_idx, target_slot]).strip()
-                if current_assigned_person == old_person:
-                    df_modified.at[target_row_idx, target_slot] = new_person
-                    changed_log.append({
-                        '날짜': f"{target_date_str} ({'월화수목금토일'[date_obj.weekday()]})",
-                        '방배정': target_slot,
-                        '변경 전 인원': old_person,
-                        '변경 후 인원': new_person,
-                        '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    })
-                    applied_count += 1
-                else:
-                    st.error(f"❌ 적용 실패: {target_date_str}의 '{target_slot}'에 '{old_person}'이(가) 배정되어 있지 않습니다. (현재: '{current_assigned_person}')")
-                    time.sleep(1.5)
-                    error_found = True
-
-        except KeyError as e:
-            st.error(f"⚠️ 요청 처리 중 오류 발생: 시트에 '{e}' 컬럼이 없습니다. (요청 정보: {req.to_dict()})")
-            error_found = True
+                st.error(f"❌ 적용 실패: {target_date_str}의 '{target_slot}'에 '{old_person}'이(가) 배정되어 있지 않습니다.")
+                time.sleep(1.5)
+                error_found = True
+                
         except Exception as e:
-            st.error(f"⚠️ 요청 처리 중 시스템 오류 발생: {e} (요청 정보: {req.to_dict()})")
+            st.error(f"⚠️ 요청 처리 중 시스템 오류 발생: {e}")
+            time.sleep(1.5)
             error_found = True
 
     if applied_count > 0:
@@ -281,8 +235,10 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
         time.sleep(1.5)
     elif not df_requests.empty and not error_found:
         st.info("ℹ️ 새롭게 반영할 유효한 변경 요청이 없습니다.")
+        time.sleep(1.5)
 
-    return df_modified, changed_log, df_special
+    # 수정된 df_special_modified를 반환합니다.
+    return df_modified, changed_log, df_special_modified
 
 # --- 시간대 순서 정의 ---
 time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
@@ -625,6 +581,8 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
         duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")
         default_font = Font(name=font_name, size=9)
         
+        holiday_blue_fill = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid") # 파란색 계열
+
         columns = final_df_to_save.columns.tolist()
         for col_idx, header in enumerate(columns, 1):
             cell = sheet.cell(1, col_idx, header)
@@ -682,49 +640,80 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
 
         special_dates_list = []
         if st.session_state.df_special_schedules is not None and not st.session_state.df_special_schedules.empty:
-            special_dates_list = st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%#m월 %#d일').tolist() if os.name != 'nt' else st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%m월 %d일').apply(lambda x: x.lstrip("0").replace(" 0", " "))
+            try:
+                # [수정] Windows에서도 0을 제거하는 가장 안정적인 방식
+                special_dates_list = [d.strftime('%-m월 %-d일') for d in st.session_state.df_special_schedules['날짜_dt']]
+            except ValueError:
+                # Windows에서 '%-m'이 작동하지 않을 경우를 대비한 예외 처리
+                temp_dates = st.session_state.df_special_schedules['날짜_dt'].dt.strftime('%m월 %d일').tolist()
+                special_dates_list = [re.sub(r'^0|(?<=\s)0', '', d) for d in temp_dates]
 
-        for row_idx, row_data in enumerate(final_df_to_save.itertuples(index=False), 2):
+        # 데이터 렌더링
+        for row_idx, row_data in enumerate(final_df_to_save.itertuples(index=False), 2):            
             current_date_str = row_data[0]
             is_special_day = current_date_str in special_dates_list
+            special_df = st.session_state.df_special_schedules
             
+            # 1. 그날의 당직 인원 정보를 정확히 가져옵니다.
+            duty_person_for_the_day = None
+            if current_date_str in special_dates_list:
+                try:
+                    date_obj_lookup = datetime.strptime(current_date_str, '%m월 %d일').replace(year=datetime.now().year)
+                    formatted_date_lookup = date_obj_lookup.strftime('%Y-%m-%d')
+                    duty_person_row = special_df[special_df['날짜'] == formatted_date_lookup]
+                    if not duty_person_row.empty:
+                        duty_person_raw = duty_person_row['당직 인원'].iloc[0]
+                        if pd.notna(duty_person_raw) and str(duty_person_raw).strip():
+                            duty_person_for_the_day = str(duty_person_raw).strip()
+                except Exception as e:
+                    st.warning(f"Excel 스타일링 중 당직 인원 조회 오류: {e}")
+
             personnel_in_row = [p for p in row_data[2:] if p]
             is_no_person_day = not any(personnel_in_row)
             is_small_team_day = (0 < len(personnel_in_row) < 15)
 
+            # 2. 셀마다 스타일을 적용합니다.
             for col_idx, value in enumerate(row_data, 1):
                 cell = sheet.cell(row_idx, col_idx, value if value else None)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                 
-                if col_idx == 1:
+                # --- 배경색 먼저 적용 ---
+                if col_idx == 1: # 날짜
                     cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-                elif col_idx == 2:
-                    if is_no_person_day:
-                        cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-                    elif is_small_team_day or is_special_day:
-                        cell.fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
-                    else:
-                        cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                elif col_idx == 2: # 요일
+                    if is_no_person_day: cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+                    elif is_small_team_day or is_special_day: cell.fill = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")
+                    else: cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
                 elif is_no_person_day and col_idx >= 3:
                     cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
                 
+                # [추가] 토요/휴일 근무자 셀 배경색을 파란색으로 지정
+                if is_special_day and value and col_idx > 2:
+                    cell.fill = holiday_blue_fill
+
+                # 변경된 셀은 다른 색으로 덮어쓰기 (이 코드는 원래 위치에 그대로 둡니다)
                 if (row_idx, col_idx) in changed_cells_set:
                     cell.fill = highlight_fill
                 
-                slot_name = columns[col_idx-1]
-                
-                # --- [수정된 부분] 서식 적용 로직 ---
-                if value:
-                    is_duty_slot = slot_name.endswith('_당직') or slot_name == '온콜'
+                # --- 폰트 나중에 적용 (덮어쓰기 방지) ---
+                cell.font = default_font # 기본 폰트 먼저 적용
+
+                if value: # 셀에 값이 있을 때만 폰트 변경 고려
+                    slot_name = columns[col_idx-1]
                     
-                    # 당직 폰트는 평일이고 당직 슬롯일 때만 적용
-                    if is_duty_slot and not is_special_day:
-                        cell.font = duty_font
+                    # 👇 is_special_day가 True일 때 (토요/휴일일 때)
+                    if is_special_day:
+                        # (2) 당직 인원 이름과 셀의 이름이 같을 때만 duty_font (핑크 볼드체) 적용
+                        if duty_person_for_the_day and value == duty_person_for_the_day:
+                            cell.font = duty_font
+                        # (3) 위 조건이 아니면 그냥 기본 폰트. slot_name.endswith('_당직')은 체크하지 않음!
+                            
+                    # 👇 is_special_day가 False일 때 (평일일 때)
                     else:
-                        cell.font = default_font
-                else:
-                    cell.font = default_font # 값이 없는 셀은 기본 폰트
+                        # 평일: 슬롯 이름('_당직')으로 당직자를 판단하여 핑크색 볼드체
+                        if slot_name.endswith('_당직') or slot_name == '온콜':
+                            cell.font = duty_font
         
         # (이하 통계 시트 작성 코드는 동일)
         stats_sheet = wb.create_sheet("Stats")
