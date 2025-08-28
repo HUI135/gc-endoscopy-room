@@ -569,8 +569,8 @@ if 분류 != "요청 없음":
             # 수정된 부분: 선택주차 또는 선택요일이 있을 때만 로직 실행
             if 선택주차 or 선택요일:
                 c = calendar.Calendar(firstweekday=6)
-                month_calendar = c.monthdatescalendar(month_str.year, month_str.month)
-
+                month_calendar = c.monthdatescalendar(month_dt.year, month_dt.month)
+                
                 요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
                 
                 # 선택된 요일이 없으면 모든 요일(월~금)을 포함
