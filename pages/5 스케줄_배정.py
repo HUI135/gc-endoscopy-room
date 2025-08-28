@@ -588,7 +588,7 @@ if 분류 != "요청 없음":
                     # 선택된 주차가 없으면 모든 주차를 포함
                     if not 선택주차 or "매주" in 선택주차 or 주차_이름 in 선택주차:
                         for date_obj in week:
-                            if date_obj.month == month_str.month and date_obj.weekday() in 선택된_요일_인덱스:
+                            if date_obj.month == month_dt.month and date_obj.weekday() in 선택된_요일_인덱스:
                                 날짜목록.append(date_obj.strftime("%Y-%m-%d"))
 
                 if 날짜목록:
