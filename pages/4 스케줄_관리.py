@@ -353,32 +353,27 @@ if "data_loaded" not in st.session_state:
         if missing_in_request:
             new_request_rows = [{"이름": name, "분류": "요청 없음", "날짜정보": ""} for name in missing_in_request]
             new_request_df = pd.DataFrame(new_request_rows)
-            df_request = pd.concat([st.session_state["df_request"], new_request_df], ignore_index=True)
-            df_request = df_request.sort_values(by=["이름", "날짜정보"])
+            df_request = pd.concat([st.session_state["df_request"], new_request_df], ignore_index=True).sort_values(by="이름")
             if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
                 st.error("요청사항 시트 업데이트 실패")
                 st.session_state["df_map"] = df_map
                 st.session_state["data_loaded"] = False
                 st.stop()
-            # 누적 시트 업데이트 (이름 기준 정렬 추가)
+
+            # 누적 시트 업데이트
             if "worksheet4" not in st.session_state or st.session_state["worksheet4"] is None:
                 try:
                     worksheet4 = sheet.worksheet(f"{month_str} 누적")
                 except gspread.exceptions.WorksheetNotFound:
-                    try:
-                        worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
-                        worksheet4.append_row(["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-                    except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                        st.error(f"Google Sheets API 오류 (누적 시트 생성): {str(e)}")
-                        st.stop()
-                st.session_state["worksheet4"] = worksheet4
+                    worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
+                    worksheet4.append_row(["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+                    st.session_state["worksheet4"] = worksheet4
             else:
                 worksheet4 = st.session_state["worksheet4"]
 
-            new_cumulative_row = pd.DataFrame([[new_employee_name, 0, 0, 0, 0]], 
-                                                columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-            df_cumulative = pd.concat([df_cumulative, new_cumulative_row], ignore_index=True).sort_values(by="이름")
+            new_cumulative_rows = [[name, 0, 0, 0, 0] for name in missing_in_request]
+            new_cumulative_df = pd.DataFrame(new_cumulative_rows, columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+            df_cumulative = pd.concat([df_cumulative, new_cumulative_df], ignore_index=True).sort_values(by="이름")
             if not update_sheet_with_retry(worksheet4, [df_cumulative.columns.tolist()] + df_cumulative.values.tolist()):
                 st.error("누적 시트 업데이트 실패")
                 st.stop()
@@ -388,11 +383,11 @@ if "data_loaded" not in st.session_state:
             st.session_state["df_request"] = df_request
             st.session_state["df_cumulative"] = df_cumulative
             st.session_state["edited_df_cumulative"] = df_cumulative.copy()
-            st.success(f"{new_employee_name}님을 명단 및 누적 테이블에 추가하였습니다.")
+            st.success(f"{new_employee_name}님을 명단 및 누적 테이블에 추가하였습니다. 마스터를 입력해 주세요.")
             time.sleep(1.5)
             st.rerun()
     except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도해 주세요.")
         st.error(f"Google Sheets API 오류 (명단 추가): {str(e)}")
         st.stop()
     except Exception as e:
@@ -631,12 +626,21 @@ with st.form("fixed_form_namelist"):
                     else:
                         worksheet2 = st.session_state["worksheet2"]
 
+                    # 요청사항 시트 업데이트
                     new_worksheet2_row = pd.DataFrame([[new_employee_name, "요청 없음", ""]], columns=df_request.columns)
-                    df_request = pd.concat([df_request, new_worksheet2_row], ignore_index=True)
+                    df_request = pd.concat([df_request, new_worksheet2_row], ignore_index=True).sort_values(by="이름")
                     if not update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
                         st.error("요청사항 시트 업데이트 실패")
                         st.stop()
 
+                    # 누적 시트 업데이트
+                    new_cumulative_row = pd.DataFrame([[new_employee_name, 0, 0, 0, 0]], 
+                                                    columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+                    df_cumulative = pd.concat([df_cumulative, new_cumulative_row], ignore_index=True).sort_values(by="이름")
+                    if not update_sheet_with_retry(worksheet4, [df_cumulative.columns.tolist()] + df_cumulative.values.tolist()):
+                        st.error("누적 시트 업데이트 실패")
+                        st.stop()
+                        
                     # 누적 시트 업데이트
                     if "worksheet4" not in st.session_state or st.session_state["worksheet4"] is None:
                         try:
