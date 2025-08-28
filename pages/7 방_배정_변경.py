@@ -133,7 +133,7 @@ def load_special_schedules(month_str):
             st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
             return pd.DataFrame()
         df = pd.DataFrame(records)
-        if '날짜' not in df.columns or '근무 인원' not in df.columns:
+        if '날짜' not in df.columns or '당직 인원' not in df.columns:
             st.info(f"{month_str} 토요/휴일 일자가 아직 완료되지 않았습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)

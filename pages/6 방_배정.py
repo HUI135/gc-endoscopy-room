@@ -252,14 +252,32 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     applied_count = 0
     swapped_assignments = set()
     
-    am_cols = [str(i) for i in range(1, 13)] + ['오전당직(온콜)']
+    # 오전 및 오후 열 정의
+    am_cols = [str(i) for i in range(1, 12)] + ['오전당직(온콜)']
     pm_cols = [f'오후{i}' for i in range(1, 6)]
-    
-    # special_schedules의 방 번호 컬럼 (예: 방(1), 방(2) 등)
-    special_cols = [col for col in original_schedule_df.columns if col.startswith('방(')]
+    special_cols = am_cols
     
     batch_change_log = []
     
+    client = get_gspread_client()
+    if client is None:
+        st.error("Google Sheets 클라이언트 초기화 실패")
+        return create_df_schedule_md(df_modified)
+    
+    spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+    sheet_name = f"{month_str} 토요/휴일 일자"
+    try:
+        worksheet_special = spreadsheet.worksheet(sheet_name)
+        special_data = worksheet_special.get_all_records()
+        special_df = pd.DataFrame(special_data)
+    except gspread.exceptions.WorksheetNotFound:
+        st.warning(f"{sheet_name} 시트가 없습니다.")
+        special_df = pd.DataFrame(columns=["날짜", "당직 인원"])
+
+    # special_dates 정의 (함수 내부에서 보장)
+    special_dates = [f"{datetime.strptime(row['날짜'], '%Y-%m-%d').month}월 {datetime.strptime(row['날짜'], '%Y-%m-%d').day}일" 
+                     for row in special_data if row["날짜"]]
+
     for _, request_row in swap_requests_df.iterrows():
         try:
             change_request_str = str(request_row.get('변경 요청', '')).strip()
@@ -295,11 +313,9 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 continue
             target_row_idx = target_row_indices[0]
             
-            # special_schedules 날짜 여부 확인: 방 번호 컬럼이 존재하면 special_schedules로 간주
-            is_special_date = any(col in df_modified.columns for col in special_cols)
+            is_special_date = formatted_date_in_df in special_dates
             time_period_cols = special_cols if is_special_date and time_period == '오전' else (am_cols if time_period == '오전' else pm_cols)
             
-            # 중복 배정 체크 시 요청자 제외
             existing_assignments = []
             for col in time_period_cols:
                 if col in df_modified.columns:
@@ -313,7 +329,6 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 time.sleep(1)
                 continue
             
-            # 요청자 검색
             matched_cols = [col for col in time_period_cols if col in df_modified.columns and str(df_modified.at[target_row_idx, col]).strip() == requester_name]
             
             if not matched_cols:
@@ -338,8 +353,18 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df):
                 applied_count += 1
                 swapped_assignments.add((formatted_date_in_df, time_period, new_assignee))
                 
+                if is_special_date and time_period == '오전' and not special_df[special_df['날짜'] == date_part].empty:
+                    if requester_name == special_df[special_df['날짜'] == date_part]['당직 인원'].iloc[0]:
+                        special_row_idx = special_df[special_df['날짜'] == date_part].index
+                        special_df.at[special_row_idx[0], '당직 인원'] = new_assignee if new_assignee != "당직 없음" else ""
+                        try:
+                            update_sheet_with_retry(worksheet_special, [special_df.columns.tolist()] + special_df.fillna('').values.tolist())
+                            st.success(f"{date_part}의 당직 인원이 {new_assignee}로 업데이트되었습니다.")
+                        except Exception as e:
+                            st.error(f"당직 인원 업데이트 실패: {type(e).__name__} - {str(e)}")
+                
         except Exception as e:
-            st.error(f"요청 처리 중 오류 발생: {str(e)}")
+            st.error(f"요청 처리 중 오류 발생: {type(e).__name__} - {str(e)}")
             time.sleep(1)
             continue
             
@@ -650,227 +675,169 @@ else:
 
 # 방 설정 UI
 st.divider()
-st.subheader("⚙ 평일 방 설정")
-st.write("- 시간대별 탭을 클릭하여 운영할 방의 개수와 번호를 설정하세요.")
-room_options = [str(i) for i in range(1, 13)]
+st.subheader("⚙️ 방 설정")
+tab_weekday, tab_weekend = st.tabs(["평일 방 설정", "토요/휴일 방 설정"])
 
-tab830, tab900, tab930, tab1000, tab1330 = st.tabs([
-    "🕘 08:30", "🕘 09:00", "🕤 09:30", "🕙 10:00", "🕜 13:30 (오후)"
-])
-with tab830:
-    col1, col2 = st.columns([1, 2.5])
-    with col1:
-        st.markdown("###### **방 개수**")
-        num_830 = st.number_input("830_rooms_count", min_value=0, max_value=12, value=4, key="830_rooms", label_visibility="collapsed")
-        st.markdown("###### **오전 당직방**")
-        duty_830_options = st.session_state["room_settings"]["830_room_select"]
-        try:
-            duty_index_830 = duty_830_options.index(st.session_state["room_settings"].get("830_duty"))
-        except ValueError:
-            duty_index_830 = 0
-        duty_830 = st.selectbox("830_duty_room", duty_830_options, index=duty_index_830, key="830_duty", label_visibility="collapsed", help="8:30 시간대의 당직 방을 선택합니다.")
-        st.session_state["room_settings"]["830_duty"] = duty_830
-    with col2:
-        st.markdown("###### **방 번호 선택**")
-        if len(st.session_state["room_settings"]["830_room_select"]) > num_830:
-            st.session_state["room_settings"]["830_room_select"] = st.session_state["room_settings"]["830_room_select"][:num_830]
-        rooms_830 = st.multiselect("830_room_select_numbers", room_options, default=st.session_state["room_settings"]["830_room_select"], max_selections=num_830, key="830_room_select", label_visibility="collapsed")
-        if len(rooms_830) < num_830:
-            st.warning(f"방 번호를 {num_830}개 선택해주세요.")
-        st.session_state["room_settings"]["830_room_select"] = rooms_830
-with tab900:
-    col1, col2 = st.columns([1, 2.5])
-    with col1:
-        st.markdown("###### **방 개수**")
-        num_900 = st.number_input("900_rooms_count", min_value=0, max_value=12, value=3, key="900_rooms", label_visibility="collapsed")
-    with col2:
-        st.markdown("###### **방 번호 선택**")
-        if len(st.session_state["room_settings"]["900_room_select"]) > num_900:
-            st.session_state["room_settings"]["900_room_select"] = st.session_state["room_settings"]["900_room_select"][:num_900]
-        rooms_900 = st.multiselect("900_room_select_numbers", room_options, default=st.session_state["room_settings"]["900_room_select"], max_selections=num_900, key="900_room_select", label_visibility="collapsed")
-        if len(rooms_900) < num_900:
-            st.warning(f"방 번호를 {num_900}개 선택해주세요.")
-        st.session_state["room_settings"]["900_room_select"] = rooms_900
-with tab930:
-    col1, col2 = st.columns([1, 2.5])
-    with col1:
-        st.markdown("###### **방 개수**")
-        num_930 = st.number_input("930_rooms_count", min_value=0, max_value=12, value=3, key="930_rooms", label_visibility="collapsed")
-    with col2:
-        st.markdown("###### **방 번호 선택**")
-        if len(st.session_state["room_settings"]["930_room_select"]) > num_930:
-            st.session_state["room_settings"]["930_room_select"] = st.session_state["room_settings"]["930_room_select"][:num_930]
-        rooms_930 = st.multiselect("930_room_select_numbers", room_options, default=st.session_state["room_settings"]["930_room_select"], max_selections=num_930, key="930_room_select", label_visibility="collapsed")
-        if len(rooms_930) < num_930:
-            st.warning(f"방 번호를 {num_930}개 선택해주세요.")
-        st.session_state["room_settings"]["930_room_select"] = rooms_930
-with tab1000:
-    col1, col2 = st.columns([1, 2.5])
-    with col1:
-        st.markdown("###### **방 개수**")
-        num_1000 = st.number_input("1000_rooms_count", min_value=0, max_value=12, value=2, key="1000_rooms", label_visibility="collapsed")
-    with col2:
-        st.markdown("###### **방 번호 선택**")
-        if len(st.session_state["room_settings"]["1000_room_select"]) > num_1000:
-            st.session_state["room_settings"]["1000_room_select"] = st.session_state["room_settings"]["1000_room_select"][:num_1000]
-        rooms_1000 = st.multiselect("1000_room_select_numbers", room_options, default=st.session_state["room_settings"]["1000_room_select"], max_selections=num_1000, key="1000_room_select", label_visibility="collapsed")
-        if len(rooms_1000) < num_1000:
-            st.warning(f"방 번호를 {num_1000}개 선택해주세요.")
-        st.session_state["room_settings"]["1000_room_select"] = rooms_1000
-with tab1330:
-    col1, col2 = st.columns([1, 2.5])
-    with col1:
-        st.markdown("###### **방 개수**")
-        st.info("4개 고정")
-        num_1330 = 4
-        st.markdown("###### **오후 당직방**")
-        duty_1330_options = st.session_state["room_settings"]["1330_room_select"]
-        try:
-            duty_index_1330 = duty_1330_options.index(st.session_state["room_settings"].get("1330_duty"))
-        except ValueError:
-            duty_index_1330 = 0
-        duty_1330 = st.selectbox("1330_duty_room", duty_1330_options, index=duty_index_1330, key="1330_duty", label_visibility="collapsed", help="13:30 시간대의 당직 방을 선택합니다.")
-        st.session_state["room_settings"]["1330_duty"] = duty_1330
-    with col2:
-        st.markdown("###### **방 번호 선택**")
-        if len(st.session_state["room_settings"]["1330_room_select"]) > num_1330:
-            st.session_state["room_settings"]["1330_room_select"] = st.session_state["room_settings"]["1330_room_select"][:num_1330]
-        rooms_1330 = st.multiselect("1330_room_select_numbers", room_options, default=st.session_state["room_settings"]["1330_room_select"], max_selections=num_1330, key="1330_room_select", label_visibility="collapsed")
-        if len(rooms_1330) < num_1330:
-            st.warning(f"방 번호를 {num_1330}개 선택해주세요.")
-        st.session_state["room_settings"]["1330_room_select"] = rooms_1330
-
-st.divider()
-st.subheader("⚙ 토요/휴일 방 설정")
-st.write("- 날짜별로 당직 인원, 방 개수, 방 번호를 설정하세요.\n- 방 개수를 0으로 설정 시 해당 날짜는 운영되지 않습니다.")
-
-# Google Sheets에서 special_schedules 로드
-special_schedules = []
-client = get_gspread_client()
-try:
-    spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
-    sheet_name = f"{month_str} 토요/휴일 일자"
-    worksheet = spreadsheet.worksheet(sheet_name)
-    schedule_data = worksheet.get_all_records()
-    if not schedule_data:
-        st.warning("별도의 토요/휴일 스케줄이 없습니다.")
-    else:
-        seen_dates = set()
-        for row in schedule_data:
-            date_str = row["날짜"]
-            if date_str not in seen_dates:
-                try:
-                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    workers = [w.strip() for w in row["근무 인원"].split(",") if w.strip()]
-                    formatted_date_str = f"{date_obj.month}월 {date_obj.day}일"
-                    special_schedules.append((date_obj, formatted_date_str, workers))
-                    seen_dates.add(date_str)
-                except ValueError as e:
-                    st.warning(f"날짜 파싱 오류: {date_str}, 오류: {str(e)}")
-                    continue
-                
-except gspread.exceptions.WorksheetNotFound:
-    st.warning(f"{sheet_name} 시트가 없습니다. 토요/휴일 스케줄을 확인해주세요.")
-except Exception as e:
-    st.error(f"special_schedules 로드 실패: {str(e)}")
-
-# 이 코드는 기존의 `if special_schedules:` 블록 전체를 대체합니다.
-if special_schedules:
-    special_schedules.sort(key=lambda x: x[0])
+with tab_weekday:
     room_options = [str(i) for i in range(1, 13)]
 
-    for idx, (date_obj, date_str, personnel_for_day) in enumerate(special_schedules):
-        # 요일 계산
-        date_row = st.session_state["df_schedule"][st.session_state["df_schedule"]['날짜'] == date_str]
-        if not date_row.empty and '요일' in date_row.columns and not date_row['요일'].isna().iloc[0]:
-            weekday = date_row['요일'].iloc[0]
-        else:
-            weekday_map = {0: "월요일", 1: "화요일", 2: "수요일", 3: "목요일", 4: "금요일", 5: "토요일", 6: "일요일"}
-            weekday = weekday_map[date_obj.weekday()]
-            st.warning(f"{date_str}의 요일 정보가 df_schedule에 없습니다. 계산된 요일 사용: {weekday}")
-
-        formatted_date = f"{date_obj.month}월 {date_obj.day}일 ({weekday.replace('요일', '')}) - 근무 인원 수: {len(personnel_for_day)}"
-        with st.expander(f"🗓️ {formatted_date}"):
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                st.markdown("###### **당직 인원**")
-                duty_person_key = f"duty_person_{date_str}_{idx}"
-                default_duty = st.session_state["weekend_room_settings"].get(date_str, {}).get("duty_person", None)
-                duty_person = st.selectbox(
-                    f"당직 인원 ({formatted_date})",
-                    ["선택 안 함"] + personnel_for_day,
-                    index=personnel_for_day.index(default_duty) + 1 if default_duty in personnel_for_day else 0,
-                    key=duty_person_key,
-                    label_visibility="collapsed"
-                )
-            with col2:
-                st.markdown("###### **당직 방**")
-                duty_room_key = f"duty_room_{date_str}_{idx}"
-                duty_room_options = ["선택 안 함"] + room_options
-                default_duty_room = st.session_state["weekend_room_settings"].get(date_str, {}).get("duty_room", "선택 안 함")
-                duty_room = st.selectbox(
-                    f"당직 방 ({formatted_date})",
-                    duty_room_options,
-                    index=duty_room_options.index(default_duty_room) if default_duty_room in duty_room_options else 0,
-                    key=duty_room_key,
-                    label_visibility="collapsed",
-                    disabled=duty_person == "선택 안 함"
-                )
-                
-            st.markdown("###### **총 방 개수**")
-            total_room_count_key = f"total_rooms_{date_str}_{idx}"
-            default_room_count = st.session_state["weekend_room_settings"].get(date_str, {}).get("total_room_count", len(personnel_for_day))
-            total_room_count = st.number_input(
-                f"총 방 개수 ({formatted_date})",
-                min_value=0,
-                max_value=12,
-                value=default_room_count,
-                key=total_room_count_key,
-                label_visibility="collapsed"
-            )
-
+    tab830, tab900, tab930, tab1000, tab1330 = st.tabs([
+        "🕘 08:30", "🕘 09:00", "🕤 09:30", "🕙 10:00", "🕜 13:30 (오후)"
+    ])
+    with tab830:
+        col1, col2 = st.columns([1, 2.5])
+        with col1:
+            st.markdown("###### **방 개수**")
+            num_830 = st.number_input("830_rooms_count", min_value=0, max_value=12, value=4, key="830_rooms", label_visibility="collapsed")
+            st.markdown("###### **오전 당직방**")
+            duty_830_options = st.session_state["room_settings"]["830_room_select"]
+            try:
+                duty_index_830 = duty_830_options.index(st.session_state["room_settings"].get("830_duty"))
+            except ValueError:
+                duty_index_830 = 0
+            duty_830 = st.selectbox("830_duty_room", duty_830_options, index=duty_index_830, key="830_duty", label_visibility="collapsed", help="8:30 시간대의 당직 방을 선택합니다.")
+            st.session_state["room_settings"]["830_duty"] = duty_830
+        with col2:
             st.markdown("###### **방 번호 선택**")
-            rooms_key = f"rooms_{date_str}_{idx}"
-            default_rooms = st.session_state["weekend_room_settings"].get(date_str, {}).get("selected_rooms", ['1', '8', '4', '7', '10', '2', '5', '6', '9'][:total_room_count])
-            if duty_room != "선택 안 함" and duty_room not in default_rooms:
-                default_rooms = default_rooms[:total_room_count-1] + [duty_room] if total_room_count > 0 else [duty_room]
-            selected_rooms = st.multiselect(
-                f"방 번호 선택 ({formatted_date})",
-                room_options,
-                default=default_rooms[:total_room_count],
-                max_selections=total_room_count,
-                key=rooms_key,
-                label_visibility="collapsed"
-            )
+            if len(st.session_state["room_settings"]["830_room_select"]) > num_830:
+                st.session_state["room_settings"]["830_room_select"] = st.session_state["room_settings"]["830_room_select"][:num_830]
+            rooms_830 = st.multiselect("830_room_select_numbers", room_options, default=st.session_state["room_settings"]["830_room_select"], max_selections=num_830, key="830_room_select", label_visibility="collapsed")
+            if len(rooms_830) < num_830:
+                st.warning(f"방 번호를 {num_830}개 선택해주세요.")
+            st.session_state["room_settings"]["830_room_select"] = rooms_830
+    with tab900:
+        col1, col2 = st.columns([1, 2.5])
+        with col1:
+            st.markdown("###### **방 개수**")
+            num_900 = st.number_input("900_rooms_count", min_value=0, max_value=12, value=3, key="900_rooms", label_visibility="collapsed")
+        with col2:
+            st.markdown("###### **방 번호 선택**")
+            if len(st.session_state["room_settings"]["900_room_select"]) > num_900:
+                st.session_state["room_settings"]["900_room_select"] = st.session_state["room_settings"]["900_room_select"][:num_900]
+            rooms_900 = st.multiselect("900_room_select_numbers", room_options, default=st.session_state["room_settings"]["900_room_select"], max_selections=num_900, key="900_room_select", label_visibility="collapsed")
+            if len(rooms_900) < num_900:
+                st.warning(f"방 번호를 {num_900}개 선택해주세요.")
+            st.session_state["room_settings"]["900_room_select"] = rooms_900
+    with tab930:
+        col1, col2 = st.columns([1, 2.5])
+        with col1:
+            st.markdown("###### **방 개수**")
+            num_930 = st.number_input("930_rooms_count", min_value=0, max_value=12, value=3, key="930_rooms", label_visibility="collapsed")
+        with col2:
+            st.markdown("###### **방 번호 선택**")
+            if len(st.session_state["room_settings"]["930_room_select"]) > num_930:
+                st.session_state["room_settings"]["930_room_select"] = st.session_state["room_settings"]["930_room_select"][:num_930]
+            rooms_930 = st.multiselect("930_room_select_numbers", room_options, default=st.session_state["room_settings"]["930_room_select"], max_selections=num_930, key="930_room_select", label_visibility="collapsed")
+            if len(rooms_930) < num_930:
+                st.warning(f"방 번호를 {num_930}개 선택해주세요.")
+            st.session_state["room_settings"]["930_room_select"] = rooms_930
+    with tab1000:
+        col1, col2 = st.columns([1, 2.5])
+        with col1:
+            st.markdown("###### **방 개수**")
+            num_1000 = st.number_input("1000_rooms_count", min_value=0, max_value=12, value=2, key="1000_rooms", label_visibility="collapsed")
+        with col2:
+            st.markdown("###### **방 번호 선택**")
+            if len(st.session_state["room_settings"]["1000_room_select"]) > num_1000:
+                st.session_state["room_settings"]["1000_room_select"] = st.session_state["room_settings"]["1000_room_select"][:num_1000]
+            rooms_1000 = st.multiselect("1000_room_select_numbers", room_options, default=st.session_state["room_settings"]["1000_room_select"], max_selections=num_1000, key="1000_room_select", label_visibility="collapsed")
+            if len(rooms_1000) < num_1000:
+                st.warning(f"방 번호를 {num_1000}개 선택해주세요.")
+            st.session_state["room_settings"]["1000_room_select"] = rooms_1000
+    with tab1330:
+        col1, col2 = st.columns([1, 2.5])
+        with col1:
+            st.markdown("###### **방 개수**")
+            st.info("4개 고정")
+            num_1330 = 4
+            st.markdown("###### **오후 당직방**")
+            duty_1330_options = st.session_state["room_settings"]["1330_room_select"]
+            try:
+                duty_index_1330 = duty_1330_options.index(st.session_state["room_settings"].get("1330_duty"))
+            except ValueError:
+                duty_index_1330 = 0
+            duty_1330 = st.selectbox("1330_duty_room", duty_1330_options, index=duty_index_1330, key="1330_duty", label_visibility="collapsed", help="13:30 시간대의 당직 방을 선택합니다.")
+            st.session_state["room_settings"]["1330_duty"] = duty_1330
+        with col2:
+            st.markdown("###### **방 번호 선택**")
+            if len(st.session_state["room_settings"]["1330_room_select"]) > num_1330:
+                st.session_state["room_settings"]["1330_room_select"] = st.session_state["room_settings"]["1330_room_select"][:num_1330]
+            rooms_1330 = st.multiselect("1330_room_select_numbers", room_options, default=st.session_state["room_settings"]["1330_room_select"], max_selections=num_1330, key="1330_room_select", label_visibility="collapsed")
+            if len(rooms_1330) < num_1330:
+                st.warning(f"방 번호를 {num_1330}개 선택해주세요.")
+            st.session_state["room_settings"]["1330_room_select"] = rooms_1330
 
-            if total_room_count == 0:
-                selected_rooms = []
-                st.write("방 개수가 0이므로 방 번호를 선택할 수 없습니다.")
+with tab_weekend:
+    # 토요/휴일 데이터 로드
+    special_schedules = []
+    special_dates = set()
+    client = get_gspread_client()
+    try:
+        spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+        sheet_name = f"{month_str} 토요/휴일 일자"
+        worksheet = spreadsheet.worksheet(sheet_name)
+        schedule_data = worksheet.get_all_records()
+        special_df = pd.DataFrame(schedule_data) if schedule_data else pd.DataFrame(columns=["날짜", "당직 인원"])
 
-            if duty_room != "선택 안 함" and total_room_count > 0 and duty_room not in selected_rooms:
-                selected_rooms = selected_rooms[:total_room_count-1] + [duty_room] if len(selected_rooms) >= total_room_count-1 else selected_rooms + [duty_room]
-                st.warning(f"{formatted_date}: 당직 방({duty_room})이 선택된 방 번호 목록에 자동 추가되었습니다.")
-
-            st.session_state["weekend_room_settings"][date_str] = {
-                "duty_person": duty_person if duty_person != "선택 안 함" else None,
-                "duty_room": duty_room if duty_room != "선택 안 함" else None,
-                "total_room_count": total_room_count,
-                "selected_rooms": selected_rooms
-            }
-
-            # --- 검증 로직 수정 (하나의 오류만 표시하도록 if/elif 사용) ---
-            # 1. 당직 정보가 가장 중요하므로 먼저 확인합니다.
-            if total_room_count > 0 and (not duty_person or duty_person == "선택 안 함" or not duty_room or duty_room == "선택 안 함"):
-                st.error(f"{formatted_date}: 당직 인원과 당직 방을 모두 선택해주세요.")
-            # 2. 당직 정보가 정상이면, 선택된 방 번호 개수를 확인합니다.
-            elif total_room_count > 0 and len(selected_rooms) < total_room_count:
-                st.warning(f"{formatted_date}: 방 번호를 {total_room_count}개 선택해주세요.")
-            # 3. 모든 방이 선택되었다면, 최종적으로 인원 수와 방 개수를 비교합니다.
-            elif total_room_count != len(personnel_for_day) and total_room_count != 0:
-                st.error(f"{formatted_date}: 배정된 방 수({total_room_count}개)가 총 근무 인원 수({len(personnel_for_day)}명)와 맞지 않습니다.")
+        if not schedule_data:
+            st.warning("별도의 토요/휴일 스케줄이 없습니다.")
+        else:
+            for row in schedule_data:
+                if not row.get("날짜"): continue
+                date_obj = datetime.strptime(row["날짜"], '%Y-%m-%d').date()
+                formatted_date_str = f"{date_obj.month}월 {date_obj.day}일"
+                date_row = st.session_state.df_schedule[st.session_state.df_schedule['날짜'] == formatted_date_str]
+                personnel = [str(p).strip() for p in date_row.iloc[0, 2:14] if pd.notna(p) and str(p).strip()] if not date_row.empty else []
+                special_schedules.append((date_obj, formatted_date_str, personnel))
+                special_dates.add(formatted_date_str)
+    except Exception as e:
+        st.error(f"토요/휴일 데이터 로드 실패: {e}")
+        special_df = pd.DataFrame(columns=["날짜", "당직 인원"])
+    
+    # 토요/휴일 UI 렌더링
+    if special_schedules:
+        for date_obj, date_str, personnel_for_day in sorted(special_schedules):
+            weekday_map = {5: "토", 6: "일"}
+            weekday_str = weekday_map.get(date_obj.weekday(), '휴')
             
-else:
-    st.warning("토요/휴일 스케줄이 없습니다. Google Sheets에서 데이터를 확인해주세요.")
+            duty_person_for_date = ""
+            if not special_df.empty:
+                duty_row = special_df[special_df['날짜'] == date_obj.strftime('%Y-%m-%d')]
+                if not duty_row.empty: duty_person_for_date = str(duty_row['당직 인원'].iloc[0]).strip()
+
+            expander_title = (f"🗓️ {date_str} ({weekday_str}) | "
+                              f"근무: {len(personnel_for_day)}명 | "
+                              f"당직: {duty_person_for_date or '없음'}")
+
+            with st.expander(expander_title):
+                col1, col2 = st.columns([1, 1])
+                duty_room = None
+                with col1:
+                    st.markdown("###### **당직 방**")
+                    if duty_person_for_date:
+                        duty_room_options = ["선택 안 함"] + [str(i) for i in range(1, 13)]
+                        default_duty_room = st.session_state.weekend_room_settings.get(date_str, {}).get("duty_room", "선택 안 함")
+                        duty_room = st.selectbox("당직 방 선택", duty_room_options, key=f"duty_room_{date_str}", 
+                                                 index=duty_room_options.index(default_duty_room) if default_duty_room in duty_room_options else 0, label_visibility="collapsed")
+                    else: st.info("당직 인원 없음")
+                
+                with col2:
+                    st.markdown("###### **총 방 개수**")
+                    default_room_count = st.session_state.weekend_room_settings.get(date_str, {}).get("total_room_count", len(personnel_for_day))
+                    total_room_count = st.number_input("총 방 개수", min_value=0, max_value=12, value=default_room_count, 
+                                                       key=f"total_rooms_{date_str}", label_visibility="collapsed")
+                
+                st.markdown("###### **방 번호 선택**")
+                room_options = [str(i) for i in range(1, 13)]
+                default_rooms = st.session_state.weekend_room_settings.get(date_str, {}).get("selected_rooms", room_options[:total_room_count])
+                selected_rooms = st.multiselect("방 번호 선택", room_options, default=default_rooms, max_selections=total_room_count, 
+                                                key=f"rooms_{date_str}", label_visibility="collapsed")
+
+                st.session_state.weekend_room_settings[date_str] = {
+                    "duty_room": duty_room if duty_room and duty_room != "선택 안 함" else None,
+                    "total_room_count": total_room_count, "selected_rooms": selected_rooms
+                }
+    else: st.info("이번 달은 토요/휴일 근무가 없습니다.")
 
 all_selected_rooms = (st.session_state["room_settings"]["830_room_select"] + 
                      st.session_state["room_settings"]["900_room_select"] + 
@@ -975,35 +942,61 @@ def parse_date_info(date_info):
         st.warning(f"Failed to parse date_info: {date_info}, error: {str(e)}")
         return None, False
 
-def assign_special_date(personnel_for_day, date_str, duty_person, settings):
-    assignment_dict = {}  # 방 번호를 키로 한 딕셔너리 반환
+def assign_special_date(personnel_for_day, date_str, settings):
+    assignment_dict = {}
     assigned_personnel = set()
     
     duty_room = settings.get("duty_room", None)
     selected_rooms = settings.get("selected_rooms", [])
     total_room_count = settings.get("total_room_count", 0)
     
-    if duty_room and duty_room != "선택 안 함" and duty_room not in selected_rooms:
-        selected_rooms = selected_rooms[:total_room_count-1] + [duty_room] if total_room_count > 0 else [duty_room]
+    # 사용자가 설정한 방 번호 순서
+    preferred_room_order = ['1', '8', '4', '7', '10', '2', '5', '6', '9', '3']
+    # 선택된 방을 사용자 지정 순서대로 정렬
+    sorted_rooms = [room for room in preferred_room_order if room in selected_rooms][:total_room_count]
     
-    sorted_rooms = sorted(selected_rooms, key=lambda x: int(x))
+    # Google Sheets에서 당직 인원 확인
+    client = get_gspread_client()
+    if client is None:
+        st.error("Google Sheets 클라이언트 초기화 실패")
+        return {}, sorted_rooms
+    
+    spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+    sheet_name = f"{month_str} 토요/휴일 일자"
+    try:
+        worksheet = spreadsheet.worksheet(sheet_name)
+        special_data = worksheet.get_all_records()
+        special_df = pd.DataFrame(special_data)
+        date_obj = datetime.strptime(date_str, '%m월 %d일').replace(year=2025)
+        formatted_date = date_obj.strftime('%Y-%m-%d')
+        duty_person_row = special_df[special_df['날짜'] == formatted_date]
+        duty_person = duty_person_row['당직 인원'].iloc[0] if not duty_person_row.empty else None
+    except gspread.exceptions.WorksheetNotFound:
+        st.warning(f"{sheet_name} 시트가 없습니다.")
+        return {}, sorted_rooms
     
     # 당직 인원 배정
-    if duty_person and duty_person != "선택 안 함" and duty_person in personnel_for_day and duty_room and duty_room != "선택 안 함":
-        assignment_dict[duty_room] = f"{duty_person}[{duty_room}]"
-        assigned_personnel.add(duty_person)
+    if duty_person and duty_person in personnel_for_day and duty_room and duty_room != "선택 안 함":
+        if duty_person not in assigned_personnel:
+            assignment_dict[f"방({duty_room})"] = duty_person
+            assigned_personnel.add(duty_person)
+        else:
+            st.warning(f"{date_str}: {duty_person} 이미 배정됨, 당직 배정 건너뜀")
     
-    # 나머지 인원 배정
+    # 나머지 인원을 랜덤 배정
     remaining_personnel = [p for p in personnel_for_day if p not in assigned_personnel]
     random.shuffle(remaining_personnel)
+    remaining_rooms = [r for r in sorted_rooms if r != duty_room]
     
-    for room in [r for r in sorted_rooms if r != duty_room]:  # 당직 방 제외
+    for room in remaining_rooms:
         if remaining_personnel:
             person = remaining_personnel.pop(0)
-            assignment_dict[room] = f"{person}[{room}]"
+            assignment_dict[f"방({room})"] = person
             assigned_personnel.add(person)
+        else:
+            st.warning(f"{date_str}: 배정 가능한 인원 부족, 방 {room} 배정 안 됨")
     
-    return assignment_dict, sorted_rooms  # 딕셔너리와 sorted_rooms 반환
+    return assignment_dict, sorted_rooms
 
 from collections import Counter
 import random
@@ -1293,51 +1286,42 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
     return assignment, daily_stats
 
 if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
-    
-    # --- [수정] NameError 해결을 위해 special_dates 변수를 여기서 정의합니다. ---
-    special_dates = [date_str for _, date_str, _ in special_schedules]
-
-    # --- 최종 당직 정보 입력 검증 ---
-    # 배정 실행 전, 모든 토요/휴일 날짜에 당직 정보가 올바르게 설정되었는지 최종 확인합니다.
-    for _, date_str, personnel in special_schedules:
-        settings = st.session_state["weekend_room_settings"].get(date_str, {})
-        duty_person = settings.get("duty_person", None)
-        duty_room = settings.get("duty_room", None)
-        total_room_count = settings.get("total_room_count", 0)
-
-        # 방을 운영하는 날(total_room_count > 0)에 당직 정보가 없으면 실행을 중단합니다.
-        if total_room_count > 0 and (not duty_person or not duty_room or duty_person == "선택 안 함" or duty_room == "선택 안 함"):
-            st.warning(f"⚠️ {date_str}: 당직 인원과 당직 방을 모두 설정해야 배정을 수행할 수 있습니다.")
-            st.stop() # 문제가 발견되면 즉시 실행을 중단합니다.
-    
     with st.spinner("방 배정 중..."):
-        time.sleep(2)
-        if st.session_state.get('df_schedule') is None or st.session_state["df_schedule"].empty:
-            st.error("별도의 토요/휴일 일정 없이 배정됩니다.")
-            st.stop()
-        
-        st.write(" ")
-        st.subheader(f"💡 {month_str} 방배정 결과", divider='rainbow')
+        time.sleep(1)
 
-        # special_dates의 슬롯 생성 (시간대 구분 제거)
-        all_slots = ['날짜', '요일']
-        unique_slots = set()
-        max_rooms = 0
-        for date_str in special_dates:
-            settings = st.session_state["weekend_room_settings"].get(date_str, {})
-            selected_rooms = settings.get("selected_rooms", [])
-            duty_room = settings.get("duty_room", None)
-            if duty_room and duty_room != "선택 안 함" and duty_room not in selected_rooms:
-                selected_rooms = selected_rooms[:settings.get("total_room_count", 0)-1] + [duty_room]
-            for room in sorted(selected_rooms, key=lambda x: int(x)):
-                unique_slots.add(f"방({room})")  # 시간대 대신 단순히 방 번호로 슬롯 생성
-            max_rooms = max(max_rooms, len(selected_rooms))
-        all_slots.extend(sorted(unique_slots, key=lambda x: int(x.split('(')[1].rstrip(')')))
-        )
-        columns = all_slots
-        result_data = []
-        
-        # --- 방 설정 검증 및 슬롯 정보 생성 (기존과 동일) ---
+        # --- [핵심 수정] 버튼 클릭 시점에 토요/휴일 정보를 다시 로드 ---
+        client = get_gspread_client()
+        if client is None:
+            st.error("Google Sheets 클라이언트를 초기화할 수 없습니다.")
+            st.stop()
+        try:
+            spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+            sheet_name = f"{month_str} 토요/휴일 일자"
+            worksheet = spreadsheet.worksheet(sheet_name)
+            schedule_data = worksheet.get_all_records()
+            special_df = pd.DataFrame(schedule_data) if schedule_data else pd.DataFrame(columns=["날짜", "당직 인원"])
+            special_dates = {f"{datetime.strptime(row['날짜'], '%Y-%m-%d').month}월 {datetime.strptime(row['날짜'], '%Y-%m-%d').day}일" for row in schedule_data if row.get("날짜")}
+        except Exception as e:
+            st.warning(f"토요/휴일 정보를 불러오는 데 실패했습니다: {e}")
+            special_df = pd.DataFrame(columns=["날짜", "당직 인원"])
+            special_dates = set()
+
+        # --- 최종 당직 정보 입력 검증 ---
+        for date_obj, date_str, _ in special_schedules:
+            settings = st.session_state.get("weekend_room_settings", {}).get(date_str, {})
+            total_room_count = settings.get("total_room_count", 0)
+            duty_room_selected = settings.get("duty_room")
+            
+            duty_person_val = ""
+            if not special_df.empty:
+                duty_row = special_df[special_df['날짜'] == date_obj.strftime('%Y-%m-%d')]
+                if not duty_row.empty: duty_person_val = str(duty_row['당직 인원'].iloc[0]).strip()
+
+            if total_room_count > 0 and duty_person_val and not duty_room_selected:
+                st.error(f"⚠️ {date_str}: 당직 인원({duty_person_val})이 지정되어 있으므로, '토요/휴일 방 설정'에서 당직 방을 선택해야 합니다.")
+                st.stop()
+
+        # --- 평일 방 설정 검증 및 슬롯 정보 생성 (기존과 동일) ---
         time_slots, time_groups, memo_rules = {}, {}, {}
         if num_830 + num_900 + num_930 + num_1000 != 12:
             st.error(f"오전 방 개수 합계는 12개여야 합니다. (온콜 제외) 현재: {num_830 + num_900 + num_930 + num_1000}개")
@@ -1366,7 +1350,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 slot = f"13:30({room})_당직" if room == duty_1330 else f"13:30({room})"
                 time_slots[slot] = len(time_slots)
                 time_groups.setdefault('13:30', []).append(slot)
-            
+
             memo_rules = {
                 **{f'{i}번방': [s for s in time_slots if f'({i})' in s and '_당직' not in s] for i in range(1, 13)},
                 '당직 아닌 이른방': [s for s in time_slots if s.startswith('8:30') and '_당직' not in s],
@@ -1378,26 +1362,24 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 '10:00': [s for s in time_slots if s.startswith('10:00')],
                 '오후 당직 제외': [s for s in time_slots if s.startswith('13:30') and '_당직' not in s]
             }
-            
+
             st.session_state.update({"time_slots": time_slots, "time_groups": time_groups, "memo_rules": memo_rules})
-        
+
         morning_duty_slot = f"8:30({duty_830})_당직"
         all_slots = [morning_duty_slot] + sorted([s for s in time_slots if s.startswith('8:30') and not s.endswith('_당직')]) + sorted([s for s in time_slots if s.startswith('9:00')]) + sorted([s for s in time_slots if s.startswith('9:30')]) + sorted([s for s in time_slots if s.startswith('10:00')]) + ['온콜'] + sorted([s for s in time_slots if s.startswith('13:30') and s.endswith('_당직')]) + sorted([s for s in time_slots if s.startswith('13:30') and not s.endswith('_당직')])
         columns = ['날짜', '요일'] + all_slots
-        
+
         # --- 배정 로직 ---
-        # random.seed(time.time())
-        total_stats = {'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(), 'rooms': {str(i): Counter() for i in range(1, 13)}}
+        total_stats = {'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(), 'rooms': {str(i): Counter() for i in range(1, 13)}, 'time_room_slots': {s: Counter() for s in time_slots}}
         df_cumulative = st.session_state["df_cumulative"]
         afternoon_duty_counts = {row['이름']: int(row['오후당직']) for _, row in df_cumulative.iterrows() if pd.notna(row.get('오후당직')) and int(row['오후당직']) > 0}
-        
+
         assignments, date_cache, request_cells, result_data = {}, {}, {}, []
         assignable_slots = [s for s in st.session_state["time_slots"].keys() if not (s.startswith('8:30') and s.endswith('_당직'))]
         weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
-        
-        # special_dates 목록
+
         special_dates = [date_str for _, date_str, _ in special_schedules]
-        
+
         for _, row in st.session_state["df_schedule_md"].iterrows():
             date_str = row['날짜']
             try:
@@ -1407,8 +1389,68 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 day_of_week = weekday_map[date_obj.weekday()]
             except (ValueError, TypeError):
                 continue
-            
+
             result_row = [date_str, day_of_week]
+
+            # --- [수정된] 토요/휴일 배정 로직 ---
+            if date_str in special_dates:
+                personnel = [p for p in row.iloc[2:].dropna() if p]
+                settings = st.session_state["weekend_room_settings"].get(date_str, {})
+                selected_rooms = settings.get("selected_rooms", [])
+                duty_room_selected = settings.get("duty_room")
+
+                duty_person = None
+                date_obj_for_lookup = datetime.strptime(date_str, '%m월 %d일').replace(year=2025)
+                formatted_date_for_lookup = date_obj_for_lookup.strftime('%Y-%m-%d')
+
+                duty_person_row = special_df[special_df['날짜'] == formatted_date_for_lookup]
+                if not duty_person_row.empty:
+                    duty_person_raw = duty_person_row['당직 인원'].iloc[0]
+                    if pd.notna(duty_person_raw) and str(duty_person_raw).strip():
+                        duty_person = str(duty_person_raw).strip()
+
+                room_to_first_slot_idx = {}
+                for slot_idx, slot_name in enumerate(columns[2:]):
+                    room_match = re.search(r'\((\d+)\)', str(slot_name))
+                    if room_match:
+                        room_num = room_match.group(1)
+                        if room_num not in room_to_first_slot_idx:
+                            room_to_first_slot_idx[room_num] = slot_idx
+
+                mapped_assignment = [None] * (len(columns) - 2)
+                remaining_personnel = list(personnel)
+
+                # 당직자 우선 배정
+                if duty_person and duty_room_selected and duty_person in remaining_personnel:
+                    if duty_room_selected in room_to_first_slot_idx:
+                        slot_idx = room_to_first_slot_idx[duty_room_selected]
+                        mapped_assignment[slot_idx] = duty_person
+                        remaining_personnel.remove(duty_person)
+                    else:
+                        st.warning(f"⚠️ {date_str}: 선택된 당직 방({duty_room_selected})에 해당하는 열을 찾을 수 없습니다.")
+
+                # 나머지 인원 랜덤 배정
+                remaining_rooms = [r for r in selected_rooms if r != duty_room_selected]
+                random.shuffle(remaining_personnel)
+
+                for room in remaining_rooms:
+                    if not remaining_personnel:
+                        break
+                    if room in room_to_first_slot_idx:
+                        person_to_assign = remaining_personnel.pop(0)
+                        slot_idx = room_to_first_slot_idx[room]
+                        if mapped_assignment[slot_idx] is None:
+                            mapped_assignment[slot_idx] = person_to_assign
+                        else:
+                            # 만약 슬롯이 이미 채워져 있다면(예: 당직자로), 다른 사람을 넣지 않고 경고
+                            st.warning(f"{date_str}: 슬롯이 이미 배정되어 {person_to_assign}을(를) {room}번 방에 배정하지 못했습니다.")
+                            remaining_personnel.insert(0, person_to_assign) # 다시 목록에 추가
+                    else:
+                        st.warning(f"⚠️ {date_str}: 선택된 방({room})에 해당하는 열을 찾을 수 없습니다.")
+
+                result_data.append(result_row + mapped_assignment)
+                continue # 평일 로직 건너뛰기
+
             has_person = any(val for val in row.iloc[2:-1] if pd.notna(val) and val)
             personnel_for_the_day = [p for p in row.iloc[2:].dropna() if p]
                     
@@ -1641,8 +1683,21 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
 
         # 데이터 렌더링
         for row_idx, row_data in enumerate(result_data, 2):
-            has_person = any(val for val in row_data[2:] if val)
             current_date_str = row_data[0]
+            
+            duty_person_for_the_day = None
+            if current_date_str in special_dates:
+                try:
+                    date_obj_lookup = datetime.strptime(current_date_str, '%m월 %d일').replace(year=datetime.now().year)
+                    formatted_date_lookup = date_obj_lookup.strftime('%Y-%m-%d')
+                    duty_person_row = special_df[special_df['날짜'] == formatted_date_lookup]
+                    if not duty_person_row.empty:
+                        duty_person_raw = duty_person_row['당직 인원'].iloc[0]
+                        if pd.notna(duty_person_raw) and str(duty_person_raw).strip():
+                            duty_person_for_the_day = str(duty_person_raw).strip()
+                except Exception as e:
+                    st.warning(f"Excel 스타일링 중 당직 인원 조회 오류: {e}")
+
             assignment_cells = row_data[2:]
             personnel_in_row = [p for p in assignment_cells if p]
             is_no_person_day = not any(personnel_in_row)
@@ -1654,24 +1709,45 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                 
-                # 날짜열과 요일열 폰트 크기 9로 고정
-                if col_idx == 1 or col_idx == 2:
-                    cell.font = Font(name=font_name, size=9)
+                # --- 배경색 및 폰트 스타일링 로직 통합 ---
                 
-                # 배경색 설정
-                if col_idx == 1:
-                    cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-                elif col_idx == 2:  # '요일' 열
-                    if is_no_person_day:
-                        cell.fill = no_person_day_fill
-                    elif is_small_team_day:
-                        cell.fill = special_day_fill
-                    else:
-                        cell.fill = default_yoil_fill
+                # 1. 배경색 설정
+                if col_idx == 1: # 날짜
+                    cell.fill = no_person_day_fill
+                elif col_idx == 2: # 요일
+                    if is_no_person_day: cell.fill = no_person_day_fill
+                    elif is_small_team_day: cell.fill = special_day_fill
+                    else: cell.fill = default_yoil_fill
                 elif is_no_person_day and col_idx >= 3:
                     cell.fill = no_person_day_fill
-                elif current_date_str in special_dates and col_idx > 2 and value:  # special_schedules 근무자 셀 배경색
+                elif current_date_str in special_dates and col_idx > 2 and value:
                     cell.fill = special_person_fill
+                
+                # 변경 요청된 셀 하이라이트 (배경색 덮어쓰기)
+                slot_name = columns[col_idx-1]
+                cell_shift_type = ''
+                if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']): cell_shift_type = '오전'
+                elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']): cell_shift_type = '오후'
+                
+                if (current_date_str.strip(), cell_shift_type, str(value).strip()) in swapped_assignments:
+                    cell.fill = highlight_fill
+
+                # 2. 폰트 설정
+                cell.font = default_font # 기본 폰트 먼저 적용
+                
+                if current_date_str in special_dates:
+                    if duty_person_for_the_day and value == duty_person_for_the_day:
+                        cell.font = duty_font
+                else:
+                    slot_name = columns[col_idx-1]
+                    if (slot_name.endswith('_당직') or slot_name == '온콜') and value:
+                        cell.font = duty_font
+
+                # 3. 코멘트 추가
+                if col_idx > 2 and value and date_cache.get(current_date_str):
+                    formatted_date_for_comment = date_cache[current_date_str]
+                    if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
+                        cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
 
                 slot_name = columns[col_idx-1]
                 cell_shift_type = ''
