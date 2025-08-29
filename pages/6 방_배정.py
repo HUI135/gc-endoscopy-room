@@ -1704,13 +1704,17 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             SMALL_TEAM_THRESHOLD_FORMAT = 15
             is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT) or (current_date_str in special_dates)
 
-            # 데이터 렌더링
+            # --- 데이터 렌더링 ---
             for row_idx, row_data in enumerate(result_data, 2):
+                # --- 1. 현재 행(날짜)의 상태를 먼저 모두 정의합니다 ---
                 current_date_str = row_data[0]
                 
-                # 1. 그날의 당직 인원 정보를 정확히 가져옵니다.
+                # [핵심 수정 1] 휴일 여부를 명확한 변수로 먼저 정의합니다.
+                is_special_day = current_date_str in special_dates
+                
                 duty_person_for_the_day = None
-                if current_date_str in special_dates:
+                # 휴일인 경우에만 당직자 정보를 조회합니다. (효율성 증가)
+                if is_special_day:
                     try:
                         date_obj_lookup = datetime.strptime(current_date_str, '%m월 %d일').replace(year=datetime.now().year)
                         formatted_date_lookup = date_obj_lookup.strftime('%Y-%m-%d')
@@ -1722,51 +1726,60 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                     except Exception as e:
                         st.warning(f"Excel 스타일링 중 당직 인원 조회 오류: {e}")
 
+                # 행의 다른 상태들도 여기서 정의합니다.
                 assignment_cells = row_data[2:]
                 personnel_in_row = [p for p in assignment_cells if p]
                 is_no_person_day = not any(personnel_in_row)
                 SMALL_TEAM_THRESHOLD_FORMAT = 15
-                is_small_team_day = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT) or (current_date_str in special_dates)
+                is_small_team_day_for_bg = (0 < len(personnel_in_row) < SMALL_TEAM_THRESHOLD_FORMAT) or is_special_day
 
-                # 2. 셀마다 스타일을 적용합니다.
+
+                # --- 2. 열을 순회하며 각 셀의 스타일을 순서대로 적용합니다 ---
                 for col_idx, value in enumerate(row_data, 1):
                     cell = sheet.cell(row_idx, col_idx, value)
                     cell.alignment = Alignment(horizontal='center', vertical='center')
                     cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                     
-                    # --- 배경색 먼저 적용 ---
-                    if col_idx == 1: # 날짜
+                    # --- 배경색 적용 ---
+                    if col_idx == 1:  # 날짜
                         cell.fill = no_person_day_fill
-                    elif col_idx == 2: # 요일
-                        if is_no_person_day: cell.fill = no_person_day_fill
-                        elif is_small_team_day: cell.fill = special_day_fill
-                        else: cell.fill = default_yoil_fill
+                    elif col_idx == 2:  # 요일
+                        if is_no_person_day:
+                            cell.fill = no_person_day_fill
+                        elif is_small_team_day_for_bg:
+                            cell.fill = special_day_fill
+                        else:
+                            cell.fill = default_yoil_fill
                     elif is_no_person_day and col_idx >= 3:
                         cell.fill = no_person_day_fill
-                    elif current_date_str in special_dates and col_idx > 2 and value:
+                    elif is_special_day and col_idx > 2 and value:
                         cell.fill = special_person_fill
                     
+                    # --- 변경사항 하이라이트 적용 (배경색 덮어쓰기) ---
                     slot_name = columns[col_idx-1]
                     cell_shift_type = ''
-                    if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']): cell_shift_type = '오전'
-                    elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']): cell_shift_type = '오후'
+                    if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']):
+                        cell_shift_type = '오전'
+                    elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']):
+                        cell_shift_type = '오후'
                     
                     if (current_date_str.strip(), cell_shift_type, str(value).strip()) in swapped_assignments:
                         cell.fill = highlight_fill
 
-                    # --- 폰트 나중에 적용 (덮어쓰기 방지) ---
-                    cell.font = default_font # 기본 폰트 먼저 적용
+                    # --- 폰트 적용 (가장 중요) ---
+                    # [핵심 수정 2] 폰트 로직을 is_special_day 변수로 명확하게 분리합니다.
+                    cell.font = default_font  # 1. 먼저 기본 폰트를 적용하고,
                     
-                    if value: # 셀에 값이 있을 때만 폰트 변경 고려
-                        if current_date_str in special_dates:
-                            # 토요/휴일: 조회해온 당직자와 셀의 이름이 같으면 핑크색 볼드체
+                    if value:  # 2. 셀에 값이 있을 때만 아래 조건에 따라 폰트를 덮어씌웁니다.
+                        if is_special_day:
+                            # [휴일 로직] '조회된 당직자'와 이름이 일치할 때만 핑크색 볼드체 적용
                             if duty_person_for_the_day and value == duty_person_for_the_day:
                                 cell.font = duty_font
                         else:
-                            # 평일: 슬롯 이름으로 당직자를 판단하여 핑크색 볼드체
+                            # [평일 로직] 열 이름에 '_당직'이나 '온콜'이 포함될 때 핑크색 볼드체 적용
                             if slot_name.endswith('_당직') or slot_name == '온콜':
                                 cell.font = duty_font
-                    
+                                
                     # --- 코멘트 추가 ---
                     if col_idx > 2 and value and date_cache.get(current_date_str):
                         formatted_date_for_comment = date_cache[current_date_str]
