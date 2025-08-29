@@ -18,6 +18,7 @@ from collections import Counter
 st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
 
 st.header("⚙️ 스케줄 관리", divider='rainbow')
+st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 
 import os
 st.session_state.current_page = os.path.basename(__file__)
@@ -174,24 +175,45 @@ def load_request_data_page4():
     try:
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
+
+        mapping = sheet.worksheet("매핑")
+        st.session_state["mapping"] = mapping
+        mapping_data = mapping.get_all_records()
         
         # 매핑 시트 로드
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
         mapping_values = mapping.get_all_values()
+        
+        # --- 이 부분을 교체해주세요 ---
         if not mapping_values or len(mapping_values) <= 1:
             df_map = pd.DataFrame(columns=["이름", "사번"])
         else:
             headers = mapping_values[0]
             data = mapping_values[1:]
             df_map = pd.DataFrame(data, columns=headers)
+            # 빈 문자열을 NaN으로 바꾸고, 모든 값이 비어있는 행을 삭제
+            df_map.replace('', np.nan, inplace=True)
+            df_map.dropna(how='all', inplace=True)
+
             if "이름" in df_map.columns and "사번" in df_map.columns:
-                df_map = df_map[["이름", "사번"]]
+                if not df_map.empty:
+                    df_map = df_map[["이름", "사번"]]
+                else:
+                    df_map = pd.DataFrame(columns=["이름", "사번"])
             else:
                 df_map = pd.DataFrame(columns=["이름", "사번"])
+
+        if df_map.empty:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error("매핑 시트에 데이터가 없습니다.")
+            st.session_state["df_map"] = df_map
+            st.session_state["data_loaded"] = False
+            st.stop()
+
         df_map = df_map.sort_values(by="이름")
         st.session_state["df_map"] = df_map
-        
+
         # 요청사항 시트 로드
         try:
             worksheet2 = sheet.worksheet(f"{month_str} 요청")
@@ -204,7 +226,7 @@ def load_request_data_page4():
         df_request = df_request.sort_values(by="이름")
         st.session_state["df_request"] = df_request
         st.session_state["worksheet2"] = worksheet2
-        
+
         # 마스터 시트 로드
         worksheet1 = sheet.worksheet("마스터")
         master_data = worksheet1.get_all_records()
@@ -213,7 +235,7 @@ def load_request_data_page4():
         df_master = df_master.sort_values(by=["이름", "주차", "요일"])
         st.session_state["df_master"] = df_master
         st.session_state["worksheet1"] = worksheet1
-        
+
         # 누적 시트 로드
         try:
             worksheet4 = sheet.worksheet(f"{month_str} 누적")
@@ -235,11 +257,11 @@ def load_request_data_page4():
         st.session_state["df_cumulative"] = df_cumulative_temp
         st.session_state["edited_df_cumulative"] = df_cumulative_temp.copy()
         st.session_state["worksheet4"] = worksheet4
-        
+
         # 근무 및 보충 테이블 생성
         st.session_state["df_shift"] = generate_shift_table(df_master)
         st.session_state["df_supplement"] = generate_supplement_table(st.session_state["df_shift"], df_master["이름"].unique())
-        
+
         return True
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -267,38 +289,47 @@ if st.button("🔄 새로고침 (R)"):
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error(f"새로고침 중 예측하지 못한 오류 발생: {str(e)}")
             success = False
-    
+
     if success:
         st.session_state["data_loaded"] = True
         st.success("데이터가 성공적으로 새로고침되었습니다!")
         time.sleep(1)
         st.rerun()
-        
+
 if "data_loaded" not in st.session_state:
     try:
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
-        
+
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
         mapping_data = mapping.get_all_records()
-        df_map = pd.DataFrame(mapping_data) if mapping_data else pd.DataFrame(columns=["이름", "사번"])
         
+        # --- 이 부분을 교체해주세요 ---
+        if mapping_data:
+            df_map = pd.DataFrame(mapping_data)
+            # 빈 문자열을 NaN으로 바꾸고, 모든 값이 비어있는 행을 삭제
+            df_map.replace('', np.nan, inplace=True)
+            df_map.dropna(how='all', inplace=True)
+        else:
+            df_map = pd.DataFrame(columns=["이름", "사번"])
+        # --- 여기까지 교체 ---
+
         if df_map.empty:
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error("매핑 시트에 데이터가 없습니다.")
             st.session_state["df_map"] = df_map
             st.session_state["data_loaded"] = False
             st.stop()
-            
+
         st.session_state["df_map"] = df_map
-        
+
         worksheet1 = sheet.worksheet("마스터")
         st.session_state["worksheet1"] = worksheet1
         master_data = worksheet1.get_all_records()
         df_master = pd.DataFrame(master_data) if master_data else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
         st.session_state["df_master"] = df_master
-        
+
         try:
             worksheet2 = sheet.worksheet(f"{month_str} 요청")
         except gspread.exceptions.WorksheetNotFound:
@@ -326,8 +357,8 @@ if "data_loaded" not in st.session_state:
             new_master_df = pd.DataFrame(new_master_rows)
             df_master = pd.concat([df_master, new_master_df], ignore_index=True)
             df_master["요일"] = pd.Categorical(
-                df_master["요일"], 
-                categories=["월", "화", "수", "목", "금"], 
+                df_master["요일"],
+                categories=["월", "화", "수", "목", "금"],
                 ordered=True
             )
             df_master = df_master.sort_values(by=["이름", "주차", "요일"])
@@ -337,7 +368,7 @@ if "data_loaded" not in st.session_state:
                 st.session_state["data_loaded"] = False
                 st.stop()
             st.session_state["df_master"] = df_master
-            
+
         missing_in_request = set(df_master["이름"]) - set(st.session_state["df_request"]["이름"])
         if missing_in_request:
             new_request_rows = [{"이름": name, "분류": "요청 없음", "날짜정보": ""} for name in missing_in_request]
@@ -487,7 +518,7 @@ def load_data_page4():
                 st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
                 st.error(f"'{month_str} 누적' 시트 생성/초기화 실패: {type(e).__name__} - {e}")
                 st.stop()
-        
+
         try:
             df_cumulative_temp = pd.DataFrame(worksheet4.get_all_records()) if worksheet4.get_all_records() else pd.DataFrame(columns=[f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
             if not df_cumulative_temp.empty:
@@ -532,7 +563,7 @@ _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_start = next_month
 next_month_end = next_month.replace(day=last_day)
 
-st.write(" ")
+st.divider()
 st.subheader("📁 스케줄 시트 이동")
 st.markdown("https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?usp=sharing")
 

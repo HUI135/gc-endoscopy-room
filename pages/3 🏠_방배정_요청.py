@@ -104,55 +104,50 @@ def load_room_request_data_page3(_gc, url, sheet_name):
 
 def generate_master_events(df_user_master, year, month, week_labels):
     master_data = {}
-    요일리스트 = ["월", "화", "수", "목", "금"]
+    요일리스트 = ["월", "화", "수", "목", "금", "토", "일"] 
     
-    has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
-    if has_weekly:
-        weekly_df = df_user_master[df_user_master["주차"] == "매주"]
-        weekly_schedule = weekly_df.set_index("요일")["근무여부"].to_dict()
-        for 요일 in 요일리스트:
-            if 요일 not in weekly_schedule:
-                weekly_schedule[요일] = "근무없음"
-        for week in week_labels:
-            master_data[week] = weekly_schedule
-    else:
-        for week in week_labels:
-            week_df = df_user_master[df_user_master["주차"] == week]
-            if not week_df.empty:
-                master_data[week] = week_df.set_index("요일")["근무여부"].to_dict()
+    every_week_df = df_user_master[df_user_master["주차"] == "매주"]
+    
+    for week in week_labels:
+        master_data[week] = {}
+        week_df = df_user_master[df_user_master["주차"] == week]
+        for day in 요일리스트:
+            day_specific = week_df[week_df["요일"] == day]
+            if not day_specific.empty:
+                master_data[week][day] = day_specific.iloc[0]["근무여부"]
+            elif not every_week_df.empty:
+                day_every = every_week_df[every_week_df["요일"] == day]
+                master_data[week][day] = day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음"
             else:
-                master_data[week] = {요일: "근무없음" for 요일 in 요일리스트}
+                master_data[week][day] = "근무없음"
 
     events = []
-    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"}
+    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
     _, last_day = calendar.monthrange(year, month)
     status_colors = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
 
-    first_sunday = None
-    for day in range(1, last_day + 1):
-        date_obj = datetime.date(year, month, day)
-        if date_obj.weekday() == 6:
-            first_sunday = day
-            break
+    # 해당 월의 첫 번째 일요일 찾기 (주차 계산의 기준)
+    first_sunday = next((day for day in range(1, 8) if datetime.date(year, month, day).weekday() == 6), None)
 
     for day in range(1, last_day + 1):
         date_obj = datetime.date(year, month, day)
         weekday = date_obj.weekday()
         if weekday in weekday_map:
             day_name = weekday_map[weekday]
-            if first_sunday and day < first_sunday:
-                week_num = 0
-            elif first_sunday:
-                week_num = (day - first_sunday) // 7 + 1
-            else:
-                week_num = (day - 1) // 7
             
+            # 날짜에 해당하는 주차 계산
+            if first_sunday is None: # 만약 첫 주에 일요일이 없다면
+                week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
+            else:
+                week_num = (day - first_sunday) // 7 + 1 if day >= first_sunday else 0
+
             if week_num >= len(week_labels):
                 continue
             
             week = week_labels[week_num]
             status = master_data.get(week, {}).get(day_name, "근무없음")
-            if status != "근무없음":
+            
+            if status and status != "근무없음":
                 events.append({
                     "title": f"{status}",
                     "start": date_obj.strftime("%Y-%m-%d"),

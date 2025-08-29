@@ -118,43 +118,57 @@ def create_calendar_events(df_master, df_request):
     status_colors_master = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
     events = []
     
-    # 마스터 데이터에서 이벤트 생성
+    # 마스터 데이터에서 이벤트 생성 (첫 번째 페이지의 검증된 로직 사용)
     if not df_master.empty:
-        # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
-        # year, month = today.year, today.month # 기존 코드
-        # year, month 변수는 이미 위에서 다음 달 기준으로 설정됨
-        # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
-        c = calendar.Calendar(firstweekday=6)
-        month_calendar = c.monthdatescalendar(year, month)
-
-        week_labels = {}
-        for i, week in enumerate(month_calendar):
-            for date_obj in week:
-                if date_obj.month == month:
-                    if i == 0: week_label = "첫째주"
-                    elif i == 1: week_label = "둘째주"
-                    elif i == 2: week_label = "셋째주"
-                    elif i == 3: week_label = "넷째주"
-                    elif i == 4: week_label = "다섯째주"
-                    else: continue
-                    week_labels[date_obj] = week_label
+        master_data = {}
+        요일리스트 = ["월", "화", "수", "목", "금", "토", "일"]
         
-        요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
+        every_week_df = df_master[df_master["주차"] == "매주"]
+        
+        for week in week_labels:
+            master_data[week] = {}
+            week_df = df_master[df_master["주차"] == week]
+            for day in 요일리스트:
+                day_specific = week_df[week_df["요일"] == day]
+                if not day_specific.empty:
+                    master_data[week][day] = day_specific.iloc[0]["근무여부"]
+                elif not every_week_df.empty:
+                    day_every = every_week_df[every_week_df["요일"] == day]
+                    master_data[week][day] = day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음"
+                else:
+                    master_data[week][day] = "근무없음"
 
-        for _, row in df_master.iterrows():
-            주차, 요일, 근무여부 = row['주차'], row['요일'], row['근무여부']
-            if 근무여부 == "근무없음":
-                continue
+        weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+        _, last_day = calendar.monthrange(year, month)
 
-            for date_obj, week_label in week_labels.items():
-                if date_obj.weekday() == 요일_map.get(요일):
-                    if 주차 == '매주' or (주차 != '매주' and 주차 == week_label):
-                        events.append({
-                            "title": f"{근무여부}",
-                            "start": date_obj.strftime("%Y-%m-%d"),
-                            "end": date_obj.strftime("%Y-%m-%d"),
-                            "color": status_colors_master.get(근무여부, "#E0E0E0")
-                        })
+        # 해당 월의 첫 번째 일요일 찾기 (주차 계산의 기준)
+        first_sunday = next((day for day in range(1, 8) if datetime.date(year, month, day).weekday() == 6), None)
+
+        for day in range(1, last_day + 1):
+            date_obj = datetime.date(year, month, day)
+            weekday = date_obj.weekday()
+            if weekday in weekday_map:
+                day_name = weekday_map[weekday]
+                
+                # 날짜에 해당하는 주차 계산
+                if first_sunday is None: # 만약 첫 주에 일요일이 없다면
+                    week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
+                else:
+                    week_num = (day - first_sunday) // 7 + 1 if day >= first_sunday else 0
+
+                if week_num >= len(week_labels):
+                    continue
+
+                week = week_labels[week_num]
+                status = master_data.get(week, {}).get(day_name, "근무없음")
+                
+                if status and status != "근무없음":
+                    events.append({
+                        "title": f"{status}",
+                        "start": date_obj.strftime("%Y-%m-%d"),
+                        "end": date_obj.strftime("%Y-%m-%d"),
+                        "color": status_colors_master.get(status, "#E0E0E0")
+                    })
     
     # 요청사항 이벤트 생성
     status_colors_request = {
