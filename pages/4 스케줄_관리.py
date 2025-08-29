@@ -391,6 +391,8 @@ if "data_loaded" not in st.session_state:
             else:
                 worksheet4 = st.session_state["worksheet4"]
 
+            df_cumulative = st.session_state.get("df_cumulative", pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]))
+ 
             new_cumulative_rows = [[name, 0, 0, 0, 0] for name in missing_in_request]
             new_cumulative_df = pd.DataFrame(new_cumulative_rows, columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
             df_cumulative = pd.concat([df_cumulative, new_cumulative_df], ignore_index=True).sort_values(by="이름")
