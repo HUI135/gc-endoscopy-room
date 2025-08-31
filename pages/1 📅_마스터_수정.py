@@ -198,7 +198,10 @@ if name is None:
     st.stop()
 
 # 월 정보 및 주차 리스트 (초기화 함수에 필요하므로 먼저 정의)
-today = datetime.date.today()
+from zoneinfo import ZoneInfo
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.datetime.now(kst)
+today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 year, month = next_month_date.year, next_month_date.month # <-- 이 줄 추가
 _, last_day = calendar.monthrange(year, month) # <-- 이 줄 추가
@@ -217,7 +220,7 @@ df_user_master = st.session_state["df_user_master"]
 # 월 정보 및 주차 리스트
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
 요일리스트 = ["월", "화", "수", "목", "금"]
-today = datetime.date.today()
+today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 year, month = next_month_date.year, next_month_date.month
 _, last_day = calendar.monthrange(year, month)
@@ -239,7 +242,11 @@ calendar_options = {
     "dayHeaderFormat": {"weekday": "short"},
     "themeSystem": "bootstrap",
     "height": 600,
-    "headerToolbar": {"left": "", "center": "", "right": ""},
+    "headerToolbar": {
+        "left": "",
+        "center": "title",  # 'title'을 추가
+        "right": ""
+    },
     "showNonCurrentDates": True,
     "fixedWeekCount": False
 }

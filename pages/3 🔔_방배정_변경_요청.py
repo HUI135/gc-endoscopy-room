@@ -25,7 +25,10 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-today = date.today()
+from zoneinfo import ZoneInfo
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.now(kst)
+today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
 YEAR_STR = month_str.split('년')[0]
@@ -104,7 +107,7 @@ def load_special_schedules(month_str):
         return df
         
     except gspread.exceptions.WorksheetNotFound:
-        st.info(f"'{month_str} 토요/휴일 일자' 시트가 없어 해당 정보를 불러올 수 없습니다.")
+        st.info(f"'{month_str} 토요/휴일 일자'가 아직 입력되지 않았습니다.")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")

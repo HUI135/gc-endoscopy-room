@@ -217,82 +217,56 @@ def generate_room_request_events(df_user_room_request, today):
     return events
 
 # 데이터 초기화 로직
-def initialize_and_sync_data(gc, url, name):
-    """페이지에 필요한 모든 데이터를 로드하고 세션 상태에 저장합니다."""
+# 데이터 초기화 로직
+def initialize_and_sync_data(gc, url, name, month_start, month_end):
+    """페이지에 필요한 모든 데이터를 로드하고, 동기화하며, 세션 상태에 저장합니다."""
     try:
-        # ▼▼▼ 1. 여기서 시트를 딱 한 번만 엽니다. ▼▼▼
         sheet = gc.open_by_url(url)
+        st.session_state["sheet"] = sheet
 
-        # ▼▼▼ 2. 위에서 연 sheet 객체를 각 함수에 전달합니다. ▼▼▼
+        # 1. 데이터 로드
         df_master = load_master_data_page3(sheet)
         df_request = load_request_data_page3(sheet, f"{month_str} 요청")
         df_room_request = load_room_request_data_page3(sheet, f"{month_str} 방배정 요청")
+
+        # 2. 신규 유저 마스터 데이터 동기화
+        if not df_master.empty and name not in df_master["이름"].values:
+            st.info(f"{name} 님의 마스터 데이터가 없어 새로 추가합니다.")
+            initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
+            initial_df = pd.DataFrame(initial_rows)
+            df_master = pd.concat([df_master, initial_df], ignore_index=True).sort_values(by=["이름", "주차", "요일"])
+            
+            worksheet1 = sheet.worksheet("마스터")
+            worksheet1.clear()
+            worksheet1.update([df_master.columns.tolist()] + df_master.values.tolist())
+
+        # 3. '매주' 데이터 동기화
+        df_user_master_temp = df_master[df_master["이름"] == name]
+        has_weekly = "매주" in df_user_master_temp["주차"].values if not df_user_master_temp.empty else False
+        if not df_user_master_temp.empty and not has_weekly:
+            week_nums_count = len(sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end))))
+            week_labels = [f"{i+1}주" for i in range(week_nums_count)]
+            try:
+                pivot_df = df_user_master_temp.pivot(index="요일", columns="주차", values="근무여부")
+                if set(pivot_df.columns) == set(week_labels) and pivot_df.apply(lambda x: x.nunique() == 1, axis=1).all():
+                    temp_user_df = df_user_master_temp.drop_duplicates(subset=["이름", "요일"]).copy()
+                    temp_user_df["주차"] = "매주"
+                    df_master = df_master[df_master["이름"] != name]
+                    df_master = pd.concat([df_master, temp_user_df], ignore_index=True).sort_values(by=["이름", "주차", "요일"])
+
+                    worksheet1 = sheet.worksheet("마스터")
+                    worksheet1.clear()
+                    worksheet1.update([df_master.columns.tolist()] + df_master.values.tolist())
+            except KeyError:
+                pass
         
+        # 4. 최종 데이터를 세션 상태에 저장
         st.session_state["df_master"] = df_master
         st.session_state["df_request"] = df_request
         st.session_state["df_room_request"] = df_room_request
-        st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy() if not df_master.empty else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
-        st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy() if not df_request.empty else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-        st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy() if "이름" in df_room_request.columns and not df_room_request.empty else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-
-        # 마스터 데이터가 없으면 초기 데이터 추가
-        if st.session_state["df_user_master"].empty:
-            st.info(f"{name} 님의 마스터 데이터가 존재하지 않습니다. 초기 데이터를 추가합니다.")
-            initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
-            initial_df = pd.DataFrame(initial_rows)
-            
-            # ▼▼▼ 3. 불필요한 sheet 열기 코드를 삭제합니다. ▼▼▼
-            # sheet = gc.open_by_url(url) <-- 삭제!
-            try:
-                worksheet1 = sheet.worksheet("마스터")
-                df_master_all = pd.DataFrame(worksheet1.get_all_records())
-                df_master_all = pd.concat([df_master_all, initial_df], ignore_index=True)
-                worksheet1.clear()
-                worksheet1.update([df_master_all.columns.tolist()] + df_master_all.values.tolist())
-                st.session_state["df_user_master"] = initial_df
-                st.session_state["df_master"] = df_master_all
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 (마스터 데이터 업데이트): {str(e)}")
-                st.stop()
-
-        # 주차별 근무 일정이 모두 같으면 "매주"로 변환
-        has_weekly = "매주" in st.session_state["df_user_master"]["주차"].values if not st.session_state["df_user_master"].empty else False
-        if not st.session_state["df_user_master"].empty and not has_weekly:
-            week_nums_count = len(sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end))))
-            week_labels = [f"{i+1}주" for i in range(week_nums_count)]
-            
-            try:
-                pivot_df = st.session_state["df_user_master"].pivot(index="요일", columns="주차", values="근무여부")
-                expected_weeks = set(week_labels)
-                actual_weeks = set(pivot_df.columns)
-                
-                if actual_weeks == expected_weeks and pivot_df.apply(lambda x: x.nunique() == 1, axis=1).all():
-                    st.session_state["df_user_master"]["주차"] = "매주"
-                    st.session_state["df_user_master"] = st.session_state["df_user_master"].drop_duplicates(subset=["이름", "주차", "요일"])
-                    df_master_all = st.session_state["df_master"][st.session_state["df_master"]["이름"] != name]
-                    df_master_all = pd.concat([df_master_all, st.session_state["df_user_master"]], ignore_index=True)
-                    
-                    # ▼▼▼ 4. 여기도 불필요한 sheet 열기 코드를 삭제합니다. ▼▼▼
-                    # sheet = gc.open_by_url(url) <-- 삭제!
-                    try:
-                        worksheet1 = sheet.worksheet("마스터")
-                        worksheet1.clear()
-                        worksheet1.update([df_master_all.columns.tolist()] + df_master_all.values.tolist())
-                        st.session_state["df_master"] = df_master_all
-                    except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                        st.error(f"Google Sheets API 오류 (마스터 데이터 업데이트): {str(e)}")
-                        st.stop()
-            except KeyError as e:
-                pass
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
+        
+    except (gspread.exceptions.APIError, Exception) as e:
+        st.error(f"데이터 초기화 및 동기화 중 오류가 발생했습니다: {e}")
         st.stop()
 
 # 전역 변수 설정
@@ -303,8 +277,11 @@ try:
         st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
         st.stop()
     name = st.session_state["name"]
-    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
-    today = datetime.date.today()
+
+    from zoneinfo import ZoneInfo
+    kst = ZoneInfo("Asia/Seoul")
+    now = datetime.datetime.now(kst)
+    today = now.date()
     next_month_date = today.replace(day=1) + relativedelta(months=1)
 
     month_str = next_month_date.strftime("%Y년 %-m월")
@@ -312,7 +289,6 @@ try:
     year, month = next_month_date.year, next_month_date.month
     _, last_day = calendar.monthrange(year, month)
     month_end = next_month_date.replace(day=last_day)
-    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
     week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end)))
     week_labels = [f"{i+1}주" for i in range(len(week_nums))]
 except NameError as e:
@@ -389,7 +365,7 @@ else:
         "dayHeaderFormat": {"weekday": "short"},
         "themeSystem": "bootstrap",
         "height": 700,
-        "headerToolbar": {"left": "", "center": "", "right": ""},
+        "headerToolbar": {"left": "", "center": "title", "right": ""},
         "showNonCurrentDates": False,
         "fixedWeekCount": False,
         "eventOrder": "source"
@@ -506,7 +482,7 @@ if submit_add:
     try:
         if 날짜정보 and 분류:
             with st.spinner("요청사항을 추가 중입니다..."):
-                sheet = get_gspread_client().open_by_url(url)
+                sheet = st.session_state["sheet"] # <-- 이렇게 수정하세요
                 try:
                     worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
                 except WorksheetNotFound:
@@ -569,7 +545,7 @@ if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
     if submit_delete and selected_items:
         try:
             with st.spinner("요청사항을 삭제 중입니다..."):
-                sheet = get_gspread_client().open_by_url(url)
+                sheet = st.session_state["sheet"] # <-- 이렇게 수정하세요
                 try:
                     worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
                 except WorksheetNotFound:

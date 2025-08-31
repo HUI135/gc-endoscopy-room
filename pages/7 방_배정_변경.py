@@ -335,7 +335,10 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
     return pd.DataFrame(stats_data)[sorted_columns]
 
 # --- UI 및 데이터 핸들링 ---
-today = date.today()
+from zoneinfo import ZoneInfo
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.now(kst)
+today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
 st.header(f"🔄 {month_str} 방 배정 변경", divider='rainbow')

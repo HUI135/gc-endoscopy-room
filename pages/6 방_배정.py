@@ -443,7 +443,10 @@ def save_to_gsheet(name, categories, selected_save_dates, month_str, worksheet):
         return None
 
 # 메인
-today = date.today()
+from zoneinfo import ZoneInfo
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.now(kst)
+today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
 this_month_start = next_month_date.replace(day=1)

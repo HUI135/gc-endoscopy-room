@@ -38,7 +38,11 @@ if not st.session_state.get("login_success", False):
 
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
-today = datetime.date.today()
+
+from zoneinfo import ZoneInfo
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.datetime.now(kst)
+today = now.date()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_str = month_dt.strftime("%Y년 %-m월")
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
@@ -507,7 +511,13 @@ col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
 
 with col1:
     if 입력_모드 == "이름 선택":
-        sorted_names = sorted(df_request["이름"].unique()) if not df_request.empty else []
+        df_map = st.session_state.get("df_map", pd.DataFrame())
+
+        # df_map이 비어있지 않고 '이름' 컬럼이 있는지 최종 확인
+        if not df_map.empty and "이름" in df_map.columns:
+            sorted_names = sorted(df_map["이름"].unique())
+        else:
+            sorted_names = [] # 만약을 대비한 예외 처리
         이름 = st.selectbox("이름 선택", sorted_names, key="add_employee_select")
         이름_수기 = ""
     else:
@@ -935,7 +945,9 @@ if "special_schedules" not in st.session_state:
 all_names = sorted(list(st.session_state["df_master"]["이름"].unique()))
 
 # month_str과 month_dt 정의
-today = datetime.date.today()
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.datetime.now(kst)
+today = now.date()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_format = "%#m" if platform.system() == "Windows" else "%-m"
 month_str = month_dt.strftime(f"%Y년 {month_format}월")

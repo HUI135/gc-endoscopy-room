@@ -278,7 +278,10 @@ def load_request_data_page4():
 
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
-today = datetime.date.today()
+from zoneinfo import ZoneInfo
+kst = ZoneInfo("Asia/Seoul")
+now = datetime.datetime.now(kst)
+today = now.date()
 month_str = (today.replace(day=1) + relativedelta(months=1)).strftime("%Y년 %-m월")
 
 if st.button("🔄 새로고침 (R)"):
@@ -559,7 +562,7 @@ def delete_old_sheets():
         # 2. 삭제 기준이 될 '경계 날짜'를 계산합니다.
         # 오늘이 8월이면, '두 달 전 1일'은 6월 1일이 됩니다.
         # 이 날짜보다 빠른 모든 시트(5월, 4월...)가 삭제 대상입니다.
-        today = datetime.date.today()
+        today = now.date()
         cutoff_date = (today - relativedelta(months=2)).replace(day=1)
         
         st.warning(f"**{cutoff_date.strftime('%Y년 %m월 %d일')}** 이전의 모든 월별 시트를 삭제합니다.")
@@ -613,7 +616,7 @@ df_cumulative = st.session_state.get("df_cumulative", pd.DataFrame(columns=["이
 worksheet4 = st.session_state.get("worksheet4")
 names_in_master = df_master["이름"].unique() if not df_master.empty else []
 
-today = datetime.date.today()
+today = now.date()
 next_month = today.replace(day=1) + relativedelta(months=1)
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 next_month_start = next_month
@@ -879,7 +882,7 @@ df_user_master = df_master[df_master["이름"] == selected_employee_name].copy()
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
 요일리스트 = ["월", "화", "수", "목", "금"]
 
-today = datetime.date.today()
+today = now.date()
 next_month = today.replace(day=1) + relativedelta(months=1)
 _, last_day = calendar.monthrange(next_month.year, next_month.month)
 c = calendar.Calendar(firstweekday=6)
