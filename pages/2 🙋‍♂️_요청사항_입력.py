@@ -183,41 +183,33 @@ def create_calendar_events(df_master, df_request):
 def initialize_data():
     """페이지에 필요한 모든 데이터를 한 번에 로드하고 세션 상태에 저장합니다."""
     try:
-        # 스프레드시트를 한 번만 엽니다. (API 호출 효율화)
+        # 스프레드시트를 한 번만 엽니다.
         sheet = gc.open_by_url(url)
 
         # 1. 마스터 데이터 로드
-        try:
-            worksheet_master = sheet.worksheet("마스터")
-            df_master = pd.DataFrame(worksheet_master.get_all_records())
-        except WorksheetNotFound:
-            st.error("'마스터' 시트를 찾을 수 없습니다.")
-            df_master = pd.DataFrame()
+        worksheet_master = sheet.worksheet("마스터")
+        df_master = pd.DataFrame(worksheet_master.get_all_records())
         
-        st.session_state["df_master"] = df_master
-        st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy() if not df_master.empty else pd.DataFrame()
-
-        # 2. 요청사항 데이터 로드
+        # 2. 요청사항 데이터 로드 및 시트 객체 저장
         sheet_name = f"{month_str} 요청"
         try:
             worksheet_request = sheet.worksheet(sheet_name)
-            data = worksheet_request.get_all_records()
-            df_request = pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
         except WorksheetNotFound:
-            # 시트가 없으면 새로 생성
             worksheet_request = sheet.add_worksheet(title=sheet_name, rows="100", cols="20")
             worksheet_request.append_row(["이름", "분류", "날짜정보"])
-            df_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
             st.info(f"'{sheet_name}' 시트가 없어 새로 생성했습니다.")
+        df_request = pd.DataFrame(worksheet_request.get_all_records())
 
+        # 3. 모든 데이터를 세션 상태에 저장 (worksheet 객체 포함)
+        st.session_state["worksheet_master"] = worksheet_master
+        st.session_state["worksheet_request"] = worksheet_request
+        st.session_state["df_master"] = df_master
         st.session_state["df_request"] = df_request
+        st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy() if not df_master.empty else pd.DataFrame()
         st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy() if not df_request.empty else pd.DataFrame()
 
-    except APIError as e:
-        st.error(f"Google Sheets API 오류 (데이터 초기화): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
+    except (APIError, Exception) as e:
+        st.error(f"데이터 초기화 중 오류가 발생했습니다: {e}")
         st.stop()
 
 # --- 콜백 함수 정의 ---
@@ -287,13 +279,9 @@ def add_request_callback():
     with add_placeholder.container():
         with st.spinner("요청사항을 추가 중입니다..."):
             try:
-                sheet = gc.open_by_url(url)
-                try:
-                    worksheet2 = sheet.worksheet(f"{month_str} 요청")
-                except WorksheetNotFound:
-                    worksheet2 = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
-                    worksheet2.append_row(["이름", "분류", "날짜정보"])
-                
+                # sheet = gc.open_by_url(url)  <-- 이 부분을 삭제하고
+                worksheet2 = st.session_state["worksheet_request"] # <-- 세션에서 바로 가져옵니다.
+
                 # "요청 없음"일 경우 해당 사용자의 모든 요청사항 제거
                 if 분류 == "요청 없음":
                     df_to_save = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name].copy()
@@ -340,13 +328,8 @@ def delete_requests_callback():
     with delete_placeholder.container():
         with st.spinner("요청사항을 삭제 중입니다..."):
             try:
-                sheet = gc.open_by_url(url)
-                try:
-                    worksheet2 = sheet.worksheet(f"{month_str} 요청")
-                except WorksheetNotFound:
-                    st.error("요청사항이 저장된 시트를 찾을 수 없습니다.")
-                    st.stop()
-                
+                # sheet = gc.open_by_url(url) <-- 이 부분을 삭제하고
+                worksheet2 = st.session_state["worksheet_request"] # <-- 세션에서 바로 가져옵니다.
                 rows_to_delete_indices = []
                 for item in selected_items:
                     parts = item.split(" - ", 1)

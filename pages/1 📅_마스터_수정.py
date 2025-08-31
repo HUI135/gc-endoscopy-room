@@ -267,37 +267,6 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-# "매주"로 변환 로직
-if not df_user_master.empty and not has_weekly:
-    try:
-        pivot_df = df_user_master.pivot(index="요일", columns="주차", values="근무여부")
-        expected_weeks = set(week_labels)
-        actual_weeks = set(pivot_df.columns)
-        if actual_weeks == expected_weeks and pivot_df.apply(lambda x: x.nunique() == 1, axis=1).all():
-            df_user_master = df_user_master.drop_duplicates(subset=["이름", "요일"])
-            df_user_master["주차"] = "매주"
-            df_user_master["요일"] = pd.Categorical(df_user_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-            df_user_master = df_user_master.sort_values(by=["이름", "주차", "요일"])
-            df_master = df_master[df_master["이름"] != name]
-            df_master = pd.concat([df_master, df_user_master], ignore_index=True)
-            df_master["요일"] = pd.Categorical(df_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-            df_master = df_master.sort_values(by=["이름", "주차", "요일"])
-            sheet = gc.open_by_url(url)
-            worksheet1 = sheet.worksheet("마스터")
-            if not update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist()):
-                st.error("마스터 시트 '매주' 변환 실패")
-                st.stop()
-            st.session_state["df_master"] = df_master
-            st.session_state["df_user_master"] = df_user_master
-    except APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (매주 변환): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"매주 변환 중 오류 발생: {str(e)}")
-        st.stop()
-
 # 캘린더 표시
 st_calendar(events=events, options=calendar_options)
 
