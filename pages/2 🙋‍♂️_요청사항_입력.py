@@ -328,7 +328,7 @@ def add_request_callback():
         
         st.success("요청이 성공적으로 기록되었습니다.")
         time.sleep(1.5)
-        st.rerun()
+        # st.rerun()
 
 # 요청사항 삭제 콜백 함수
 def delete_requests_callback():
@@ -389,7 +389,7 @@ def delete_requests_callback():
         
         st.success("요청이 성공적으로 삭제되었습니다.")
         time.sleep(1.5)
-        st.rerun()
+        # st.rerun()
 
 # --- UI 렌더링 시작 ---
 # 첫 페이지 로드 시에만 데이터 로드
@@ -430,14 +430,10 @@ events_combined = create_calendar_events(df_user_master, df_user_request)
 
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
-    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
     calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "", "right": ""}}
-    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
     st_calendar(options=calendar_options)
 else:
-    # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
     calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
-    # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
     st_calendar(events=events_combined, options=calendar_options)
 
 st.divider()

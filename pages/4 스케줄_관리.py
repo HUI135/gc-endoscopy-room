@@ -14,6 +14,7 @@ import uuid
 import menu
 import io
 from collections import Counter
+import re # 정규표현식을 사용하기 위해 import 추가
 
 st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
 
@@ -547,6 +548,61 @@ def load_data_page4():
 
         st.session_state["data_loaded"] = True
 
+def delete_old_sheets():
+    """세 달 전 및 그 이전의 모든 월별 시트를 찾아 삭제하는 함수"""
+    try:
+        # 1. gspread 클라이언트 및 스프레드시트 가져오기
+        gc = get_gspread_client()
+        url = st.secrets["google_sheet"]["url"]
+        spreadsheet = gc.open_by_url(url)
+
+        # 2. 삭제 기준이 될 '경계 날짜'를 계산합니다.
+        # 오늘이 8월이면, '두 달 전 1일'은 6월 1일이 됩니다.
+        # 이 날짜보다 빠른 모든 시트(5월, 4월...)가 삭제 대상입니다.
+        today = datetime.date.today()
+        cutoff_date = (today - relativedelta(months=2)).replace(day=1)
+        
+        st.warning(f"**{cutoff_date.strftime('%Y년 %m월 %d일')}** 이전의 모든 월별 시트를 삭제합니다.")
+        time.sleep(1.5)
+
+        # 3. 전체 시트 목록에서 삭제할 시트들을 찾습니다.
+        all_worksheets = spreadsheet.worksheets()
+        sheets_to_delete = []
+
+        for ws in all_worksheets:
+            # 시트 이름에서 'YYYY년 M월' 패턴을 찾습니다.
+            match = re.match(r"(\d{4})년 (\d{1,2})월", ws.title)
+            if match:
+                year = int(match.group(1))
+                month = int(match.group(2))
+                sheet_date = datetime.date(year, month, 1)
+
+                # 4. 시트의 날짜가 경계 날짜보다 이전인지 확인합니다.
+                if sheet_date < cutoff_date:
+                    sheets_to_delete.append(ws)
+
+        if not sheets_to_delete:
+            st.success("✅ 삭제할 오래된 시트가 없습니다.")
+            time.sleep(1.5)
+            return
+
+        # 5. 찾은 시트들을 삭제합니다.
+        deleted_count = 0
+        for worksheet in sheets_to_delete:
+            try:
+                spreadsheet.del_worksheet(worksheet)
+                deleted_count += 1
+            except Exception as e:
+                st.error(f"❌ '{worksheet.title}' 시트 삭제 중 오류 발생: {e}")
+                time.sleep(1.5)
+        
+        st.success(f"✅ 총 {deleted_count}개의 오래된 시트를 성공적으로 삭제했습니다.")
+        time.sleep(1.5)
+
+    except Exception as e:
+        st.error(f"전체 프로세스 중 오류 발생: {e}")
+        time.sleep(1.5)
+
 # 세션 상태에서 데이터 가져오기
 df_map = st.session_state.get("df_map", pd.DataFrame(columns=["이름", "사번"]))
 mapping = st.session_state.get("mapping")
@@ -564,8 +620,39 @@ next_month_start = next_month
 next_month_end = next_month.replace(day=last_day)
 
 st.divider()
-st.subheader("📁 스케줄 시트 이동")
+st.subheader("📁 스케줄 시트 관리")
 st.markdown("https://docs.google.com/spreadsheets/d/1Y32fb0fGU5UzldiH-nwXa1qnb-ePdrfTHGnInB06x_A/edit?usp=sharing")
+
+# 세션 상태를 사용하여 확인 창 표시 여부를 제어합니다.
+if 'confirm_delete' not in st.session_state:
+    st.session_state.confirm_delete = False
+
+# 1. '오래된 시트 정리하기' 버튼을 누르면 확인 상태로 변경
+if st.button("🗑️ 오래된 시트 정리"):
+    st.session_state.confirm_delete = True
+    st.rerun()
+
+# 2. 확인 상태일 때, 경고 메시지와 함께 '삭제'/'취소' 버튼 표시
+if st.session_state.confirm_delete:
+    # 삭제 기준 날짜 계산
+    cutoff_date = (datetime.date.today() - relativedelta(months=2)).replace(day=1)
+    
+    st.warning(f"**{cutoff_date.strftime('%Y년 %m월 %d일')}** 이전(세 달 전)의 모든 월별 시트를 삭제하시겠습니까?")
+    
+    col1, col2 = st.columns([1, 1]) # 버튼을 나란히 배치
+    
+    with col1:
+        if st.button("✔️ 삭제", type="primary"):
+            delete_old_sheets() # 기존 삭제 함수 호출
+            st.session_state.confirm_delete = False # 상태 초기화
+            st.rerun()
+
+    with col2:
+        if st.button("✖️ 취소"):
+            st.info("오래된 시트 삭제 작업을 취소하였습니다.")
+            st.session_state.confirm_delete = False # 상태 초기화
+            time.sleep(2) # 메시지를 볼 수 있도록 잠시 대기
+            st.rerun()
 
 st.divider()
 st.subheader("📋 명단 관리")
@@ -778,6 +865,8 @@ with st.form("fixed_form_namelist"):
                 st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
                 st.error(f"명단 삭제 중 오류 발생: {str(e)}")
                 st.stop()
+
+
 
 st.divider()
 st.subheader("📋 마스터 관리")

@@ -96,6 +96,52 @@ def load_master_data_page1(_gc, url):
         st.error(f"마스터 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
+def initialize_page_data(gc, url, name, week_labels):
+    """페이지에 필요한 데이터를 한 번에 로드하고, 필요 시 초기화 및 업데이트합니다."""
+    try:
+        df_master = load_master_data_page1(gc, url)
+        df_user_master = df_master[df_master["이름"] == name].copy()
+        
+        sheet_needs_update = False
+
+        # 경우 1: 신규 유저일 때
+        if df_user_master.empty:
+            st.info(f"{name} 님의 마스터 데이터가 존재하지 않습니다. 초기 데이터를 추가합니다.")
+            initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
+            initial_df = pd.DataFrame(initial_rows)
+            df_master = pd.concat([df_master, initial_df], ignore_index=True)
+            sheet_needs_update = True
+
+        # 경우 2: '매주'로 데이터를 통합할 수 있을 때
+        has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
+        if not df_user_master.empty and not has_weekly:
+            pivot_df = df_user_master.pivot(index="요일", columns="주차", values="근무여부")
+            if set(pivot_df.columns) == set(week_labels) and pivot_df.apply(lambda x: x.nunique() == 1, axis=1).all():
+                temp_user_df = df_user_master.drop_duplicates(subset=["이름", "요일"]).copy()
+                temp_user_df["주차"] = "매주"
+                df_master = df_master[df_master["이름"] != name]
+                df_master = pd.concat([df_master, temp_user_df], ignore_index=True)
+                sheet_needs_update = True
+
+        # 위 두 경우 중 하나라도 해당되면 시트에 단 한 번만 업데이트합니다.
+        if sheet_needs_update:
+            df_master["요일"] = pd.Categorical(df_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            df_master = df_master.sort_values(by=["이름", "주차", "요일"])
+            sheet = gc.open_by_url(url)
+            worksheet1 = sheet.worksheet("마스터")
+            if not update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist()):
+                st.error("마스터 시트 초기 데이터 업데이트 실패")
+                st.stop()
+        
+        # 최종 데이터를 세션 상태에 저장합니다.
+        st.session_state["df_master"] = df_master
+        st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy()
+        st.session_state["master_page_initialized"] = True
+
+    except (APIError, Exception) as e:
+        st.error(f"데이터 초기화 중 오류가 발생했습니다: {e}")
+        st.stop()
+
 # 캘린더 이벤트 생성 함수
 def generate_calendar_events(df_user_master, year, month, week_labels):
     master_data = {}
@@ -143,53 +189,30 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
                 })
     return events
 
-# 데이터 로드 및 초기화
-try:
-    url = st.secrets["google_sheet"]["url"]
-    gc = get_gspread_client()
-    name = st.session_state.get("name")
-    if name is None:
-        st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
-        st.stop()
-
-    if "df_master" not in st.session_state:
-        st.session_state["df_master"] = load_master_data_page1(gc, url)
-    df_master = st.session_state["df_master"]
-    df_user_master = df_master[df_master["이름"] == name].copy()
-except APIError as e:
-    st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-    st.error(f"Google Sheets API 오류 (초기 설정): {str(e)}")
-    st.stop()
-except Exception as e:
-    st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-    st.error(f"초기 설정 중 오류 발생: {str(e)}")
+# 기본 변수 설정
+url = st.secrets["google_sheet"]["url"]
+gc = get_gspread_client()
+name = st.session_state.get("name")
+if name is None:
+    st.error("⚠️ 사용자 이름이 설정되지 않았습니다. Home 페이지에서 로그인해주세요.")
     st.stop()
 
-# 이름이 마스터 시트에 없으면 초기 데이터 추가
-if df_user_master.empty:
-    try:
-        st.info(f"{name} 님의 마스터 데이터가 존재하지 않습니다. 초기 데이터를 추가합니다.")
-        initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
-        initial_df = pd.DataFrame(initial_rows)
-        initial_df["요일"] = pd.Categorical(initial_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-        initial_df = initial_df.sort_values(by=["이름", "주차", "요일"])
-        df_master = pd.concat([df_master, initial_df], ignore_index=True)
-        df_user_master = initial_df
-        sheet = gc.open_by_url(url)
-        worksheet1 = sheet.worksheet("마스터")
-        if not update_sheet_with_retry(worksheet1, [df_master.columns.tolist()] + df_master.values.tolist()):
-            st.error("마스터 시트 초기 데이터 업데이트 실패")
-            st.stop()
-        st.session_state["df_master"] = df_master
-        st.session_state["df_user_master"] = df_user_master
-    except APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (초기 데이터 추가): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"초기 데이터 추가 중 오류 발생: {str(e)}")
-        st.stop()
+# 월 정보 및 주차 리스트 (초기화 함수에 필요하므로 먼저 정의)
+today = datetime.date.today()
+next_month_date = today.replace(day=1) + relativedelta(months=1)
+year, month = next_month_date.year, next_month_date.month # <-- 이 줄 추가
+_, last_day = calendar.monthrange(year, month) # <-- 이 줄 추가
+dates = pd.date_range(start=next_month_date.replace(day=1), end=next_month_date.replace(day=last_day))
+week_nums = sorted(set(d.isocalendar()[1] for d in dates))
+week_labels = [f"{i+1}주" for i in range(len(week_nums))]
+
+# 페이지 최초 로드 시에만 데이터 초기화 함수를 실행합니다.
+if "master_page_initialized" not in st.session_state:
+    initialize_page_data(gc, url, name, week_labels)
+
+# 세션 상태에서 최종 데이터를 가져옵니다.
+df_master = st.session_state["df_master"]
+df_user_master = st.session_state["df_user_master"]
 
 # 월 정보 및 주차 리스트
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
