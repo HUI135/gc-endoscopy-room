@@ -206,7 +206,7 @@ def initialize_data():
         st.session_state["df_master"] = df_master
         st.session_state["df_request"] = df_request
         st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy() if not df_master.empty else pd.DataFrame()
-        st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy() if not df_request.empty else pd.DataFrame()
+        # st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy() if not df_request.empty else pd.DataFrame()
 
     except (APIError, Exception) as e:
         st.error(f"데이터 초기화 중 오류가 발생했습니다: {e}")
@@ -303,7 +303,7 @@ def add_request_callback():
                     st.stop()
                 
                 st.session_state["df_request"] = df_to_save
-                st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
+                # st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
             
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -356,7 +356,7 @@ def delete_requests_callback():
                         st.stop()
                     
                     st.session_state["df_request"] = df_to_save
-                    st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
+                    # st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
                 else:
                     st.warning("삭제할 항목을 찾을 수 없습니다.")
                     return
@@ -395,7 +395,7 @@ if "initial_load_done_page2" not in st.session_state:
         st.stop()
 
 df_request = st.session_state["df_request"]
-df_user_request = st.session_state["df_user_request"]
+df_user_request = df_request[df_request["이름"] == name].copy()
 df_user_master = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
 
 st.header(f"🙋‍♂️ {name} 님의 {month_str} 요청사항", divider='rainbow')
