@@ -160,7 +160,7 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
     return None, None, None, None, None
 
 # 근무 가능 일자 계산
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def get_user_available_dates(name, df_schedule, month_start, month_end):
     available_dates = []
     weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}

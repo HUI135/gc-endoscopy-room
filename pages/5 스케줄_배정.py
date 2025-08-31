@@ -153,7 +153,7 @@ def load_request_data_page5():
    
 
 # 데이터 로드 함수 (세션 상태 활용으로 쿼터 절약)
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_data_page5():
     required_keys = ["df_master", "df_request", "df_cumulative", "df_shift", "df_supplement"]
     if "data_loaded" not in st.session_state or not st.session_state["data_loaded"] or not all(key in st.session_state for key in required_keys):

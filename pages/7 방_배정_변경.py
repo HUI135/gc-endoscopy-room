@@ -84,7 +84,7 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
     st.error("Google Sheets 업데이트 실패: 재시도 횟수 초과")
 
 # --- 데이터 로드 함수 ---
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_data_for_change_page(month_str):
     try:
         gc = get_gspread_client()
@@ -119,7 +119,7 @@ def load_data_for_change_page(month_str):
 
     return df_final, df_req
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_special_schedules(month_str):
     try:
         gc = get_gspread_client()

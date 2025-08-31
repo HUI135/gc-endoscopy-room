@@ -342,7 +342,7 @@ with st.expander("📅 월 단위로 일괄 설정"):
                 st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
                 st.success("월 단위 수정사항이 저장되었습니다.")
                 time.sleep(1.5)
-                st.cache_data.clear()
+                # st.cache_data.clear()
                 st.rerun()
             else:
                 st.error("마스터 시트 저장 실패")
@@ -408,7 +408,7 @@ with st.expander("📅 주 단위로 설정"):
                 st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
                 st.success("주 단위 수정사항이 저장되었습니다.")
                 time.sleep(1.5)
-                st.cache_data.clear()
+                # st.cache_data.clear()
                 st.rerun()
             else:
                 st.error("마스터 시트 저장 실패")

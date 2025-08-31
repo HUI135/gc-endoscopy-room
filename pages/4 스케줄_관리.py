@@ -406,8 +406,6 @@ if "data_loaded" not in st.session_state:
             st.session_state["df_request"] = df_request
             st.session_state["df_cumulative"] = df_cumulative
             st.session_state["edited_df_cumulative"] = df_cumulative.copy()
-            st.success(f"{new_employee_name}님을 명단 및 누적 테이블에 추가하였습니다. 마스터를 입력해 주세요.")
-            time.sleep(1.5)
             st.rerun()
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도해 주세요.")

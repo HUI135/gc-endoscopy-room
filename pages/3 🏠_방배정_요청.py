@@ -47,10 +47,9 @@ def get_gspread_client():
         st.stop()
 
 # 데이터 로드 함수 (st.cache_data 적용)
-@st.cache_data(show_spinner=False)
-def load_master_data_page3(_gc, url):
+def load_master_data_page3(sheet):
     try:
-        sheet = _gc.open_by_url(url)
+        # sheet = _gc.open_by_url(url)
         worksheet_master = sheet.worksheet("마스터")
         return pd.DataFrame(worksheet_master.get_all_records())
     except gspread.exceptions.APIError as e:
@@ -62,10 +61,9 @@ def load_master_data_page3(_gc, url):
         st.error(f"마스터 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
-@st.cache_data(show_spinner=False)
-def load_request_data_page3(_gc, url, sheet_name):
+def load_request_data_page3(sheet, sheet_name):
     try:
-        sheet = _gc.open_by_url(url)
+        # sheet = _gc.open_by_url(url)
         try:
             worksheet = sheet.worksheet(sheet_name)
         except WorksheetNotFound:
@@ -82,10 +80,9 @@ def load_request_data_page3(_gc, url, sheet_name):
         st.error(f"요청 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
-@st.cache_data(show_spinner=False)
-def load_room_request_data_page3(_gc, url, sheet_name):
+def load_room_request_data_page3(sheet, sheet_name):
     try:
-        sheet = _gc.open_by_url(url)
+        # sheet = _gc.open_by_url(url)
         try:
             worksheet = sheet.worksheet(sheet_name)
         except WorksheetNotFound:
@@ -223,9 +220,13 @@ def generate_room_request_events(df_user_room_request, today):
 def initialize_and_sync_data(gc, url, name):
     """페이지에 필요한 모든 데이터를 로드하고 세션 상태에 저장합니다."""
     try:
-        df_master = load_master_data_page3(gc, url)
-        df_request = load_request_data_page3(gc, url, f"{month_str} 요청")
-        df_room_request = load_room_request_data_page3(gc, url, f"{month_str} 방배정 요청")
+        # ▼▼▼ 1. 여기서 시트를 딱 한 번만 엽니다. ▼▼▼
+        sheet = gc.open_by_url(url)
+
+        # ▼▼▼ 2. 위에서 연 sheet 객체를 각 함수에 전달합니다. ▼▼▼
+        df_master = load_master_data_page3(sheet)
+        df_request = load_request_data_page3(sheet, f"{month_str} 요청")
+        df_room_request = load_room_request_data_page3(sheet, f"{month_str} 방배정 요청")
         
         st.session_state["df_master"] = df_master
         st.session_state["df_request"] = df_request
@@ -240,7 +241,8 @@ def initialize_and_sync_data(gc, url, name):
             initial_rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": "근무없음"} for 요일 in ["월", "화", "수", "목", "금"]]
             initial_df = pd.DataFrame(initial_rows)
             
-            sheet = gc.open_by_url(url)
+            # ▼▼▼ 3. 불필요한 sheet 열기 코드를 삭제합니다. ▼▼▼
+            # sheet = gc.open_by_url(url) <-- 삭제!
             try:
                 worksheet1 = sheet.worksheet("마스터")
                 df_master_all = pd.DataFrame(worksheet1.get_all_records())
@@ -270,7 +272,9 @@ def initialize_and_sync_data(gc, url, name):
                     st.session_state["df_user_master"] = st.session_state["df_user_master"].drop_duplicates(subset=["이름", "주차", "요일"])
                     df_master_all = st.session_state["df_master"][st.session_state["df_master"]["이름"] != name]
                     df_master_all = pd.concat([df_master_all, st.session_state["df_user_master"]], ignore_index=True)
-                    sheet = gc.open_by_url(url)
+                    
+                    # ▼▼▼ 4. 여기도 불필요한 sheet 열기 코드를 삭제합니다. ▼▼▼
+                    # sheet = gc.open_by_url(url) <-- 삭제!
                     try:
                         worksheet1 = sheet.worksheet("마스터")
                         worksheet1.clear()

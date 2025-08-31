@@ -52,7 +52,7 @@ def get_gspread_client():
         st.error(f"Google Sheets 인증 정보를 불러오는 데 실패했습니다: {str(e)}")
         st.stop()
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_schedule_data(month_str):
     try:
         gc = get_gspread_client()
@@ -88,7 +88,7 @@ def load_schedule_data(month_str):
         st.error(f"스케줄 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=30, show_spinner=False)
 def get_my_requests(month_str, employee_id):
     if not employee_id:
         return []

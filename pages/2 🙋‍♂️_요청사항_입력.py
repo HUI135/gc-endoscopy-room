@@ -8,7 +8,7 @@ from dateutil.relativedelta import relativedelta
 from streamlit_calendar import calendar as st_calendar
 from google.oauth2.service_account import Credentials
 import gspread
-from gspread.exceptions import WorksheetNotFound
+from gspread.exceptions import WorksheetNotFound, APIError
 import menu
 
 st.set_page_config(page_title="요청사항 입력", page_icon="🙋‍♂️", layout="wide")
@@ -42,42 +42,6 @@ def get_gspread_client():
     except Exception as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"Google Sheets 클라이언트 초기화 중 오류 발생: {str(e)}")
-        st.stop()
-
-# 데이터 로드 함수 (캐싱 적용, 필요 시 무효화)
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_master_data(_gc, url):
-    try:
-        sheet = _gc.open_by_url(url)
-        worksheet_master = sheet.worksheet("마스터")
-        return pd.DataFrame(worksheet_master.get_all_records())
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (마스터 데이터): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"마스터 데이터 로드 중 오류 발생: {str(e)}")
-        st.stop()
-
-@st.cache_data(ttl=60, show_spinner=False)
-def load_request_data_page2(_gc, url, month_str):
-    try:
-        sheet = _gc.open_by_url(url)
-        try:
-            worksheet = sheet.worksheet(f"{month_str} 요청")
-        except WorksheetNotFound:
-            worksheet = sheet.add_worksheet(title=f"{month_str} 요청", rows="100", cols="20")
-            worksheet.append_row(["이름", "분류", "날짜정보"])
-        data = worksheet.get_all_records()
-        return pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (요청 데이터): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"요청사항 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
 # 기본 설정
@@ -219,46 +183,41 @@ def create_calendar_events(df_master, df_request):
 def initialize_data():
     """페이지에 필요한 모든 데이터를 한 번에 로드하고 세션 상태에 저장합니다."""
     try:
-        st.session_state["df_master"] = load_master_data(gc, url)
-        st.session_state["df_request"] = load_request_data_page2(gc, url, month_str)
-        if st.session_state["df_request"].empty:
-            st.warning(f"⚠️ 요청사항 데이터가 비어 있습니다. {month_str} 요청사항 시트를 새로 생성합니다.")
-        st.session_state["df_user_request"] = st.session_state["df_request"][st.session_state["df_request"]["이름"] == name].copy() if not st.session_state["df_request"].empty else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-        st.session_state["df_user_master"] = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy() if not st.session_state["df_master"].empty else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
-        st.stop()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        # 스프레드시트를 한 번만 엽니다. (API 호출 효율화)
+        sheet = gc.open_by_url(url)
+
+        # 1. 마스터 데이터 로드
+        try:
+            worksheet_master = sheet.worksheet("마스터")
+            df_master = pd.DataFrame(worksheet_master.get_all_records())
+        except WorksheetNotFound:
+            st.error("'마스터' 시트를 찾을 수 없습니다.")
+            df_master = pd.DataFrame()
+        
+        st.session_state["df_master"] = df_master
+        st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy() if not df_master.empty else pd.DataFrame()
+
+        # 2. 요청사항 데이터 로드
+        sheet_name = f"{month_str} 요청"
+        try:
+            worksheet_request = sheet.worksheet(sheet_name)
+            data = worksheet_request.get_all_records()
+            df_request = pd.DataFrame(data) if data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+        except WorksheetNotFound:
+            # 시트가 없으면 새로 생성
+            worksheet_request = sheet.add_worksheet(title=sheet_name, rows="100", cols="20")
+            worksheet_request.append_row(["이름", "분류", "날짜정보"])
+            df_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+            st.info(f"'{sheet_name}' 시트가 없어 새로 생성했습니다.")
+
+        st.session_state["df_request"] = df_request
+        st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy() if not df_request.empty else pd.DataFrame()
+
+    except APIError as e:
         st.error(f"Google Sheets API 오류 (데이터 초기화): {str(e)}")
         st.stop()
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터 초기화 중 오류 발생: {str(e)}")
-        st.stop()
-
-# 데이터 새로고침 및 스피너 로직을 통합
-def refresh_and_update():
-    """데이터를 새로고침하고 UI를 업데이트합니다."""
-    try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()  # 캐시 지우기
-            initialize_data()
-        st.success("데이터가 새로고침되었습니다.", icon="🔄")
-        time.sleep(1)
-        st.rerun()  # 새로고침 후 UI 전체를 다시 그립니다.
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
 # --- 콜백 함수 정의 ---
@@ -459,7 +418,11 @@ df_user_master = st.session_state["df_master"][st.session_state["df_master"]["�
 st.header(f"🙋‍♂️ {name} 님의 {month_str} 요청사항", divider='rainbow')
 
 if st.button("🔄 새로고침 (R)"):
-    refresh_and_update()
+    # 캐시와 로딩 완료 상태를 모두 초기화합니다.
+    st.cache_data.clear()
+    st.session_state.pop("initial_load_done_page2", None)
+    # 페이지를 새로고침하면 맨 위의 로딩 로직이 다시 실행됩니다.
+    st.rerun()
 
 st.write("- 휴가 / 보충 불가 / 꼭 근무 관련 요청사항이 있을 경우 반드시 기재해 주세요.\n- 요청사항은 매월 기재해 주셔야 하며, 별도 요청이 없을 경우에도 반드시 '요청 없음'을 입력해 주세요.")
 

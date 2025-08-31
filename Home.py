@@ -56,7 +56,7 @@ def get_gspread_client():
     credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
     return gspread.authorize(credentials)
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_mapping_data():
     try:
         gc = get_gspread_client()
