@@ -319,13 +319,31 @@ if "initial_load_done" not in st.session_state:
         st.error(f"초기 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
+df_master = st.session_state.get("df_master", pd.DataFrame())
+df_request = st.session_state.get("df_request", pd.DataFrame())
+df_room_request = st.session_state.get("df_room_request", pd.DataFrame())
+name = st.session_state.get("name")
+
+# 각 데이터프레임에 '이름' 컬럼이 있는지 확인 후 필터링
+if not df_master.empty and "이름" in df_master.columns:
+    st.session_state["df_user_master"] = df_master[df_master["이름"] == name].copy()
+else:
+    st.session_state["df_user_master"] = pd.DataFrame()
+
+if not df_request.empty and "이름" in df_request.columns:
+    st.session_state["df_user_request"] = df_request[df_request["이름"] == name].copy()
+else:
+    st.session_state["df_user_request"] = pd.DataFrame()
+
+if not df_room_request.empty and "이름" in df_room_request.columns:
+    st.session_state["df_user_room_request"] = df_room_request[df_room_request["이름"] == name].copy()
+else:
+    st.session_state["df_user_room_request"] = pd.DataFrame()
 
 # UI 렌더링 시작
-# --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
 master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels)
 request_events = generate_request_events(st.session_state["df_user_request"], next_month_date)
 room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month_date)
-# --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
 all_events = master_events + request_events + room_request_events
 
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
