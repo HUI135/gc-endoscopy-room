@@ -198,8 +198,11 @@ def initialize_data():
         except WorksheetNotFound:
             worksheet_request = sheet.add_worksheet(title=sheet_name, rows="100", cols="20")
             worksheet_request.append_row(["이름", "분류", "날짜정보"])
-            st.info(f"'{sheet_name}' 시트가 없어 새로 생성했습니다.")
+            st.info(f"'{sheet_name}' 시트가 새로 생성되었습니다.")
         df_request = pd.DataFrame(worksheet_request.get_all_records())
+
+        if df_request.empty:
+            df_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
 
         # 3. 모든 데이터를 세션 상태에 저장 (worksheet 객체 포함)
         st.session_state["worksheet_master"] = worksheet_master
