@@ -304,7 +304,7 @@ except Exception as e:
 if "initial_load_done" not in st.session_state:
     try:
         with st.spinner("데이터를 불러오는 중입니다. 잠시만 기다려 주세요."):
-            initialize_and_sync_data(gc, url, name)
+            initialize_and_sync_data(gc, url, name, month_start, month_end)
             st.session_state["initial_load_done"] = True
     except NameError as e:
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
