@@ -109,23 +109,23 @@ def load_request_data_page5():
         st.session_state["mapping"] = mapping
         mapping_values = mapping.get_all_values()
         if not mapping_values or len(mapping_values) <= 1:
-            df_map = pd.DataFrame(columns=["이름", "사번"])
+            df_master = pd.DataFrame(columns=["이름", "사번"])
         else:
             headers = mapping_values[0]
             data = mapping_values[1:]
-            df_map = pd.DataFrame(data, columns=headers)
-            if "이름" in df_map.columns and "사번" in df_map.columns:
-                df_map = df_map[["이름", "사번"]]
+            df_master = pd.DataFrame(data, columns=headers)
+            if "이름" in df_master.columns and "사번" in df_master.columns:
+                df_master = df_master[["이름", "사번"]]
             else:
-                df_map = pd.DataFrame(columns=["이름", "사번"])
+                df_master = pd.DataFrame(columns=["이름", "사번"])
         
         # 매핑 시트가 비어 있는 경우
-        if df_map.empty:
+        if df_master.empty:
             st.error("매핑 시트에 데이터가 없습니다. 스케줄 관리를 진행할 수 없습니다.")
-            st.session_state["df_map"] = df_map
+            st.session_state["df_master"] = df_master
             return False # st.stop() 대신 False 반환
             
-        st.session_state["df_map"] = df_map
+        st.session_state["df_master"] = df_master
         
         # 요청사항 시트 로드
         worksheet2 = sheet.worksheet(f"{month_str} 요청")
@@ -511,11 +511,11 @@ col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
 
 with col1:
     if 입력_모드 == "이름 선택":
-        df_map = st.session_state.get("df_map", pd.DataFrame())
+        df_master = st.session_state.get("df_master", pd.DataFrame())
 
-        # df_map이 비어있지 않고 '이름' 컬럼이 있는지 최종 확인
-        if not df_map.empty and "이름" in df_map.columns:
-            sorted_names = sorted(df_map["이름"].unique())
+        # df_master이 비어있지 않고 '이름' 컬럼이 있는지 최종 확인
+        if not df_master.empty and "이름" in df_master.columns:
+            sorted_names = sorted(df_master["이름"].unique())
         else:
             sorted_names = [] # 만약을 대비한 예외 처리
         이름 = st.selectbox("이름 선택", sorted_names, key="add_employee_select")
