@@ -9,7 +9,6 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import json
 from datetime import date
 
 # set_page_config는 가장 먼저 호출
@@ -25,29 +24,9 @@ ADMINISTRATOR1 = st.secrets["passwords"]["administrator1"]
 ADMINISTRATOR2 = st.secrets["passwords"]["administrator2"]
 ADMINISTRATOR3 = st.secrets["passwords"]["administrator3"]
 
-# --- 공지사항 데이터 관리 (JSON 파일 사용) ---
-NOTICES_FILE = "notices.json"
+# --- [변경] 공지사항 데이터 관리 (구글 시트 사용) ---
 
-def load_notices():
-    """JSON 파일에서 공지사항 데이터를 로드합니다."""
-    try:
-        with open(NOTICES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return []  # 빈 리스트 반환
-
-def save_notices(notices):
-    """공지사항 데이터를 JSON 파일에 저장합니다."""
-    try:
-        with open(NOTICES_FILE, "w", encoding="utf-8") as f:
-            json.dump(notices, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        st.error(f"공지사항 저장 오류: {e}")
-
-# 공지사항 초기화
-if "notices" not in st.session_state:
-    st.session_state["notices"] = load_notices()
-
+# @st.cache_resource는 gspread 클라이언트 같이 한 번만 생성해야 하는 리소스에 사용
 @st.cache_resource
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -56,7 +35,66 @@ def get_gspread_client():
     credentials = Credentials.from_service_account_info(service_account_info, scopes=scope)
     return gspread.authorize(credentials)
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data는 데이터 자체를 캐싱할 때 사용. ttl(time-to-live)로 캐시 유효기간 설정 가능
+@st.cache_data(ttl=600, show_spinner=False) # 10분 동안 캐시 유지
+def load_notices_from_sheet():
+    """Google Sheet에서 공지사항 데이터를 로드합니다."""
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        worksheet = sheet.worksheet("공지사항")  # '공지사항' 시트를 선택
+        notices = worksheet.get_all_records()
+        # gspread가 빈 값을 None으로 가져올 수 있으므로, 안전하게 빈 문자열로 변환
+        df = pd.DataFrame(notices).fillna("")
+        return df.to_dict('records')
+    except WorksheetNotFound:
+        st.error("'공지사항' 시트를 찾을 수 없습니다. Google Sheet에 해당 이름의 시트가 있는지 확인해주세요.")
+        return []
+    except Exception as e:
+        st.error(f"공지사항 로딩 중 오류 발생: {e}")
+        return []
+
+def add_notice_to_sheet(notice):
+    """Google Sheet에 새 공지사항을 추가합니다."""
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        worksheet = sheet.worksheet("공지사항")
+        # 구글 시트의 헤더 순서('제목', '내용', '날짜')에 맞게 값을 리스트로 전달
+        worksheet.append_row([notice["제목"], notice["내용"], notice["날짜"]])
+        st.cache_data.clear()  # 데이터가 변경되었으므로 캐시를 초기화
+    except Exception as e:
+        st.error(f"공지사항 추가 중 오류 발생: {e}")
+
+def delete_notice_from_sheet(notice_to_delete):
+    """Google Sheet에서 특정 공지사항을 삭제합니다."""
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        worksheet = sheet.worksheet("공지사항")
+        
+        # 삭제할 공지사항의 '제목'으로 모든 일치하는 셀을 찾음
+        cell_list = worksheet.findall(notice_to_delete['제목'])
+        
+        # 찾은 셀들을 역순으로 순회 (삭제 시 행 번호가 바뀌는 문제를 피하기 위함)
+        for cell in reversed(cell_list):
+            row_values = worksheet.row_values(cell.row)
+            # 해당 행의 제목과 날짜가 삭제하려는 공지사항과 일치하는지 한 번 더 확인
+            if row_values[0] == notice_to_delete['제목'] and row_values[2] == notice_to_delete['날짜']:
+                worksheet.delete_rows(cell.row)
+                st.cache_data.clear() # 데이터가 변경되었으므로 캐시를 초기화
+                return True # 삭제 성공
+        return False # 일치하는 항목을 찾지 못함
+    except Exception as e:
+        st.error(f"공지사항 삭제 중 오류 발생: {e}")
+        return False
+
+# --- [변경] 세션 상태 초기화 시 구글 시트에서 공지사항 로드 ---
+if "notices" not in st.session_state:
+    st.session_state["notices"] = load_notices_from_sheet()
+
+
+# @st.cache_data(show_spinner=False)
 def load_mapping_data():
     try:
         gc = get_gspread_client()
@@ -68,12 +106,17 @@ def load_mapping_data():
         st.error(f"매핑 시트 로딩 오류: {e}")
         return None
 
+# 수정 후
 def get_employee_name(employee_id):
-    df_map = load_mapping_data()
-    if df_map is None: return None
+    if 'df_map' not in st.session_state or st.session_state.get('df_map') is None:
+        st.session_state.df_map = load_mapping_data()
+
+    df_map = st.session_state.df_map
+    if df_map is None:
+        return None
     try:
-        employee_id_int = int(employee_id)
-        employee_row = df_map[df_map["사번"] == employee_id_int]
+        df_map["사번"] = df_map["사번"].astype(str)
+        employee_row = df_map[df_map["사번"] == employee_id]
         return employee_row.iloc[0]["이름"] if not employee_row.empty else None
     except (ValueError, IndexError):
         return None
@@ -126,7 +169,6 @@ if st.session_state["login_success"]:
     st.markdown(f"#### 👋 {st.session_state['name']}님, 안녕하세요!")
     st.info("왼쪽 사이드바의 메뉴에서 원하시는 작업을 선택해주세요.")
     
-    # 관리자일 경우, 관리자 모드 전환 옵션 제공
     if st.session_state["is_admin"]:
         if st.session_state["admin_mode"]:
             st.success("관리자 모드가 활성화되었습니다. 사이드바에서 관리자 메뉴를 이용하세요.")
@@ -143,25 +185,35 @@ if st.session_state["login_success"]:
     # --- 공지사항 및 오류 보고 섹션 ---
     st.divider()
     st.subheader("📢 공지사항 및 오류 보고")
-    if not st.session_state["notices"]:  # 공지사항이 비어 있는지 확인
+
+    # [변경] st.session_state["notices"]를 직접 사용. 비어있으면 load_notices_from_sheet가 빈 리스트를 반환.
+    if not st.session_state["notices"]:
         st.info("현재 등록된 공지사항이 없습니다.")
     else:
-        notices_df = pd.DataFrame(st.session_state["notices"]).sort_values(by="날짜", ascending=False)  # 최신순 정렬
+        # 데이터프레임으로 변환하여 날짜순 정렬
+        notices_df = pd.DataFrame(st.session_state["notices"]).sort_values(by="날짜", ascending=False)
         with st.expander("ℹ️ 공지사항 목록 보기", expanded=True):
             for idx, row in notices_df.iterrows():
                 col1, col2 = st.columns([5, 1])
                 with col1:
                     st.markdown(f"- **{row['제목']}** ({row['날짜']})")
-                    st.markdown(f'<div style="padding-left: 20px; padding-bottom: 10px;">{row["내용"]}</div>', unsafe_allow_html=True)
+                    # 줄바꿈(\n)을 HTML <br> 태그로 변환하여 내용에 반영
+                    content_with_br = row['내용'].replace('\\n', '<br>')
+                    st.markdown(f'<div style="padding-left: 20px; padding-bottom: 10px;">{content_with_br}</div>', unsafe_allow_html=True)
+                    st.write(" ")
                 with col2:
                     if st.session_state["is_admin"] and st.session_state["admin_mode"]:
+                        # [변경] 삭제 버튼 로직 수정
                         if st.button("삭제", key=f"delete_notice_{idx}"):
-                            st.session_state["notices"].pop(idx)
-                            save_notices(st.session_state["notices"])
-                            st.success("공지사항이 성공적으로 삭제되었습니다.")
+                            notice_to_delete = row.to_dict()
+                            if delete_notice_from_sheet(notice_to_delete):
+                                st.success("공지사항이 성공적으로 삭제되었습니다.")
+                                # 세션 상태를 다시 로드하여 UI에 즉시 반영
+                                st.session_state["notices"] = load_notices_from_sheet()
+                            else:
+                                st.error("공지사항 삭제에 실패했습니다.")
                             time.sleep(1)
                             st.rerun()
-                st.write()
 
     # --- 관리자용 공지사항 입력 폼 ---
     if st.session_state["is_admin"] and st.session_state["admin_mode"]:
@@ -178,8 +230,10 @@ if st.session_state["login_success"]:
                         "내용": notice_content,
                         "날짜": notice_date.strftime("%Y-%m-%d")
                     }
-                    st.session_state["notices"].append(new_notice)
-                    save_notices(st.session_state["notices"])
+                    # [변경] 구글 시트에 직접 추가하는 함수 호출
+                    add_notice_to_sheet(new_notice)
+                    # 세션 상태를 다시 로드하여 UI에 즉시 반영
+                    st.session_state["notices"] = load_notices_from_sheet()
                     st.success("공지사항이 성공적으로 추가되었습니다.")
                     time.sleep(1)
                     st.rerun()
@@ -194,7 +248,6 @@ if st.session_state["login_success"]:
                     sender_email = st.secrets["email"]["sender_email"]
                     sender_password = st.secrets["email"]["sender_password"]
                     receiver_email = "hui135@snu.ac.kr"
-
                     user_name = st.session_state.get('name', '익명')
                     user_id = st.session_state.get('employee_id', '알 수 없음')
                     
@@ -216,12 +269,10 @@ if st.session_state["login_success"]:
                         server.login(sender_email, sender_password)
                         server.sendmail(sender_email, receiver_email, msg.as_string())
 
-                    st.success("오류 보고가 성공적으로 전송되었습니다! 감사합니다.")
-                    
+                    st.success("입력 내용이 성공적으로 전송되었습니다! 감사합니다.")
                 except smtplib.SMTPAuthenticationError:
                     st.error("이메일 인증에 실패했습니다. Streamlit secrets에 저장된 '앱 비밀번호'가 올바른지 확인해주세요.")
                 except Exception as e:
                     st.error(f"오류 보고 전송 중 예상치 못한 문제가 발생했습니다: {e}")
-                    
             elif submit_button and not error_report:
                 st.warning("오류 내용을 입력해주세요.")
