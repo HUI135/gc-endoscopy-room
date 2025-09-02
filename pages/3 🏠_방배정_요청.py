@@ -370,13 +370,13 @@ if st.button("🔄 새로고침 (R)"):
         st.stop()
 
 if not all_events:
-    st.info("☑️ 표시할 스케줄 또는 요청사항이 없습니다.")
+    st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 700, "headerToolbar": {"left": "", "center": "title", "right": ""}}
+    st_calendar(options=calendar_options)
 else:
     calendar_options = {
         "initialView": "dayGridMonth",
-        # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
         "initialDate": month_start.strftime("%Y-%m-%d"),
-        # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
         "editable": False,
         "selectable": False,
         "eventDisplay": "block",
