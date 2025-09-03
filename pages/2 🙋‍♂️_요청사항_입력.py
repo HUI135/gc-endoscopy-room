@@ -490,7 +490,7 @@ div[data-testid="stHorizontalBlock"] {
 # 2. 캘린더 UI 렌더링 (테두리 제거)
 
 # 제목만 중앙 정렬하여 표시
-st.markdown(f'<div class="calendar-title">{month_str} 스케줄</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="calendar-title">{month_str} 요청사항</div>', unsafe_allow_html=True)
 
 # st.container()로 캘린더 격자 부분만 묶습니다.
 with st.container():
