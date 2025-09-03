@@ -117,8 +117,12 @@ def get_employee_name(employee_id):
     if df_map is None:
         return None
     try:
-        df_map["사번"] = df_map["사번"].astype(str)
-        employee_row = df_map[df_map["사번"] == employee_id]
+        # ✅ 1. 시트에서 가져온 사번을 문자로 바꾸고, 5자리로 맞춤 (예: '1' -> '00001')
+        df_map["사번"] = df_map["사번"].astype(str).str.zfill(5)
+        # ✅ 2. 사용자가 입력한 사번도 5자리로 맞춤
+        employee_id_padded = str(employee_id).zfill(5)
+        
+        employee_row = df_map[df_map["사번"] == employee_id_padded]
         return employee_row.iloc[0]["이름"] if not employee_row.empty else None
     except (ValueError, IndexError):
         return None

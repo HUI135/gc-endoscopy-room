@@ -417,45 +417,11 @@ events_combined = create_calendar_events(df_user_master, df_user_request)
 
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
-    # calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "title", "right": ""}}
-    # st_calendar(options=calendar_options)
+    calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "title", "right": ""}}
+    st_calendar(options=calendar_options)
 else:
     calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "title", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
-    # st_calendar(events=events_combined, options=calendar_options)
-
-# 요일 헤더 표시
-cols = st.columns(7)
-days = ["월", "화", "수", "목", "금", "토", "일"]
-for col, day in zip(cols, days):
-    col.markdown(f"<h5 style='text-align: center;'>{day}</h5>", unsafe_allow_html=True)
-
-st.divider()
-
-# 달력 그리기
-cal = calendar.monthcalendar(year, month)
-for week in cal:
-    cols = st.columns(7)
-    for i, day in enumerate(week):
-        if day == 0:
-            cols[i].empty() # 빈 날짜
-        else:
-            # 해당 날짜의 이벤트 찾기
-            current_date_str = f"{year}-{month:02d}-{day:02d}"
-            day_events = []
-            for event in events_combined:
-                if event['start'] == current_date_str:
-                    day_events.append(f"<div style='font-size: 12px; margin-left: 5px;'>- {event['title']}</div>")
-            
-            # HTML/CSS로 날짜 셀 디자인
-            event_html = "".join(day_events)
-            cell_html = f"""
-            <div style="border: 1px solid #e1e4e8; border-radius: 5px; padding: 5px; height: 100px;">
-                <div style="font-weight: bold;">{day}</div>
-                {event_html}
-            </div>
-            """
-            cols[i].markdown(cell_html, unsafe_allow_html=True)
-
+    st_calendar(events=events_combined, options=calendar_options)
 
 st.divider()
 
