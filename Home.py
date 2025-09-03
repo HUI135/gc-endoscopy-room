@@ -159,10 +159,10 @@ def attempt_login():
     elif employee_id_input:
         employee_name = get_employee_name(employee_id_input)
         if employee_name:
-            # 로그인 성공 시 세션 상태를 업데이트합니다.
             st.session_state["login_success"] = True
-            st.session_state["employee_id"] = int(employee_id_input)
+            st.session_state["employee_id"] = employee_id_input # ✅ int() 변환 제거, 문자열 그대로 저장
             st.session_state["name"] = employee_name
+            # ✅ is_admin 확인 시에는 int()로 변환하여 비교 (ADMINISTRATOR 변수들이 숫자일 경우)
             st.session_state["is_admin"] = int(employee_id_input) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3]
             st.rerun()
         else:
