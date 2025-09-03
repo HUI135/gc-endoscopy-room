@@ -469,7 +469,21 @@ add_col1, add_col2, add_col3 = st.columns([2, 3, 1])
 with add_col1:
     분류 = st.multiselect("요청 분류", 요청분류, key="category_select")
 with add_col2:
-    available_dates = get_user_available_dates(name, st.session_state["df_master"], month_start, month_end)
+    available_dates = []
+    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"} # 월요일=0, 금요일=4
+    
+    # 월의 시작일부터 마지막 날까지 모든 날짜를 순회
+    for day in pd.date_range(month_start, month_end):
+        # 날짜가 평일(월~금)인 경우에만 목록에 추가
+        if day.weekday() in weekday_map:
+            weekday_name = weekday_map[day.weekday()]
+            display_date = f"{day.month}월 {day.day}일({weekday_name})"
+            save_date = day.strftime("%Y-%m-%d")
+            
+            # 오전과 오후 선택지를 모두 추가
+            available_dates.append((f"{display_date} 오전", save_date, "오전"))
+            available_dates.append((f"{display_date} 오후", save_date, "오후"))
+
     date_options = [date_str for date_str, _, _ in available_dates]
     date_values = [(save_date, time_slot) for _, save_date, time_slot in available_dates]
     날짜 = st.multiselect("요청 일자", date_options, key="date_multiselect")

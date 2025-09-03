@@ -452,7 +452,10 @@ with col3:
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
             def format_date(date_obj):
                 return f"{date_obj.strftime('%-m월 %-d일')} ({weekday_map[date_obj.weekday()]})"
-            st.multiselect("요청 일자", [month_start + datetime.timedelta(days=i) for i in range((month_end - month_start).days + 1)], format_func=format_date, key="date_multiselect")
+            st.multiselect("요청 일자", 
+              [month_start + datetime.timedelta(days=i) for i in range((month_end - month_start).days + 1)], 
+              format_func=format_date, 
+              key="date_multiselect")
         elif 방식 == "기간 선택":
             st.date_input("요청 기간", value=(month_start, month_start + datetime.timedelta(days=1)), min_value=month_start, max_value=month_end, key="date_range")
         elif 방식 == "주/요일 선택":
