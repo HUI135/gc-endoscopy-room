@@ -541,7 +541,6 @@ if 분류 != "요청 없음":
             날짜_목록 = [
                 month_start + datetime.timedelta(days=i)
                 for i in range((month_end - month_start).days + 1)
-                if (month_start + datetime.timedelta(days=i)).weekday() < 5
             ]
             날짜 = st.multiselect(
                 "요청 일자",

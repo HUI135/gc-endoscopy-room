@@ -229,8 +229,10 @@ def add_request_callback():
             날짜 = st.session_state.get("date_multiselect", [])
             날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜]) if 날짜 else ""
         elif 방식 == "기간 선택":
-            날짜범위 = st.session_state.get("date_range", ())
-            if isinstance(날짜범위, tuple) and len(날짜범위) == 2:
+            날짜범위 = st.session_state.get("date_range", []) 
+            if isinstance(날짜범위, list) and len(날짜범위) == 2:
+                날짜정보 = f"{날짜범위[0].strftime('%Y-%m-%d')} ~ {날짜범위[1].strftime('%Y-%m-%d')}"
+            elif isinstance(날짜범위, tuple) and len(날짜범위) == 2:
                 날짜정보 = f"{날짜범위[0].strftime('%Y-%m-%d')} ~ {날짜범위[1].strftime('%Y-%m-%d')}"
         elif 방식 == "주/요일 선택":
             선택주차 = st.session_state.get("week_select", [])
@@ -239,9 +241,7 @@ def add_request_callback():
 
             if 선택주차 and 선택요일:
                 c = calendar.Calendar(firstweekday=6)
-                # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
-                month_calendar = c.monthdatescalendar(year, month) # today.year, today.month 대신 다음 달 기준 year, month 사용
-                # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
+                month_calendar = c.monthdatescalendar(year, month)
 
                 요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
                 선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
@@ -255,9 +255,7 @@ def add_request_callback():
                     
                     if "매주" in 선택주차 or 주차_이름 in 선택주차:
                         for date in week:
-                            # --- ▼▼▼ 코드 변경 시작 ▼▼▼ ---
-                            if date.month == month and date.weekday() in 선택된_요일_인덱스: # today.month 대신 다음 달 기준 month 사용
-                            # --- ▲▲▲ 코드 변경 종료 ▲▲▲ ---
+                            if date.month == month and date.weekday() in 선택된_요일_인덱스:
                                 날짜목록.append(date.strftime("%Y-%m-%d"))
 
             날짜정보 = ", ".join(sorted(list(set(날짜목록))))
@@ -269,7 +267,6 @@ def add_request_callback():
         add_placeholder.warning("날짜 정보를 올바르게 입력해주세요.")
         return
 
-    # Check for duplicate request
     if 분류 != "요청 없음":
         existing_request = st.session_state["df_request"][
             (st.session_state["df_request"]["이름"] == name) &
@@ -278,20 +275,18 @@ def add_request_callback():
         ]
         if not existing_request.empty:
             add_placeholder.error("⚠️ 이미 존재하는 요청사항입니다.")
+            time.sleep(1.5)
             return
 
     with add_placeholder.container():
         with st.spinner("요청사항을 추가 중입니다..."):
             try:
-                # sheet = gc.open_by_url(url)  <-- 이 부분을 삭제하고
-                worksheet2 = st.session_state["worksheet_request"] # <-- 세션에서 바로 가져옵니다.
+                worksheet2 = st.session_state["worksheet_request"]
 
-                # "요청 없음"일 경우 해당 사용자의 모든 요청사항 제거
                 if 분류 == "요청 없음":
                     df_to_save = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name].copy()
                     df_to_save = pd.concat([df_to_save, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
                 else:
-                    # 다른 요청사항 추가: 기존 "요청 없음" 레코드 제거 후 새 요청 추가
                     df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
                     new_request_data = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
                     df_to_save = pd.concat([df_to_save, pd.DataFrame([new_request_data])], ignore_index=True)
@@ -307,7 +302,6 @@ def add_request_callback():
                     st.stop()
                 
                 st.session_state["df_request"] = df_to_save
-                # st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
             
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
@@ -320,7 +314,11 @@ def add_request_callback():
         
         st.success("요청이 성공적으로 기록되었습니다.")
         time.sleep(1.5)
-        # st.rerun()
+    
+    st.session_state.date_multiselect = []
+    st.session_state.week_select = []
+    st.session_state.day_select = []
+    st.session_state.category_select = "휴가"
 
 # 요청사항 삭제 콜백 함수
 def delete_requests_callback():
@@ -402,6 +400,9 @@ df_request = st.session_state["df_request"]
 df_user_request = df_request[df_request["이름"] == name].copy()
 df_user_master = st.session_state["df_master"][st.session_state["df_master"]["이름"] == name].copy()
 
+if 'date_range' not in st.session_state:
+    st.session_state.date_range = [] 
+
 st.header(f"🙋‍♂️ {name} 님의 {month_str} 요청사항", divider='rainbow')
 
 if st.button("🔄 새로고침 (R)"):
@@ -418,10 +419,134 @@ events_combined = create_calendar_events(df_user_master, df_user_request)
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
     calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 600, "headerToolbar": {"left": "", "center": "title", "right": ""}}
-    st_calendar(options=calendar_options)
+    # st_calendar(options=calendar_options)
 else:
     calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "editable": False, "selectable": False, "eventDisplay": "block", "dayHeaderFormat": {"weekday": "short"}, "themeSystem": "bootstrap", "height": 700, "headerToolbar": {"left": "", "center": "title", "right": ""}, "showNonCurrentDates": True, "fixedWeekCount": False, "eventOrder": "title"}
-    st_calendar(events=events_combined, options=calendar_options)
+    # st_calendar(events=events_combined, options=calendar_options)
+
+# 기존 st_calendar가 있던 자리에 아래 코드를 붙여넣으세요.
+
+# 1. CSS 스타일 정의 (요일 헤더 수정)
+st.markdown("""
+<style>
+/* 월(Month) 표시 타이틀 */
+.calendar-title {
+    text-align: center;
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 20px;
+}
+div[data-testid="stHorizontalBlock"] {
+    gap: 0.5rem;
+}
+
+/* [수정] 요일 헤더 */
+.calendar-header {
+    text-align: center;
+    font-weight: bold;
+    padding: 10px 0; /* 내부 여백 추가 */
+    border: 1px solid #e1e4e8; /* 테두리 추가 */
+    border-radius: 5px; /* 둥근 모서리 */
+    background-color: #f6f8fa; /* 배경색 추가 */
+}
+
+/* [추가] 토요일, 일요일 색상 */
+.saturday { color: blue; }
+.sunday { color: red; }
+
+/* 날짜 하나하나를 의미하는 셀 */
+.calendar-day-cell {
+    border: 1px solid #e1e4e8;
+    border-radius: 5px;
+    padding: 6px;
+    min-height: 120px;
+    background-color: white;
+    display: flex;
+    flex-direction: column;
+}
+/* 날짜 숫자 스타일 */
+.day-number {
+    font-weight: bold;
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+/* 다른 달의 날짜는 회색으로 */
+.day-number.other-month {
+    color: #ccc;
+}
+/* 이벤트 아이템 스타일 */
+.event-item {
+    font-size: 13px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-bottom: 3px;
+    color: white;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+</style>
+""", unsafe_allow_html=True)
+# 2. 캘린더 UI 렌더링 (테두리 제거)
+
+# 제목만 중앙 정렬하여 표시
+st.markdown(f'<div class="calendar-title">{month_str} 스케줄</div>', unsafe_allow_html=True)
+
+# st.container()로 캘린더 격자 부분만 묶습니다.
+with st.container():
+    # 요일 헤더
+    cols = st.columns(7, gap="small")
+    days_of_week = ["일", "월", "화", "수", "목", "금", "토"] 
+    for col, day in zip(cols, days_of_week):
+        header_class = "calendar-header"
+        if day == "토":
+            header_class += " saturday"
+        elif day == "일":
+            header_class += " sunday"
+        
+        col.markdown(f'<div class="{header_class}">{day}</div>', unsafe_allow_html=True)
+
+    # 날짜 데이터 준비
+    cal = calendar.Calendar(firstweekday=6)
+    month_days = cal.monthdatescalendar(year, month)
+    
+    # 날짜별 이벤트 가공 (이 부분은 이전과 동일)
+    events_by_date = {}
+    for event in events_combined:
+        start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
+        if 'end' in event and event['start'] != event['end']:
+            end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
+            for i in range((end_date - start_date).days):
+                current_date = start_date + datetime.timedelta(days=i)
+                if current_date not in events_by_date:
+                    events_by_date[current_date] = []
+                events_by_date[current_date].append(event)
+        else:
+            if start_date not in events_by_date:
+                events_by_date[start_date] = []
+            events_by_date[start_date].append(event)
+
+    # 날짜 셀 생성
+    for week in month_days:
+        cols = st.columns(7)
+        for i, day_date in enumerate(week):
+            is_other_month = "other-month" if day_date.month != month else ""
+            
+            with cols[i]:
+                event_html = ""
+                if day_date in events_by_date:
+                    for event in events_by_date[day_date]:
+                        color = event.get('color', '#6c757d')
+                        title = event['title']
+                        event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
+
+                cell_html = f"""
+                <div class="calendar-day-cell">
+                    <div class="day-number {is_other_month}">{day_date.day}</div>
+                    {event_html}
+                </div>
+                """
+                st.markdown(cell_html, unsafe_allow_html=True)
 
 st.divider()
 
