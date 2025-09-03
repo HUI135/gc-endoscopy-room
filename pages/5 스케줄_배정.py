@@ -101,7 +101,7 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
 
 def load_request_data_page5():
     try:
-        gc = get_gspread_client() 
+        gc = get_gspread_client()
         sheet = gc.open_by_url(url)
         
         # 매핑 시트 로드
@@ -109,30 +109,16 @@ def load_request_data_page5():
         st.session_state["mapping"] = mapping
         mapping_values = mapping.get_all_values()
         if not mapping_values or len(mapping_values) <= 1:
-            df_master = pd.DataFrame(columns=["이름", "사번"])
+            df_map = pd.DataFrame(columns=["이름", "사번"])
         else:
             headers = mapping_values[0]
             data = mapping_values[1:]
-            df_master = pd.DataFrame(data, columns=headers)
-            if "이름" in df_master.columns and "사번" in df_master.columns:
-                df_master = df_master[["이름", "사번"]]
+            df_map = pd.DataFrame(data, columns=headers)
+            if "이름" in df_map.columns and "사번" in df_map.columns:
+                df_map = df_map[["이름", "사번"]]
             else:
-                df_master = pd.DataFrame(columns=["이름", "사번"])
-        
-        # 매핑 시트가 비어 있는 경우
-        if df_master.empty:
-            st.error("매핑 시트에 데이터가 없습니다. 스케줄 관리를 진행할 수 없습니다.")
-            st.session_state["df_master"] = df_master
-            return False # st.stop() 대신 False 반환
-            
-        st.session_state["df_master"] = df_master
-        
-        # 요청사항 시트 로드
-        worksheet2 = sheet.worksheet(f"{month_str} 요청")
-        request_data = worksheet2.get_all_records()
-        df_request = pd.DataFrame(request_data) if request_data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
-        st.session_state["df_request"] = df_request
-        st.session_state["worksheet2"] = worksheet2
+                df_map = pd.DataFrame(columns=["이름", "사번"])
+        st.session_state["df_map"] = df_map
         
         # 마스터 시트 로드
         worksheet1 = sheet.worksheet("마스터")
@@ -141,20 +127,17 @@ def load_request_data_page5():
         st.session_state["df_master"] = df_master
         st.session_state["worksheet1"] = worksheet1
         
-        return True # 성공 시 True 반환
-
-    except APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (데이터 로드): {str(e)}")
-        return False # st.stop() 대신 False 반환
-    except WorksheetNotFound as e:
-        st.error(f"필수 시트를 찾을 수 없습니다: {e}. '매핑'과 '마스터' 시트가 있는지 확인해주세요.")
-        return False # st.stop() 대신 False 반환
+        # 요청사항 시트 로드
+        worksheet2 = sheet.worksheet(f"{month_str} 요청")
+        request_data = worksheet2.get_all_records()
+        df_request = pd.DataFrame(request_data) if request_data else pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+        st.session_state["df_request"] = df_request
+        st.session_state["worksheet2"] = worksheet2
+        
+        return True
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"데이터 로드 중 오류 발생: {str(e)}")
-        return False # st.stop() 대신 False 반환
-   
+        return False
 
 # 데이터 로드 함수 (세션 상태 활용으로 쿼터 절약)
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -513,16 +496,20 @@ with col1:
     if 입력_모드 == "이름 선택":
         df_master = st.session_state.get("df_master", pd.DataFrame())
 
-        # df_master이 비어있지 않고 '이름' 컬럼이 있는지 최종 확인
+        # df_master가 비어있지 않고 '이름' 컬럼이 있는지 확인
         if not df_master.empty and "이름" in df_master.columns:
             sorted_names = sorted(df_master["이름"].unique())
         else:
-            sorted_names = [] # 만약을 대비한 예외 처리
+            sorted_names = []
         이름 = st.selectbox("이름 선택", sorted_names, key="add_employee_select")
         이름_수기 = ""
-    else:
+    else:  # 입력_모드 == "이름 수기 입력"
         이름_수기 = st.text_input("이름 입력", help="명단에 없는 새로운 인원에 대한 요청을 추가하려면 입력", key="new_employee_input")
         이름 = ""
+        # 매핑 시트에서 이름 검증
+        if 이름_수기 and 이름_수기 not in st.session_state.get("df_map", pd.DataFrame()).get("이름", pd.Series()).values:
+            st.warning(f"{이름_수기}은(는) 매핑 시트에 존재하지 않습니다. 먼저 명단 관리 페이지에서 추가해주세요.")
+            st.stop()
 
 with col2:
     분류 = st.selectbox("요청 분류", 요청분류, key="request_category_select")
@@ -1059,6 +1046,10 @@ def update_worker_status(df, date_str, time_slot, worker, status, memo, color, d
         }])
         df = pd.concat([df, new_row], ignore_index=True)
     return df
+
+# 기존 import 유지 (random 등)
+
+# 기존 import 유지 (random 등)
 
 def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers):
     """'추가 보충' 최소화를 목표로 1:1 인원 이동을 수행하는 함수 (수정됨)"""
