@@ -122,8 +122,6 @@ def get_employee_name(employee_id):
         return None
 
 # --- 세션 상태 초기화 ---
-if "login_success" not in st.session_state:
-    st.session_state["login_success"] = False
 if "is_admin" not in st.session_state:
     st.session_state["is_admin"] = False
 if "admin_mode" not in st.session_state:
@@ -142,27 +140,44 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 st.divider()
 
-# --- 로그인 처리 ---
+
+# st.session_state에 "login_success"가 없으면 False로 초기화
+if "login_success" not in st.session_state:
+    st.session_state["login_success"] = False
+
+# --- [변경] 로그인 로직을 처리할 콜백 함수 정의 ---
+def attempt_login():
+    """폼 제출 시 호출될 로그인 처리 함수"""
+    # key를 이용해 위젯의 현재 값에 접근합니다.
+    password_input = st.session_state.get("password_input", "")
+    employee_id_input = st.session_state.get("employee_id_input", "")
+
+    if password_input != USER_PASSWORD:
+        st.error("비밀번호를 다시 확인해주세요.")
+    elif employee_id_input:
+        employee_name = get_employee_name(employee_id_input)
+        if employee_name:
+            # 로그인 성공 시 세션 상태를 업데이트합니다.
+            st.session_state["login_success"] = True
+            st.session_state["employee_id"] = int(employee_id_input)
+            st.session_state["name"] = employee_name
+            st.session_state["is_admin"] = int(employee_id_input) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3]
+            # 콜백 사용 시 st.rerun()은 필요 없습니다.
+        else:
+            st.error("사번이 매핑된 이름이 없습니다.")
+    else:
+        st.warning("사번을 입력해주세요.")
+
+
+# --- [변경] 로그인 UI 및 로직 ---
 if not st.session_state["login_success"]:
     with st.form("login_form"):
-        password = st.text_input("🔹 비밀번호를 입력해주세요.", type="password")
-        employee_id = st.text_input("🔹 사번(5자리)을 입력해주세요.")
-        submitted = st.form_submit_button("확인")
-        if submitted:
-            if password != USER_PASSWORD:
-                st.error("비밀번호를 다시 확인해주세요.")
-            elif employee_id:
-                employee_name = get_employee_name(employee_id)
-                if employee_name:
-                    st.session_state["login_success"] = True
-                    st.session_state["employee_id"] = int(employee_id)
-                    st.session_state["name"] = employee_name
-                    st.session_state["is_admin"] = int(employee_id) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3]
-                    st.rerun()
-                else:
-                    st.error("사번이 매핑된 이름이 없습니다.")
-            else:
-                st.warning("사번을 입력해주세요.")
+        # 각 입력 필드에 고유한 key를 반드시 지정해야 합니다.
+        st.text_input("🔹 비밀번호를 입력해주세요.", type="password", key="password_input")
+        st.text_input("🔹 사번(5자리)을 입력해주세요.", key="employee_id_input")
+
+        # form_submit_button의 on_click에 위에서 만든 콜백 함수를 연결합니다.
+        st.form_submit_button("확인", on_click=attempt_login)
 
 # --- 로그인 성공 후 처리 ---
 if st.session_state["login_success"]:
