@@ -17,6 +17,8 @@ st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
 
+st.warning("09/03(수) 19:00 ~ 22:00 - 점검으로 인해 접속이 원할하지 않을 수 있으니 양해 부탁드립니다.")
+
 # --- 기본 설정 및 함수 ---
 USER_PASSWORD = st.secrets["passwords"]["user"]
 ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
@@ -162,22 +164,26 @@ def attempt_login():
             st.session_state["employee_id"] = int(employee_id_input)
             st.session_state["name"] = employee_name
             st.session_state["is_admin"] = int(employee_id_input) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3]
-            # 콜백 사용 시 st.rerun()은 필요 없습니다.
+            st.rerun()
         else:
             st.error("사번이 매핑된 이름이 없습니다.")
     else:
         st.warning("사번을 입력해주세요.")
 
-
 # --- [변경] 로그인 UI 및 로직 ---
 if not st.session_state["login_success"]:
     with st.form("login_form"):
-        # 각 입력 필드에 고유한 key를 반드시 지정해야 합니다.
         st.text_input("🔹 비밀번호를 입력해주세요.", type="password", key="password_input")
         st.text_input("🔹 사번(5자리)을 입력해주세요.", key="employee_id_input")
 
-        # form_submit_button의 on_click에 위에서 만든 콜백 함수를 연결합니다.
-        st.form_submit_button("확인", on_click=attempt_login)
+        # ✅ on_click 제거하고 반환값 사용
+        submitted = st.form_submit_button("확인")
+
+    # ✅ 메인 흐름에서 스피너 표시
+    if submitted:
+        with st.spinner("접속 중입니다..."):
+            time.sleep(1)
+            attempt_login()
 
 # --- 로그인 성공 후 처리 ---
 if st.session_state["login_success"]:
