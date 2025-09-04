@@ -372,6 +372,7 @@ if st.button("🔄 새로고침 (R)"):
 if not all_events:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
     calendar_options = {"initialView": "dayGridMonth", "initialDate": month_start.strftime("%Y-%m-%d"), "height": 700, "headerToolbar": {"left": "", "center": "title", "right": ""}}
+
 # 1. CSS 스타일 정의
 st.markdown("""
 <style>
