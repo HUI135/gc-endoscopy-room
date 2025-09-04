@@ -274,11 +274,9 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-# 캘린더 표시
-# 1. CSS 스타일 정의
+# CSS 스타일 (기존과 동일, 모바일 최적화 포함)
 st.markdown("""
 <style>
-/* 월(Month) 표시 타이틀 */
 .calendar-title {
     text-align: center;
     font-size: 24px;
@@ -288,43 +286,36 @@ st.markdown("""
 div[data-testid="stHorizontalBlock"] {
     gap: 0.5rem;
 }
-/* 요일 헤더 */
 .calendar-header {
     text-align: center;
     font-weight: bold;
-    padding: 10px 0;
+    padding: 8px 0;
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     background-color: #f6f8fa;
 }
-/* 토요일, 일요일 색상 */
 .saturday { color: blue; }
 .sunday { color: red; }
-
-/* 날짜 하나하나를 의미하는 셀 */
 .calendar-day-cell {
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     padding: 6px;
-    min-height: 120px; /* 칸 높이 조절 */
+    min-height: 100px;
     background-color: white;
     display: flex;
     flex-direction: column;
 }
-/* 날짜 숫자 스타일 */
 .day-number {
     font-weight: bold;
     font-size: 14px;
     margin-bottom: 5px;
 }
-/* 다른 달의 날짜는 회색으로 */
 .day-number.other-month {
     color: #ccc;
 }
-/* 이벤트 아이템 스타일 */
 .event-item {
-    font-size: 13px;
-    padding: 1px 5px;
+    font-size: 12px;
+    padding: 2px 4px;
     border-radius: 3px;
     margin-bottom: 3px;
     color: white;
@@ -332,15 +323,83 @@ div[data-testid="stHorizontalBlock"] {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.calendar-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.stButton > button {
+    min-height: 40px;
+    width: 100%;
+}
+@media (max-width: 600px) {
+    .calendar-title {
+        font-size: 18px;
+        margin-bottom: 15px;
+    }
+    .calendar-header {
+        font-size: 12px;
+        padding: 5px 0;
+    }
+    .calendar-day-cell {
+        min-height: 60px;
+        padding: 4px;
+        min-width: 50px;
+    }
+    .day-number {
+        font-size: 12px;
+    }
+    .event-item {
+        font-size: 10px;
+        padding: 1px 3px;
+    }
+    .stButton > button {
+        font-size: 14px;
+        padding: 8px 12px;
+    }
+    .stSelectbox > div > div {
+        font-size: 12px;
+    }
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+    .stColumn {
+        width: 100% !important;
+    }
+    .calendar-container {
+        max-height: 50vh;
+        overflow-y: auto;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
-# 2. 캘린더 UI 렌더링
-# 제목 표시
-st.markdown(f'<div class="calendar-title">{month_str} 마스터 스케줄</div>', unsafe_allow_html=True)
-
-# 캘린더 격자 생성
+# 캘린더 표시
 with st.container():
+    st.markdown(f'<div class="calendar-title">{month_str} 마스터 스케줄</div>', unsafe_allow_html=True)
+    st.markdown('<div class="calendar-container">', unsafe_allow_html=True)
+    
+    # month_days 정의
+    cal = calendar.Calendar(firstweekday=6)  # 일요일 시작
+    month_days = cal.monthdatescalendar(year, month)
+    
+    # events_by_date 생성
+    events = generate_calendar_events(df_user_master, year, month, week_labels)
+    events_by_date = {}
+    for event in events:
+        start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
+        if 'end' in event and event['start'] != event['end']:
+            end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
+            for i in range((end_date - start_date).days + 1):
+                current_date = start_date + datetime.timedelta(days=i)
+                if current_date not in events_by_date:
+                    events_by_date[current_date] = []
+                events_by_date[current_date].append(event)
+        else:
+            if start_date not in events_by_date:
+                events_by_date[start_date] = []
+            events_by_date[start_date].append(event)
+
     # 요일 헤더
     cols = st.columns(7, gap="small")
     days_of_week = ["일", "월", "화", "수", "목", "금", "토"]
@@ -352,33 +411,11 @@ with st.container():
             header_class += " sunday"
         col.markdown(f'<div class="{header_class}">{day}</div>', unsafe_allow_html=True)
 
-    # 날짜 데이터 준비
-    cal = calendar.Calendar(firstweekday=6) # 일요일 시작
-    month_days = cal.monthdatescalendar(year, month)
-    
-    # 날짜별 이벤트 가공 (빠른 조회를 위해 딕셔너리로 변환)
-    events_by_date = {}
-    # ❗️ 기존 코드의 `events` 변수를 그대로 사용합니다.
-    for event in events:
-        start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
-        if 'end' in event and event['start'] != event['end']:
-            end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
-            for i in range((end_date - start_date).days):
-                current_date = start_date + datetime.timedelta(days=i)
-                if current_date not in events_by_date:
-                    events_by_date[current_date] = []
-                events_by_date[current_date].append(event)
-        else:
-            if start_date not in events_by_date:
-                events_by_date[start_date] = []
-            events_by_date[start_date].append(event)
-
     # 날짜 셀 생성
     for week in month_days:
         cols = st.columns(7)
         for i, day_date in enumerate(week):
             is_other_month = "other-month" if day_date.month != month else ""
-            
             with cols[i]:
                 event_html = ""
                 if day_date in events_by_date:
@@ -386,8 +423,6 @@ with st.container():
                         color = event.get('color', '#6c757d')
                         title = event['title']
                         event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
-
-                # 각 날짜 칸(셀)을 HTML로 그림
                 cell_html = f"""
                 <div class="calendar-day-cell">
                     <div class="day-number {is_other_month}">{day_date.day}</div>
@@ -395,6 +430,7 @@ with st.container():
                 </div>
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # 마스터 스케줄 편집
 st.divider()
