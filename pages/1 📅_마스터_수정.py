@@ -274,7 +274,8 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-# 1. CSS 스타일 정의 (반응형 그리드 추가)
+# 캘린더 표시
+# 1. CSS 스타일 정의
 st.markdown("""
 <style>
 /* 월(Month) 표시 타이틀 */
@@ -284,11 +285,8 @@ st.markdown("""
     font-weight: bold;
     margin-bottom: 20px;
 }
-/* [변경] CSS Grid를 사용한 캘린더 전체 컨테이너 */
-.calendar-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr); /* 항상 7개의 동일한 너비의 열을 유지 */
-    gap: 5px; /* 셀 사이의 간격 */
+div[data-testid="stHorizontalBlock"] {
+    gap: 0.5rem;
 }
 /* 요일 헤더 */
 .calendar-header {
@@ -299,6 +297,7 @@ st.markdown("""
     border-radius: 5px;
     background-color: #f6f8fa;
 }
+/* 토요일, 일요일 색상 */
 .saturday { color: blue; }
 .sunday { color: red; }
 
@@ -307,7 +306,7 @@ st.markdown("""
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     padding: 6px;
-    min-height: 110px; /* 모바일에서도 적절한 높이 유지 */
+    min-height: 120px; /* 칸 높이 조절 */
     background-color: white;
     display: flex;
     flex-direction: column;
@@ -315,7 +314,7 @@ st.markdown("""
 /* 날짜 숫자 스타일 */
 .day-number {
     font-weight: bold;
-    font-size: 0.8rem; /* 모바일을 위해 상대 단위로 변경 */
+    font-size: 14px;
     margin-bottom: 5px;
 }
 /* 다른 달의 날짜는 회색으로 */
@@ -324,8 +323,8 @@ st.markdown("""
 }
 /* 이벤트 아이템 스타일 */
 .event-item {
-    font-size: 0.7rem; /* 모바일을 위해 상대 단위로 변경 */
-    padding: 2px 4px;
+    font-size: 13px;
+    padding: 1px 5px;
     border-radius: 3px;
     margin-bottom: 3px;
     color: white;
@@ -336,70 +335,68 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# 2. 캘린더 UI 렌더링 (HTML + CSS Grid 사용)
-
+# 2. 캘린더 UI 렌더링
 # 제목 표시
 st.markdown(f'<div class="calendar-title">{month_str} 마스터 스케줄</div>', unsafe_allow_html=True)
 
-# 날짜별 이벤트 가공
-events_by_date = {}
-# `events` 변수는 코드 상단 `generate_calendar_events` 함수에서 이미 생성되었습니다.
-for event in events:
-    start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
-    # 날짜 범위 이벤트 처리
-    if 'end' in event and event['start'] != event['end']:
-        end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
-        for i in range((end_date - start_date).days):
-            current_date = start_date + datetime.timedelta(days=i)
-            if current_date not in events_by_date:
-                events_by_date[current_date] = []
-            events_by_date[current_date].append(event)
-    else: # 단일 날짜 이벤트
-        if start_date not in events_by_date:
-            events_by_date[start_date] = []
-        events_by_date[start_date].append(event)
+# 캘린더 격자 생성
+with st.container():
+    # 요일 헤더
+    cols = st.columns(7, gap="small")
+    days_of_week = ["일", "월", "화", "수", "목", "금", "토"]
+    for col, day in zip(cols, days_of_week):
+        header_class = "calendar-header"
+        if day == "토":
+            header_class += " saturday"
+        elif day == "일":
+            header_class += " sunday"
+        col.markdown(f'<div class="{header_class}">{day}</div>', unsafe_allow_html=True)
 
-# [변경] 달력 전체를 하나의 HTML 문자열로 생성
-calendar_html = '<div class="calendar-grid">'
+    # 날짜 데이터 준비
+    cal = calendar.Calendar(firstweekday=6) # 일요일 시작
+    month_days = cal.monthdatescalendar(year, month)
+    
+    # 날짜별 이벤트 가공 (빠른 조회를 위해 딕셔너리로 변환)
+    events_by_date = {}
+    # ❗️ 기존 코드의 `events` 변수를 그대로 사용합니다.
+    for event in events:
+        start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
+        if 'end' in event and event['start'] != event['end']:
+            end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
+            for i in range((end_date - start_date).days):
+                current_date = start_date + datetime.timedelta(days=i)
+                if current_date not in events_by_date:
+                    events_by_date[current_date] = []
+                events_by_date[current_date].append(event)
+        else:
+            if start_date not in events_by_date:
+                events_by_date[start_date] = []
+            events_by_date[start_date].append(event)
 
-# 요일 헤더 HTML 생성
-days_of_week = ["일", "월", "화", "수", "목", "금", "토"]
-for day in days_of_week:
-    header_class = "calendar-header"
-    if day == "토":
-        header_class += " saturday"
-    elif day == "일":
-        header_class += " sunday"
-    calendar_html += f'<div class="{header_class}">{day}</div>'
+    # 날짜 셀 생성
+    for week in month_days:
+        cols = st.columns(7)
+        for i, day_date in enumerate(week):
+            is_other_month = "other-month" if day_date.month != month else ""
+            
+            with cols[i]:
+                event_html = ""
+                if day_date in events_by_date:
+                    for event in events_by_date[day_date]:
+                        color = event.get('color', '#6c757d')
+                        title = event['title']
+                        event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
 
-# 날짜 셀 HTML 생성
-cal = calendar.Calendar(firstweekday=6) # 일요일 시작
-month_days = cal.monthdatescalendar(year, month)
-for week in month_days:
-    for day_date in week:
-        is_other_month = "other-month" if day_date.month != month else ""
-        
-        event_html = ""
-        if day_date in events_by_date:
-            for event in events_by_date[day_date]:
-                color = event.get('color', '#6c757d')
-                title = event['title']
-                event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
-
-        calendar_html += f"""
-        <div class="calendar-day-cell">
-            <div class="day-number {is_other_month}">{day_date.day}</div>
-            {event_html}
-        </div>
-        """
-calendar_html += '</div>' # calendar-grid div 닫기
-
-# 최종적으로 생성된 HTML을 한 번에 출력
-st.markdown(calendar_html, unsafe_allow_html=True)
+                # 각 날짜 칸(셀)을 HTML로 그림
+                cell_html = f"""
+                <div class="calendar-day-cell">
+                    <div class="day-number {is_other_month}">{day_date.day}</div>
+                    {event_html}
+                </div>
+                """
+                st.markdown(cell_html, unsafe_allow_html=True)
 
 # 마스터 스케줄 편집
-st.divider()
 st.divider()
 st.subheader("📅 마스터 스케줄 편집")
 st.write("- 월 단위 또는 주 단위로 본인의 마스터 스케줄을 수정할 수 있습니다.")
