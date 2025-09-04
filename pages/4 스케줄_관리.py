@@ -341,42 +341,77 @@ if "data_loaded" not in st.session_state:
             df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
             cumulative_worksheet = None # 시트가 없음을 명시
 
-        # 2. 매핑 시트 기준으로 마스터 시트에 없는 인원 동기화
-        missing_in_master = set(df_map["이름"]) - set(df_master["이름"])
+        # 2. "매핑" 시트를 기준으로 모든 시트의 명단을 동기화 (추가 및 제거)
+        mapping_names = set(df_map["이름"])
+        master_names = set(df_master["이름"])
+        request_names = set(df_request["이름"])
+        cumulative_names = set(df_cumulative["이름"])
+        needs_update = False
+
+        # --- 마스터 시트 동기화 ---
+        removed_from_master = master_names - mapping_names
+        missing_in_master = mapping_names - master_names
+
+        if removed_from_master:
+            df_master = df_master[~df_master["이름"].isin(removed_from_master)]
+            needs_update = True
         if missing_in_master:
-            st.info(f"매핑 시트 기준으로 신규 인원 {len(missing_in_master)}명을 마스터 시트에 추가합니다.")
             new_master_rows = []
             for name in missing_in_master:
                 for day in ["월", "화", "수", "목", "금"]:
                     new_master_rows.append({"이름": name, "주차": "매주", "요일": day, "근무여부": "근무없음"})
-            
             df_master = pd.concat([df_master, pd.DataFrame(new_master_rows)], ignore_index=True)
+            needs_update = True
+
+        if needs_update:
+            st.info("매핑 시트를 기준으로 마스터 시트 명단을 동기화합니다.")
             df_master["요일"] = pd.Categorical(df_master["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
             df_master = df_master.sort_values(by=["이름", "주차", "요일"])
             update_sheet_with_retry(master_worksheet, [df_master.columns.tolist()] + df_master.values.tolist())
 
-        # 3. 최종 마스터 명단 기준으로 요청 및 누락 시트 동기화
-        final_master_names = set(df_master["이름"])
-        
-        # 요청 시트 동기화
-        missing_in_request = final_master_names - set(df_request["이름"])
+        # 이제부터 "mapping_names"를 최종 명단으로 사용
+        final_master_names = mapping_names
+
+        # --- 요청 시트 동기화 ---
+        needs_update = False
+        removed_from_request = request_names - final_master_names
+        missing_in_request = final_master_names - request_names
+
+        if removed_from_request:
+            df_request = df_request[~df_request["이름"].isin(removed_from_request)]
+            needs_update = True
         if missing_in_request:
             new_request_rows = [{"이름": name, "분류": "요청 없음", "날짜정보": ""} for name in missing_in_request]
-            df_request = pd.concat([df_request, pd.DataFrame(new_request_rows)], ignore_index=True).sort_values(by="이름")
+            df_request = pd.concat([df_request, pd.DataFrame(new_request_rows)], ignore_index=True)
+            needs_update = True
+
+        if needs_update:
+            st.info("매핑 시트를 기준으로 요청 시트 명단을 동기화합니다.")
+            df_request = df_request.sort_values(by="이름")
             update_sheet_with_retry(request_worksheet, [df_request.columns.tolist()] + df_request.astype(str).values.tolist())
 
-        # 누적 시트 동기화
-        missing_in_cumulative = final_master_names - set(df_cumulative["이름"])
+        # --- 누적 시트 동기화 ---
+        needs_update = False
+        removed_from_cumulative = cumulative_names - final_master_names
+        missing_in_cumulative = final_master_names - cumulative_names
+
+        if removed_from_cumulative:
+            df_cumulative = df_cumulative[~df_cumulative["이름"].isin(removed_from_cumulative)]
+            needs_update = True
         if missing_in_cumulative or cumulative_worksheet is None:
             if cumulative_worksheet is None:
                 st.warning(f"'{month_str} 누적' 시트가 없어 새로 생성합니다.")
                 cumulative_worksheet = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
                 cumulative_worksheet.append_row(["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-                # 시트가 아예 없었으므로 모든 마스터 인원을 신규로 추가
                 missing_in_cumulative = final_master_names
             
-            new_cumulative_rows = [[name, 0, 0, 0, 0] for name in missing_in_cumulative]
-            df_cumulative = pd.concat([df_cumulative, pd.DataFrame(new_cumulative_rows, columns=df_cumulative.columns)], ignore_index=True).sort_values(by="이름")
+            new_cumulative_rows = pd.DataFrame([[name, 0, 0, 0, 0] for name in missing_in_cumulative], columns=df_cumulative.columns)
+            df_cumulative = pd.concat([df_cumulative, new_cumulative_rows], ignore_index=True)
+            needs_update = True
+
+        if needs_update:
+            st.info("매핑 시트를 기준으로 누적 시트 명단을 동기화합니다.")
+            df_cumulative = df_cumulative.sort_values(by="이름")
             update_sheet_with_retry(cumulative_worksheet, [df_cumulative.columns.tolist()] + df_cumulative.values.tolist())
         
         # 4. 모든 동기화 완료 후, 최종 데이터를 세션 상태에 저장
