@@ -17,8 +17,6 @@ st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
 
-st.warning("09/03(수) 19:00 ~ 23:30 - 점검으로 인해 접속이 원할하지 않을 수 있으니 양해 부탁드립니다.")
-
 # --- 기본 설정 및 함수 ---
 USER_PASSWORD = st.secrets["passwords"]["user"]
 ADMIN_PASSWORD = st.secrets["passwords"]["admin"]
