@@ -13,6 +13,8 @@ from datetime import date
 
 # set_page_config는 가장 먼저 호출
 st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
+st.error("9월 6일 ~ 7일 홈페이지 수정으로 접속이 원할하지 않을 수 있습니다.")
+st.error("해당 기간 스케줄 배정 페이지에 나타나는 스케줄은 실제 스케줄이 아닙니다.")
 
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()

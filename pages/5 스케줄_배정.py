@@ -20,7 +20,6 @@ from datetime import timedelta
 import menu
 
 st.set_page_config(page_title="스케줄 배정", page_icon="🗓️", layout="wide")
-st.warning("해당 페이지 코드를 일부 수정하고 있어, 디버깅 출력이 발생할 수 있습니다. (25.09.04 15:00~)")
 
 import os
 st.session_state.current_page = os.path.basename(__file__)
