@@ -1050,29 +1050,29 @@ def update_worker_status(df, date_str, time_slot, worker, status, memo, color, d
         df = pd.concat([df, new_row], ignore_index=True)
     return df
 
+# 'def exec_balancing_pass(...):' 부터 'return df_final' 까지
+# 함수 전체를 아래의 최종 버전 코드로 교체하세요.
+
 def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs):
-    """(개선된 로직) 모든 이동 가능 조합을 탐색 후, 최적의 조합을 실행하는 함수"""
+    """(최종 버전) 희소성/중요도에 기반하여 가장 전략적인 1:1 교환을 실행하는 함수"""
     iteration = 0
-    while iteration < 100: # 최대 100번의 최적 이동을 시도
+    while iteration < 100:
         iteration += 1
         
-        # 매 반복마다 현재 상태를 기준으로 과밀/결원일 재산정
         excess_dates = []
         shortage_dates = []
         for date in active_weekdays:
             date_str = date.strftime('%Y-%m-%d')
-            # '보충' 상태는 아직 확정된 근무가 아니므로, 순수 '근무' 상태 인원만 카운트하여 이동의 유연성을 높임
             workers_on_date = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '보충']))]['근무자'].unique()
             count = len(workers_on_date)
             if count > target_count: excess_dates.append(date_str)
             elif count < target_count: shortage_dates.append(date_str)
 
         if not excess_dates or not shortage_dates:
-            break # 더 이상 이동할 대상이 없으면 종료
+            break
 
-        # 1. 실행 가능한 모든 이동 조합을 찾는다
         possible_moves = []
-        moved_workers_in_pass = set(df_final[df_final['상태'] == '보충']['근무자'].unique()) # 이미 '보충'으로 이동된 인원은 제외
+        moved_workers_in_pass = set(df_final[df_final['상태'] == '보충']['근무자'].unique())
 
         for excess_date in excess_dates:
             excess_workers = df_final[(df_final['날짜'] == excess_date) & (df_final['시간대'] == time_slot) & (df_final['상태'] == '근무')]['근무자'].unique()
@@ -1100,28 +1100,40 @@ def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, init
                         must_work_pm = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == '꼭 근무(오후)'}
                         if worker not in morning_workers and worker not in must_work_pm: continue
                     
-                    # '보충 어려움' 여부로 점수 매기기 (쉬운 이동 = 0점, 어려운 이동 = 1점)
                     difficult_req = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 어려움({time_slot})'}
                     score = 1 if worker in difficult_req else 0
                     
                     possible_moves.append({"score": score, "worker": worker, "from": excess_date, "to": shortage_date})
 
         if not possible_moves:
-            break # 검토 결과, 실행 가능한 이동이 하나도 없으면 종료
+            break
 
-        # 2. 가장 '쉬운' 이동(score가 낮은)을 하나 골라 실행한다
-        possible_moves.sort(key=lambda x: x['score'])
+        # '희소성' 점수 계산
+        worker_move_options = {worker: 0 for worker in df_master['이름'].unique()}
+        destination_fill_options = {date: 0 for date in shortage_dates}
+        for move in possible_moves:
+            worker_move_options[move['worker']] += 1
+            destination_fill_options[move['to']] += 1
+
+        for move in possible_moves:
+            # 이동할 수 있는 곳이 적은 근무자일수록, 채울 수 있는 인원이 적은 목적지일수록 우선순위가 높다
+            move['worker_options'] = worker_move_options[move['worker']]
+            move['destination_options'] = destination_fill_options[move['to']]
+            
+        # 최종 우선순위 정렬:
+        # 1. '쉬운' 이동 (score)
+        # 2. 갈 곳이 한 곳뿐인 근무자 (worker_options)
+        # 3. 채울 사람이 한 명뿐인 목적지 (destination_options)
+        possible_moves.sort(key=lambda x: (x['score'], x['worker_options'], x['destination_options']))
+        
         best_move = possible_moves[0]
         
         worker_to_move = best_move['worker']
         from_date = best_move['from']
         to_date = best_move['to']
 
-        # 선택된 최적의 이동 딱 하나만 실행
         df_final = update_worker_status(df_final, from_date, time_slot, worker_to_move, '제외', f'{pd.to_datetime(to_date).strftime("%-m월 %-d일")} 보충', '🔵 파란색', day_map, week_numbers)
         df_final = update_worker_status(df_final, to_date, time_slot, worker_to_move, '보충', f'{pd.to_datetime(from_date).strftime("%-m월 %-d일")}에서 이동', '🟢 초록색', day_map, week_numbers)
-        
-        # 한 번의 이동 후, 다시 while 루프의 처음으로 돌아가 상황을 재분석 (다음 최적의 수를 찾기 위해)
 
     return df_final
 
