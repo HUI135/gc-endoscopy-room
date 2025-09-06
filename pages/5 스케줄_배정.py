@@ -1050,110 +1050,79 @@ def update_worker_status(df, date_str, time_slot, worker, status, memo, color, d
         df = pd.concat([df, new_row], ignore_index=True)
     return df
 
-# 기존 import 유지 (random 등)
-
-# 기존 exec_balancing_pass 함수를 아래 코드로 교체해주세요.
 def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs):
-    """'추가 보충' 최소화를 목표로 1:1 인원 이동을 수행하는 함수 (디버깅 추가)"""
-    moved_workers = set()
+    """(개선된 로직) 모든 이동 가능 조합을 탐색 후, 최적의 조합을 실행하는 함수"""
     iteration = 0
-    while iteration < 100:
+    while iteration < 100: # 최대 100번의 최적 이동을 시도
         iteration += 1
         
+        # 매 반복마다 현재 상태를 기준으로 과밀/결원일 재산정
         excess_dates = []
         shortage_dates = []
         for date in active_weekdays:
             date_str = date.strftime('%Y-%m-%d')
+            # '보충' 상태는 아직 확정된 근무가 아니므로, 순수 '근무' 상태 인원만 카운트하여 이동의 유연성을 높임
             workers_on_date = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '보충']))]['근무자'].unique()
             count = len(workers_on_date)
-            if count > target_count: excess_dates.append([date_str, count - target_count])
-            elif count < target_count: shortage_dates.append([date_str, target_count - count])
-        
-        if not excess_dates or not shortage_dates: break
+            if count > target_count: excess_dates.append(date_str)
+            elif count < target_count: shortage_dates.append(date_str)
 
-        any_match_in_pass = False
+        if not excess_dates or not shortage_dates:
+            break # 더 이상 이동할 대상이 없으면 종료
 
-        for excess_idx in range(len(excess_dates)):
-            if excess_idx >= len(excess_dates): break
-            excess_date, _ = excess_dates[excess_idx]
+        # 1. 실행 가능한 모든 이동 조합을 찾는다
+        possible_moves = []
+        moved_workers_in_pass = set(df_final[df_final['상태'] == '보충']['근무자'].unique()) # 이미 '보충'으로 이동된 인원은 제외
 
-            excess_workers = df_final[(df_final['날짜'] == excess_date) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '보충']))]['근무자'].unique()
+        for excess_date in excess_dates:
+            excess_workers = df_final[(df_final['날짜'] == excess_date) & (df_final['시간대'] == time_slot) & (df_final['상태'] == '근무')]['근무자'].unique()
             must_work_on_excess = {r['이름'] for _, r in df_request.iterrows() if excess_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'꼭 근무({time_slot})'}
-            movable_workers = [w for w in excess_workers if w not in must_work_on_excess and w not in moved_workers]
-            
-            random.shuffle(movable_workers)
+            movable_workers = [w for w in excess_workers if w not in must_work_on_excess and w not in moved_workers_in_pass]
 
-            for worker_to_move in movable_workers:
-                easy_destinations = []
-                difficult_destinations = []
-
-                for short_idx, (shortage_date, __) in enumerate(shortage_dates):
+            for worker in movable_workers:
+                for shortage_date in shortage_dates:
+                    # 모든 제약 조건 검사
                     shortage_day_name = day_map[pd.to_datetime(shortage_date).weekday()]
                     shortage_shift_key = f"{shortage_day_name} {time_slot}"
                     
-                    # === 디버깅 로직 시작 ===
-                    # 조건 1: 보충 테이블 확인
                     supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == shortage_shift_key]
-                    if supplement_row.empty:
-                        # 이 경우는 거의 없지만 방어 코드로 추가
-                        debug_logs.append(f"⚠️ [로그] {worker_to_move} ({excess_date[:10]}→{shortage_date[:10]}): {shortage_shift_key} 보충 테이블 행 없음.")
-                        continue
+                    if supplement_row.empty: continue
                     supplement_pool = set(val.replace('🔺','').strip() for val in supplement_row.iloc[0, 1:].dropna())
-                    if worker_to_move not in supplement_pool:
-                        debug_logs.append(f"🚫 [이동 불가] {worker_to_move} ({excess_date[:10]}→{shortage_date[:10]}): 도착일({shortage_shift_key})의 '보충' 명단에 없음.")
-                        continue
-
-                    # 조건 2: 원래 마스터 근무일 확인
-                    if worker_to_move in initial_master_assignments.get((shortage_date, time_slot), set()):
-                        debug_logs.append(f"🚫 [이동 불가] {worker_to_move} ({excess_date[:10]}→{shortage_date[:10]}): 도착일에 이미 '마스터' 근무자로 배정됨.")
-                        continue
+                    if worker not in supplement_pool: continue
                     
-                    # 조건 3: '보충 불가' 요청 확인
+                    if worker in initial_master_assignments.get((shortage_date, time_slot), set()): continue
+                    
                     no_supplement_req = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 불가({time_slot})'}
-                    if worker_to_move in no_supplement_req:
-                        debug_logs.append(f"🚫 [이동 불가] {worker_to_move} ({excess_date[:10]}→{shortage_date[:10]}): 도착일에 '보충 불가' 요청 있음.")
-                        continue
+                    if worker in no_supplement_req: continue
 
-                    # 조건 4: 오후 근무 시 오전 근무 여부 확인
                     if time_slot == '오후':
                         morning_workers = set(df_final[(df_final['날짜'] == shortage_date) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
                         must_work_pm = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == '꼭 근무(오후)'}
-                        if worker_to_move not in morning_workers and worker_to_move not in must_work_pm:
-                            debug_logs.append(f"🚫 [이동 불가] {worker_to_move} ({excess_date[:10]}→{shortage_date[:10]}): 오후 보충은 도착일 오전 근무자만 가능.")
-                            continue
-                    # === 디버깅 로직 종료 ===
-
+                        if worker not in morning_workers and worker not in must_work_pm: continue
+                    
+                    # '보충 어려움' 여부로 점수 매기기 (쉬운 이동 = 0점, 어려운 이동 = 1점)
                     difficult_req = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 어려움({time_slot})'}
-                    if worker_to_move in difficult_req:
-                        difficult_destinations.append((shortage_date, short_idx))
-                    else:
-                        easy_destinations.append((shortage_date, short_idx))
-
-                target_destination_info = None
-                if easy_destinations:
-                    target_destination_info = easy_destinations[0]
-                elif difficult_destinations:
-                    target_destination_info = difficult_destinations[0]
-
-                if target_destination_info:
-                    shortage_date, shortage_idx = target_destination_info
+                    score = 1 if worker in difficult_req else 0
                     
-                    df_final = update_worker_status(df_final, excess_date, time_slot, worker_to_move, '제외', f'{pd.to_datetime(shortage_date).strftime("%-m월 %-d일")} 보충', '🔵 파란색', day_map, week_numbers)
-                    df_final = update_worker_status(df_final, shortage_date, time_slot, worker_to_move, '보충', f'{pd.to_datetime(excess_date).strftime("%-m월 %-d일")}에서 이동', '🟢 초록색', day_map, week_numbers)
-                    moved_workers.add(worker_to_move)
-                    any_match_in_pass = True
-                    
-                    excess_dates[excess_idx][1] -= 1
-                    shortage_dates[shortage_idx][1] -= 1
-                    if excess_dates[excess_idx][1] == 0: excess_dates.pop(excess_idx)
-                    if shortage_dates[shortage_idx][1] == 0: 
-                        shortage_dates.pop(shortage_idx)
-                    break 
-            if any_match_in_pass: break 
+                    possible_moves.append({"score": score, "worker": worker, "from": excess_date, "to": shortage_date})
+
+        if not possible_moves:
+            break # 검토 결과, 실행 가능한 이동이 하나도 없으면 종료
+
+        # 2. 가장 '쉬운' 이동(score가 낮은)을 하나 골라 실행한다
+        possible_moves.sort(key=lambda x: x['score'])
+        best_move = possible_moves[0]
         
-        if not any_match_in_pass:
-            break
-            
+        worker_to_move = best_move['worker']
+        from_date = best_move['from']
+        to_date = best_move['to']
+
+        # 선택된 최적의 이동 딱 하나만 실행
+        df_final = update_worker_status(df_final, from_date, time_slot, worker_to_move, '제외', f'{pd.to_datetime(to_date).strftime("%-m월 %-d일")} 보충', '🔵 파란색', day_map, week_numbers)
+        df_final = update_worker_status(df_final, to_date, time_slot, worker_to_move, '보충', f'{pd.to_datetime(from_date).strftime("%-m월 %-d일")}에서 이동', '🟢 초록색', day_map, week_numbers)
+        
+        # 한 번의 이동 후, 다시 while 루프의 처음으로 돌아가 상황을 재분석 (다음 최적의 수를 찾기 위해)
+
     return df_final
 
 def exec_final_adjustment(df_final, active_weekdays, time_slot, target_count, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative):
@@ -1214,7 +1183,7 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
     st.session_state.downloaded = False
     special_schedules = st.session_state.get("special_schedules", [])
     
-    with st.spinner("근무 배정 중..."):
+    with st.spinner("근무 배정 중... 최적의 조합을 찾는데 다소 시간이 소요될 수 있습니다."):
         time.sleep(1)
         client = get_gspread_client()
         save_special_schedules_to_sheets(special_schedules, month_str, client)
@@ -1249,10 +1218,10 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         
         current_cumulative = {'오전': {}, '오후': {}}
 
-        # === ☀️ 1단계: 오전 스케줄링 전체 완료 ===
         time_slot_am = '오전'
         target_count_am = 12
         
+        # 오전 초기 배정
         for date in active_weekdays:
             date_str = date.strftime('%Y-%m-%d')
             requests_on_date = df_request[df_request['날짜정보'].apply(lambda x: date_str in parse_date_range(str(x)))]
@@ -1265,12 +1234,17 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             for vac in (vacationers & base_workers):
                 df_final = update_worker_status(df_final, date_str, time_slot_am, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
         
+        # 1단계: 오전 균형 맞추기
         df_final = exec_balancing_pass(df_final, active_weekdays, time_slot_am, target_count_am, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs=debug_logs)
+        
+        # 2단계: 오전 최종 조정
         df_final, current_cumulative = exec_final_adjustment(df_final, active_weekdays, time_slot_am, target_count_am, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative)
-        # === 🌙 2단계: 오후 스케줄링 전체 완료 ===
+
+        # === 🌙 오후 스케줄링 (3, 4단계) ---
         time_slot_pm = '오후'
         target_count_pm = 5
         
+        # 오후 초기 배정
         for date in active_weekdays:
             date_str = date.strftime('%Y-%m-%d')
             morning_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
@@ -1286,10 +1260,13 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
             for worker in final_workers:
                 df_final = update_worker_status(df_final, date_str, time_slot_pm, worker, '근무', '' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
             for vac in (vacationers & base_workers):
-                 if not df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot_pm) & (df_final['근무자'] == vac) & (df_final['상태'] == '근무')].empty: continue
-                 df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
+                if not df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot_pm) & (df_final['근무자'] == vac) & (df_final['상태'] == '근무')].empty: continue
+                df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
         
+        # 3단계: 오후 균형 다시 맞추기 (⭐️핵심⭐️)
         df_final = exec_balancing_pass(df_final, active_weekdays, time_slot_pm, target_count_pm, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs=debug_logs)
+        
+        # 4단계: 오후 최종 조정
         df_final, current_cumulative = exec_final_adjustment(df_final, active_weekdays, time_slot_pm, target_count_pm, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative)
 
         # === 📤 3단계: 최종 결과 생성 및 저장 ===
