@@ -78,16 +78,15 @@ except Exception as e:
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 
-# 캘린더 이벤트 생성 함수 (마스터 스케줄과 요청사항 모두 처리)
-def create_calendar_events(df_master, df_request):
-    status_colors_master = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
+# 캘린더 이벤트 생성 함수 (마스터, 토요일, 요청사항 모두 처리)
+def create_calendar_events(df_master, df_request, df_saturday_schedule, current_user_name):
     events = []
     
-    # 마스터 데이터에서 이벤트 생성 (첫 번째 페이지의 검증된 로직 사용)
+    # --- 1. 마스터 데이터(평일)에서 이벤트 생성 ---
+    status_colors_master = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
     if not df_master.empty:
         master_data = {}
-        요일리스트 = ["월", "화", "수", "목", "금", "토", "일"]
-        
+        요일리스트 = ["월", "화", "수", "목", "금"] # 평일만 처리
         every_week_df = df_master[df_master["주차"] == "매주"]
         
         for week in week_labels:
@@ -103,69 +102,42 @@ def create_calendar_events(df_master, df_request):
                 else:
                     master_data[week][day] = "근무없음"
 
-        weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
-        _, last_day = calendar.monthrange(year, month)
-
-        # 해당 월의 첫 번째 일요일 찾기 (주차 계산의 기준)
+        weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"}
+        _, last_day_of_month = calendar.monthrange(year, month)
         first_sunday = next((day for day in range(1, 8) if datetime.date(year, month, day).weekday() == 6), None)
 
-        for day in range(1, last_day + 1):
-            date_obj = datetime.date(year, month, day)
+        for day_num in range(1, last_day_of_month + 1):
+            date_obj = datetime.date(year, month, day_num)
             weekday = date_obj.weekday()
-            if weekday in weekday_map:
+            
+            if weekday in weekday_map: # 평일(월~금)만 해당
                 day_name = weekday_map[weekday]
-                
-                # 날짜에 해당하는 주차 계산
-                if first_sunday is None: # 만약 첫 주에 일요일이 없다면
-                    week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
-                else:
-                    week_num = (day - first_sunday) // 7 + 1 if day >= first_sunday else 0
-
-                if week_num >= len(week_labels):
-                    continue
-
+                if first_sunday is None: week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
+                else: week_num = (day_num - first_sunday) // 7 + 1 if day_num >= first_sunday else 0
+                if week_num >= len(week_labels): continue
                 week = week_labels[week_num]
                 status = master_data.get(week, {}).get(day_name, "근무없음")
-                
                 if status and status != "근무없음":
-                    events.append({
-                        "title": f"{status}",
-                        "start": date_obj.strftime("%Y-%m-%d"),
-                        "end": date_obj.strftime("%Y-%m-%d"),
-                        "color": status_colors_master.get(status, "#E0E0E0")
-                    })
-    
-    # 요청사항 이벤트 생성
-    status_colors_request = {
-        "휴가": "#A1C1D3",
-        "학회": "#B4ABE4",
-        "보충 어려움(오전)": "#FFD3B5",
-        "보충 어려움(오후)": "#FFD3B5",
-        "보충 불가(오전)": "#FFB6C1",
-        "보충 불가(오후)": "#FFB6C1",
-        "꼭 근무(오전)": "#C3E6CB",
-        "꼭 근무(오후)": "#C3E6CB",
-    }
-    label_map = {
-        "휴가": "휴가🎉",
-        "학회": "학회📚",
-        "보충 어려움(오전)": "보충⚠️(오전)",
-        "보충 어려움(오후)": "보충⚠️(오후)",
-        "보충 불가(오전)": "보충🚫(오전)",
-        "보충 불가(오후)": "보충🚫(오후)",
-        "꼭 근무(오전)": "꼭근무(오전)",
-        "꼭 근무(오후)": "꼭근무(오후)",
-    }
+                    events.append({"title": f"{status}", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors_master.get(status, "#E0E0E0")})
 
+    # --- 2. 토요/휴일 스케줄 데이터에서 이벤트 생성 (새로 추가된 로직) ---
+    status_colors_saturday = {"토요근무": "#6A5ACD", "당직": "#FF6347"}
+    if not df_saturday_schedule.empty:
+        saturdays_in_month = df_saturday_schedule[(df_saturday_schedule['날짜'].dt.year == year) & (df_saturday_schedule['날짜'].dt.month == month)]
+        for _, row in saturdays_in_month.iterrows():
+            date_obj = row['날짜'].date()
+            if isinstance(row.get('근무', ''), str) and current_user_name in row.get('근무', ''):
+                events.append({"title": "토요근무", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors_saturday.get("토요근무")})
+            if isinstance(row.get('당직', ''), str) and current_user_name == row.get('당직', '').strip():
+                events.append({"title": "당직", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors_saturday.get("당직")})
+
+    # --- 3. 요청사항 이벤트 생성 (기존 로직) ---
+    status_colors_request = {"휴가": "#A1C1D3", "학회": "#B4ABE4", "보충 어려움(오전)": "#FFD3B5", "보충 어려움(오후)": "#FFD3B5", "보충 불가(오전)": "#FFB6C1", "보충 불가(오후)": "#FFB6C1", "꼭 근무(오전)": "#C3E6CB", "꼭 근무(오후)": "#C3E6CB"}
+    label_map = {"휴가": "휴가🎉", "학회": "학회📚", "보충 어려움(오전)": "보충⚠️(오전)", "보충 어려움(오후)": "보충⚠️(오후)", "보충 불가(오전)": "보충🚫(오전)", "보충 불가(오후)": "보충🚫(오후)", "꼭 근무(오전)": "꼭근무(오전)", "꼭 근무(오후)": "꼭근무(오후)"}
     if not df_request.empty:
         for _, row in df_request.iterrows():
             분류, 날짜정보 = row["분류"], row["날짜정보"]
-            if not 날짜정보 and 분류 != "요청 없음":
-                continue
-            
-            if 분류 == "요청 없음":
-                continue
-            
+            if not 날짜정보 or 분류 == "요청 없음": continue
             if "~" in 날짜정보:
                 시작_str, 종료_str = [x.strip() for x in 날짜정보.split("~")]
                 시작 = datetime.datetime.strptime(시작_str, "%Y-%m-%d").date()
@@ -175,9 +147,8 @@ def create_calendar_events(df_master, df_request):
                 for 날짜 in [d.strip() for d in 날짜정보.split(",")]:
                     try:
                         dt = datetime.datetime.strptime(날짜, "%Y-%m-%d").date()
-                        events.append({"title": f"{label_map.get(분류, 분류)}", "start": dt.strftime("%Y-%m-%d"), "end": dt.strftime("%Y-%m-%d"), "color": status_colors_request.get(분류, "#E0E0E0")})
-                    except:
-                        continue
+                        events.append({"title": f"{label_map.get(분류, 분류)}", "start": dt.strftime("%Y-%m-%d"), "color": status_colors_request.get(분류, "#E0E0E0")})
+                    except: continue
     return events
 
 # --- 초기 데이터 로딩 및 세션 상태 초기화 ---
@@ -376,6 +347,32 @@ def delete_requests_callback():
         time.sleep(1.5)
         # st.rerun()
 
+# 토요/휴일 스케줄 데이터 로드 함수 (새로 추가)
+@st.cache_data(show_spinner=False)
+def load_saturday_schedule(_gc, url, year):
+    """지정된 연도의 토요/휴일 스케줄 데이터를 로드하는 함수"""
+    try:
+        sheet = _gc.open_by_url(url)
+        worksheet_name = f"{year}년 토요/휴일 스케줄"
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        if not data:
+            st.warning(f"⚠️ '{worksheet_name}' 시트에 데이터가 없습니다.")
+            return pd.DataFrame(columns=["날짜", "근무", "당직"])
+        
+        df = pd.DataFrame(data)
+        # '날짜' 열이 비어있거나 잘못된 형식의 데이터를 제외하고 datetime으로 변환
+        df = df[df['날짜'] != '']
+        df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
+        df.dropna(subset=['날짜'], inplace=True) # 날짜 변환 실패한 행 제거
+        return df
+    except WorksheetNotFound:
+        st.info(f"'{year}년 토요/휴일 스케줄' 시트를 찾을 수 없습니다. 토요일 근무가 표시되지 않을 수 있습니다.")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+    except Exception as e:
+        st.error(f"토요/휴일 스케줄 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+    
 # --- UI 렌더링 시작 ---
 # 첫 페이지 로드 시에만 데이터 로드
 if "initial_load_done_page2" not in st.session_state:
@@ -414,7 +411,11 @@ if st.button("🔄 새로고침 (R)"):
 
 st.write("- 휴가 / 보충 불가 / 꼭 근무 관련 요청사항이 있을 경우 반드시 기재해 주세요.\n- 요청사항은 매월 기재해 주셔야 하며, 별도 요청이 없을 경우에도 반드시 '요청 없음'을 입력해 주세요.")
 
-events_combined = create_calendar_events(df_user_master, df_user_request)
+# 토요 스케줄 데이터 로드 (추가)
+df_saturday = load_saturday_schedule(gc, url, year)
+
+# events_combined 생성 부분 수정 (토요일 데이터와 사용자 이름 추가)
+events_combined = create_calendar_events(df_user_master, df_user_request, df_saturday, name)
 
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
@@ -426,7 +427,7 @@ else:
 
 # 기존 st_calendar가 있던 자리에 아래 코드를 붙여넣으세요.
 
-# 1. CSS 스타일 정의 (요일 헤더 수정)
+# 1. CSS 스타일 정의
 st.markdown("""
 <style>
 /* 월(Month) 표시 타이틀 */
@@ -435,24 +436,24 @@ st.markdown("""
     font-size: 24px;
     font-weight: bold;
     margin-bottom: 20px;
+    color: black; /* 텍스트 색상 추가 */
 }
 div[data-testid="stHorizontalBlock"] {
     gap: 0.5rem;
 }
-
-/* [수정] 요일 헤더 */
+/* 요일 헤더 */
 .calendar-header {
     text-align: center;
     font-weight: bold;
-    padding: 10px 0; /* 내부 여백 추가 */
-    border: 1px solid #e1e4e8; /* 테두리 추가 */
-    border-radius: 5px; /* 둥근 모서리 */
-    background-color: #f6f8fa; /* 배경색 추가 */
+    padding: 10px 0;
+    border: 1px solid #e1e4e8;
+    border-radius: 5px;
+    background-color: #e9ecef;
+    color: black; /* 텍스트 색상 추가 */
 }
-
-/* [추가] 토요일, 일요일 색상 */
-.saturday { color: blue; }
-.sunday { color: red; }
+/* 토요일, 일요일 색상 (기존 스타일 유지) */
+.saturday { color: blue !important; } /* !important 추가하여 우선 적용 */
+.sunday { color: red !important; } /* !important 추가하여 우선 적용 */
 
 /* 날짜 하나하나를 의미하는 셀 */
 .calendar-day-cell {
@@ -469,8 +470,9 @@ div[data-testid="stHorizontalBlock"] {
     font-weight: bold;
     font-size: 14px;
     margin-bottom: 5px;
+    color: black; /* 텍스트 색상 추가 */
 }
-/* 다른 달의 날짜는 회색으로 */
+/* 다른 달의 날짜는 회색으로 (기존 스타일 유지) */
 .day-number.other-month {
     color: #ccc;
 }
@@ -487,6 +489,7 @@ div[data-testid="stHorizontalBlock"] {
 }
 </style>
 """, unsafe_allow_html=True)
+
 # 2. 캘린더 UI 렌더링 (테두리 제거)
 
 # 제목만 중앙 정렬하여 표시

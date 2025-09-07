@@ -45,7 +45,6 @@ now = datetime.datetime.now(kst)
 today = now.date()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_str = month_dt.strftime("%Y년 %-m월")
-# month_str = "2025년 1월"
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
 month_start = month_dt
 month_end = month_dt.replace(day=last_day)
@@ -489,90 +488,30 @@ st.dataframe(df_request.reset_index(drop=True), use_container_width=True, hide_i
 # 요청사항 추가 섹션
 st.write(" ")
 st.markdown("**🟢 요청사항 추가**")
-입력_모드 = st.selectbox("입력 모드", ["이름 선택", "이름 수기 입력"], key="input_mode_select")
 
-col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
-
-with col1:
-    if 입력_모드 == "이름 선택":
-        df_master = st.session_state.get("df_master", pd.DataFrame())
-
-        # df_master가 비어있지 않고 '이름' 컬럼이 있는지 확인
-        if not df_master.empty and "이름" in df_master.columns:
-            sorted_names = sorted(df_master["이름"].unique())
-        else:
-            sorted_names = []
-        이름 = st.selectbox("이름 선택", sorted_names, key="add_employee_select")
-        이름_수기 = ""
-    else:  # 입력_모드 == "이름 수기 입력"
-        이름_수기 = st.text_input("이름 입력", help="명단에 없는 새로운 인원에 대한 요청을 추가하려면 입력", key="new_employee_input")
-        이름 = ""
-        # 매핑 시트에서 이름 검증
-        if 이름_수기 and 이름_수기 not in st.session_state.get("df_map", pd.DataFrame()).get("이름", pd.Series()).values:
-            st.warning(f"{이름_수기}은(는) 매핑 시트에 존재하지 않습니다. 먼저 명단 관리 페이지에서 추가해주세요.")
-            st.stop()
-
-with col2:
-    분류 = st.selectbox("요청 분류", 요청분류, key="request_category_select")
-
-날짜정보 = ""
-if 분류 != "요청 없음":
-    with col3:
-        방식 = st.selectbox("날짜 선택 방식", ["일자 선택", "기간 선택", "주/요일 선택"], key="method_select")
-    with col4:
+def add_request_callback():
+    # --- 1. 날짜 정보 계산 ---
+    날짜정보 = ""
+    분류 = st.session_state.request_category_select
+    
+    if 분류 != "요청 없음":
+        방식 = st.session_state.method_select
         if 방식 == "일자 선택":
-            weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
-            def format_date(date_obj):
-                weekday = weekday_map[date_obj.weekday()]
-                return f"{date_obj.strftime('%-m월 %-d일')} ({weekday})"
-            
-            날짜_목록 = [
-                month_start + datetime.timedelta(days=i)
-                for i in range((month_end - month_start).days + 1)
-            ]
-            날짜 = st.multiselect(
-                "요청 일자",
-                날짜_목록,
-                format_func=format_date,
-                key="date_multiselect"
-            )
-            if 날짜:
-                날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜])
-        
+            날짜 = st.session_state.get("date_multiselect", [])
+            if 날짜: 날짜정보 = ", ".join([d.strftime("%Y-%m-%d") for d in 날짜])
         elif 방식 == "기간 선택":
-            날짜범위 = st.date_input(
-                "요청 기간",
-                value=(month_start, month_start + datetime.timedelta(days=1)),
-                min_value=month_start,
-                max_value=month_end,
-                key="date_range"
-            )
+            날짜범위 = st.session_state.get("date_range", ())
             if isinstance(날짜범위, tuple) and len(날짜범위) == 2:
                 시작, 종료 = 날짜범위
                 날짜정보 = f"{시작.strftime('%Y-%m-%d')} ~ {종료.strftime('%Y-%m-%d')}"
-        
         elif 방식 == "주/요일 선택":
-            선택주차 = st.multiselect(
-                "주차 선택",
-                ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"],
-                key="week_select"
-            )
-            선택요일 = st.multiselect(
-                "요일 선택",
-                ["월", "화", "수", "목", "금"],
-                key="day_select"
-            )
-
-            # 수정된 부분: 선택주차 또는 선택요일이 있을 때만 로직 실행
+            선택주차 = st.session_state.get("week_select", [])
+            선택요일 = st.session_state.get("day_select", [])
             if 선택주차 or 선택요일:
                 c = calendar.Calendar(firstweekday=6)
                 month_calendar = c.monthdatescalendar(month_dt.year, month_dt.month)
-                
                 요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4}
-                
-                # 선택된 요일이 없으면 모든 요일(월~금)을 포함
                 선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일] if 선택요일 else list(요일_map.values())
-                
                 날짜목록 = []
                 for i, week in enumerate(month_calendar):
                     주차_이름 = ""
@@ -581,83 +520,125 @@ if 분류 != "요청 없음":
                     elif i == 2: 주차_이름 = "셋째주"
                     elif i == 3: 주차_이름 = "넷째주"
                     elif i == 4: 주차_이름 = "다섯째주"
-                    
-                    # 선택된 주차가 없으면 모든 주차를 포함
                     if not 선택주차 or "매주" in 선택주차 or 주차_이름 in 선택주차:
                         for date_obj in week:
                             if date_obj.month == month_dt.month and date_obj.weekday() in 선택된_요일_인덱스:
                                 날짜목록.append(date_obj.strftime("%Y-%m-%d"))
-
                 if 날짜목록:
                     날짜정보 = ", ".join(sorted(list(set(날짜목록))))
                 else:
-                    st.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+                    add_placeholder.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+                    return
 
-else:
-    if "method_select" in st.session_state:
-        del st.session_state["method_select"]
-    if "date_multiselect" in st.session_state:
-        del st.session_state["date_multiselect"]
-    if "date_range" in st.session_state:
-        del st.session_state["date_range"]
-    if "week_select" in st.session_state:
-        del st.session_state["week_select"]
-    if "day_select" in st.session_state:
-        del st.session_state["day_select"]
+    # --- 2. 입력값 유효성 검사 ---
+    이름 = st.session_state.get("add_employee_select", "")
+    이름_수기 = st.session_state.get("new_employee_input", "")
+    최종_이름 = 이름 if 이름 else 이름_수기
 
-if 분류 == "요청 없음":
-    st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
+    if not 최종_이름 or (분류 != "요청 없음" and not 날짜정보):
+        add_placeholder.warning("⚠️ 이름과 날짜를 올바르게 선택/입력해주세요.")
+        return
 
-if st.button("📅 추가"):
-    with st.spinner("요청을 기록하는 중입니다..."):
-        try:
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(url)
-            worksheet2 = sheet.worksheet(f"{month_str} 요청")
+    # --- 3. 중복 검사 및 저장 로직 ---
+    with add_placeholder.container():
+        with st.spinner("요청사항 확인 및 저장 중..."):
+            time.sleep(0.5) # 스피너가 보이도록 잠시 대기
             
-            최종_이름 = 이름 if 이름 else 이름_수기
-            if 최종_이름 and (분류 == "요청 없음" or 날짜정보):
-                if 분류 == "요청 없음":
-                    df_request = df_request[df_request["이름"] != 최종_이름]
-                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": ""}], columns=df_request.columns)
-                    df_request = pd.concat([df_request, new_row], ignore_index=True)
-                elif 날짜정보:
-                    if not df_request[(df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음")].empty:
-                        df_request = df_request[~((df_request["이름"] == 최종_이름) & (df_request["분류"] == "요청 없음"))]
-                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": 날짜정보}], columns=df_request.columns)
-                    df_request = pd.concat([df_request, new_row], ignore_index=True)
+            df_request = st.session_state["df_request"]
+            is_duplicate = not df_request[
+                (df_request["이름"] == 최종_이름) &
+                (df_request["분류"] == 분류) &
+                (df_request["날짜정보"] == 날짜정보)
+            ].empty
+            
+            # [수정됨] 중복된 요청일 경우
+            if is_duplicate:
+                time.sleep(0.5)
+                st.error("⚠️ 이미 존재하는 요청사항입니다.")
+                time.sleep(1.5)
                 
-                df_request = df_request.sort_values(by=["이름", "날짜정보"])
-                if update_sheet_with_retry(worksheet2, [df_request.columns.tolist()] + df_request.astype(str).values.tolist()):
-                    time.sleep(1)
-                    load_request_data_page5()
-                    st.session_state["df_request"] = df_request
-                    st.session_state["worksheet2"] = worksheet2
-                    st.cache_data.clear()
-                    if "delete_employee_select" in st.session_state:
-                        del st.session_state["delete_employee_select"]
-                    if "delete_request_select" in st.session_state:
-                        del st.session_state["delete_request_select"]
+                # 선택사항 초기화
+                st.session_state.new_employee_input = ""
+                st.session_state.request_category_select = "휴가"
+                st.session_state.method_select = "일자 선택"
+                st.session_state.date_multiselect = []
+                st.session_state.week_select = []
+                st.session_state.day_select = []
+                return
+
+            # 중복이 아닐 경우, 저장 로직 진행
+            try:
+                current_df = df_request.copy()
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(url)
+                worksheet2 = sheet.worksheet(f"{month_str} 요청")
+
+                if 분류 == "요청 없음":
+                    current_df = current_df[current_df["이름"] != 최종_이름]
+                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": ""}], columns=current_df.columns)
+                    current_df = pd.concat([current_df, new_row], ignore_index=True)
+                else:
+                    current_df = current_df[~((current_df["이름"] == 최종_이름) & (current_df["분류"] == "요청 없음"))]
+                    new_row = pd.DataFrame([{"이름": 최종_이름, "분류": 분류, "날짜정보": 날짜정보}], columns=current_df.columns)
+                    current_df = pd.concat([current_df, new_row], ignore_index=True)
+
+                current_df = current_df.sort_values(by=["이름", "날짜정보"])
+                if update_sheet_with_retry(worksheet2, [current_df.columns.tolist()] + current_df.astype(str).values.tolist()):
                     st.success("요청사항이 저장되었습니다.")
                     time.sleep(1.5)
-                    st.rerun()
-                else:
-                    st.warning("요청사항 저장 실패. 새로고침 후 다시 시도하세요.")
-                    st.stop()
-            else:
-                st.warning("이름을 선택하거나 입력한 후 요청사항을 입력해주세요.")
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (요청사항 추가): {e.response.status_code} - {e.response.text}")
+                    
+                    # 성공 시 입력 필드 초기화
+                    st.session_state.new_employee_input = ""
+                    st.session_state.request_category_select = "휴가"
+                    st.session_state.method_select = "일자 선택"
+                    st.session_state.date_multiselect = []
+                    st.session_state.week_select = []
+                    st.session_state.day_select = []
+                    
+                    load_request_data_page5()
+            except Exception as e:
+                st.error(f"요청사항 추가 중 오류 발생: {e}")
+
+# --- 여기서부터는 화면에 보이는 UI 부분 ---
+입력_모드 = st.selectbox("입력 모드", ["이름 선택", "이름 수기 입력"], key="input_mode_select")
+col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
+with col1:
+    if 입력_모드 == "이름 선택":
+        df_master = st.session_state.get("df_master", pd.DataFrame())
+        sorted_names = sorted(df_master["이름"].unique()) if not df_master.empty and "이름" in df_master.columns else []
+        st.selectbox("이름 선택", sorted_names, key="add_employee_select")
+    else:
+        이름_수기 = st.text_input("이름 입력", help="명단에 없는 새로운 인원에 대한 요청을 추가하려면 입력", key="new_employee_input")
+        if 이름_수기 and 이름_수기 not in st.session_state.get("df_map", pd.DataFrame()).get("이름", pd.Series()).values:
+            st.warning(f"{이름_수기}은(는) 매핑 시트에 존재하지 않습니다. 먼저 명단 관리 페이지에서 추가해주세요.")
             st.stop()
-        except NameError as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"요청사항 추가 중 오류 발생: {type(e).__name__} - {e}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"요청사항 추가 중 오류 발생: {type(e).__name__} - {e}")
-            st.stop()
+with col2:
+    분류 = st.selectbox("요청 분류", 요청분류, key="request_category_select")
+if 분류 != "요청 없음":
+    with col3:
+        방식 = st.selectbox("날짜 선택 방식", ["일자 선택", "기간 선택", "주/요일 선택"], key="method_select")
+    with col4:
+        if 방식 == "일자 선택":
+            weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+            def format_date(date_obj):
+                return f"{date_obj.strftime('%-m월 %-d일')} ({weekday_map[date_obj.weekday()]})"
+            날짜_목록 = [month_start + datetime.timedelta(days=i) for i in range((month_end - month_start).days + 1)]
+            st.multiselect("요청 일자", 날짜_목록, format_func=format_date, key="date_multiselect")
+        elif 방식 == "기간 선택":
+            st.date_input("요청 기간", value=(month_start, month_start + datetime.timedelta(days=1)), min_value=month_start, max_value=month_end, key="date_range")
+        elif 방식 == "주/요일 선택":
+            st.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
+            st.multiselect("요일 선택", ["월", "화", "수", "목", "금"], key="day_select")
+
+# '요청 없음' 선택 시 경고 메시지
+if st.session_state.get("request_category_select") == "요청 없음":
+    st.markdown("<span style='color:red;'>⚠️ 요청 없음을 추가할 경우, 기존에 입력하였던 요청사항은 전부 삭제됩니다.</span>", unsafe_allow_html=True)
+
+# 버튼 (on_click으로 위에서 정의한 함수를 연결)
+st.button("📅 추가", on_click=add_request_callback)
+
+# [추가됨] 메시지를 표시할 빈 공간 확보
+add_placeholder = st.empty()
 
 # 요청사항 삭제 섹션
 st.write(" ")
@@ -686,6 +667,7 @@ else:
 
 if st.button("📅 삭제"):
     with st.spinner("요청을 삭제하는 중입니다..."):
+        time.sleep(0.5)
         try:
             if selected_rows:
                 gc = get_gspread_client()
@@ -830,42 +812,83 @@ def is_worker_already_excluded_with_memo(df_data, date_s, time_s, worker_s):
     # 제외된 기록 중 해당 메모를 포함하는지 확인 (str.contains가 Series를 반환하므로 .any() 사용)
     return excluded_records['메모'].str.contains('보충 위해 제외됨|인원 초과로 인한 제외|오전 추가제외로 인한 오후 제외', na=False).any()
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_monthly_special_schedules(month_str):
+    try:
+        client = get_gspread_client()
+        spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+        
+        # 시트 이름 동적 생성
+        target_year = month_str.split('년')[0]
+        sheet_name = f"{target_year}년 토요/휴일 스케줄"
 
-# df_final_unique와 df_excel을 기반으로 스케줄 데이터 변환
+        yearly_schedule_sheet = spreadsheet.worksheet(sheet_name)
+        yearly_schedule_data = yearly_schedule_sheet.get_all_records()
+        df_yearly_schedule = pd.DataFrame(yearly_schedule_data)
 
+        if df_yearly_schedule.empty:
+            return pd.DataFrame(), pd.DataFrame()
+
+        target_month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+        target_month = target_month_dt.month
+
+        df_yearly_schedule['날짜'] = pd.to_datetime(df_yearly_schedule['날짜'])
+
+        df_monthly_schedule = df_yearly_schedule[
+            (df_yearly_schedule['날짜'].dt.year == int(target_year)) &
+            (df_yearly_schedule['날짜'].dt.month == target_month)
+        ].copy()
+
+        # 화면 표시용 df_display 생성
+        df_display = df_monthly_schedule.copy()
+        # 한글 요일 맵 정의
+        weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+        # 날짜 형식을 한글 요일로 변환
+        df_display['날짜'] = df_display['날짜'].apply(
+            lambda x: f"{x.month}월 {x.day}일 ({weekday_map[x.weekday()]})"
+        )
+
+        return df_monthly_schedule, df_display  # df_monthly_schedule과 df_display 모두 반환
+
+    except gspread.exceptions.WorksheetNotFound:
+        target_year = month_str.split('년')[0]
+        sheet_name = f"{target_year}년 토요/휴일 스케줄"
+        st.error(f"❌ '{sheet_name}' 시트를 찾을 수 없습니다.")
+        return pd.DataFrame(), pd.DataFrame()
+    except Exception as e:
+        st.error(f"토요/휴일 스케줄을 불러오는 중 오류가 발생했습니다: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+    
 def transform_schedule_data(df, df_excel, month_start, month_end):
-    # [수정] '근무', '보충', '추가보충' 상태를 모두 포함하도록 필터링
     df = df[df['상태'].isin(['근무', '보충', '추가보충'])][['날짜', '시간대', '근무자', '요일']].copy()
     
-    # 전체 날짜 범위 생성
     date_range = pd.date_range(start=month_start, end=month_end)
     date_list = [f"{d.month}월 {d.day}일" for d in date_range]
     weekday_list = [d.strftime('%a') for d in date_range]
     weekday_map = {'Mon': '월', 'Tue': '화', 'Wed': '수', 'Thu': '목', 'Fri': '금', 'Sat': '토', 'Sun': '일'}
     weekdays = [weekday_map[w] for w in weekday_list]
     
-    # 결과 DataFrame 초기화
+    # [수정] month_start에서 연도를 동적으로 가져옵니다.
+    target_year = month_start.year
+
     columns = ['날짜', '요일'] + [str(i) for i in range(1, 13)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 6)]
     result_df = pd.DataFrame(columns=columns)
     
-    # 각 날짜별로 처리
     for date, weekday in zip(date_list, weekdays):
-        date_key = datetime.datetime.strptime(date, '%m월 %d일').replace(year=2025).strftime('%Y-%m-%d')
+        # [수정] 하드코딩된 연도 대신 target_year 변수를 사용합니다.
+        date_key = datetime.datetime.strptime(date, '%m월 %d일').replace(year=target_year).strftime('%Y-%m-%d')
         date_df = df[df['날짜'] == date_key]
         
-        # 평일 데이터 (df_final_unique에서 가져옴)
         morning_workers = date_df[date_df['시간대'] == '오전']['근무자'].tolist()[:12]
         morning_data = morning_workers + [''] * (12 - len(morning_workers))
         afternoon_workers = date_df[date_df['시간대'] == '오후']['근무자'].tolist()[:5]
         afternoon_data = afternoon_workers + [''] * (5 - len(afternoon_workers))
         
-        # 토요일 데이터 (df_excel에서 가져옴)
-        if weekday == '토':
+        if weekday in ['토', '일']: # 토요일과 일요일 모두 처리하도록 수정
             excel_row = df_excel[df_excel['날짜'] == date]
             if not excel_row.empty:
                 morning_data = [excel_row[str(i)].iloc[0] if str(i) in excel_row.columns and pd.notna(excel_row[str(i)].iloc[0]) else '' for i in range(1, 13)]
         
-        # df_excel에서 해당 날짜의 온콜 데이터 가져오기
         oncall_worker = ''
         excel_row = df_excel[df_excel['날짜'] == date]
         if not excel_row.empty:
@@ -885,6 +908,17 @@ if "downloaded" not in st.session_state:
     st.session_state.downloaded = False
 if "output" not in st.session_state:
     st.session_state.output = None
+
+st.write("")
+st.markdown(f"**📅 {month_str} 토요/휴일 스케줄**")
+
+# 1단계에서 만든 함수 호출
+df_monthly_schedule, df_display = load_monthly_special_schedules(month_str)
+
+if not df_monthly_schedule.empty:
+    st.dataframe(df_display[['날짜', '근무', '당직']], use_container_width=True, hide_index=True)
+else:
+    st.info(f"ℹ️ '{month_str}'에 해당하는 토요/휴일 스케줄이 없습니다.")
 
 # 휴관일 선택 UI 추가
 st.write(" ")
@@ -921,107 +955,6 @@ names_in_master = set(df_master["이름"].unique().tolist())
 names_in_request = set(df_request["이름"].unique().tolist())
 all_names = sorted(list(names_in_master.union(names_in_request)))  # 중복 제거 후 정렬
 
-# --- UI 개선: 토요/휴일 스케줄 입력 ---
-# 세션 상태 초기화
-if "special_schedule_count" not in st.session_state:
-    st.session_state.special_schedule_count = 1
-if "special_schedules" not in st.session_state:
-    st.session_state.special_schedules = []
-
-# 전체 인원 목록 준비
-all_names = sorted(list(st.session_state["df_master"]["이름"].unique()))
-
-# month_str과 month_dt 정의
-kst = ZoneInfo("Asia/Seoul")
-now = datetime.datetime.now(kst)
-today = now.date()
-month_dt = today.replace(day=1) + relativedelta(months=1)
-month_format = "%#m" if platform.system() == "Windows" else "%-m"
-month_str = month_dt.strftime(f"%Y년 {month_format}월")
-# month_str = "2025년 1월"
-_, last_day = calendar.monthrange(month_dt.year, month_dt.month)  # month_dt의 연도와 월로 last_day 계산
-
-# 토요/휴일 스케줄 입력 UI
-st.write(" ")
-st.markdown("**📅 토요/휴일 스케줄 입력**")
-special_schedules = []
-for i in range(st.session_state.special_schedule_count):
-    cols = st.columns([1, 2, 1])
-    with cols[0]:
-        selected_date = st.date_input(
-            label=f"날짜 선택",
-            value=None,
-            min_value=month_dt,
-            max_value=month_dt.replace(day=last_day),
-            key=f"special_date_{i}",
-            help="주말, 공휴일 등 정규 스케줄 외 근무가 필요한 날짜를 선택하세요."
-        )
-    with cols[1]:
-        selected_workers = []  # Initialize selected_workers as an empty list
-        if selected_date:
-            selected_workers = st.multiselect(
-                label=f"근무 인원 선택",
-                options=all_names,
-                key=f"special_workers_{i}"
-            )
-    with cols[2]:
-        selected_oncall = None
-        if selected_workers:  # Check if selected_workers is non-empty
-            selected_oncall = st.selectbox(
-                label=f"당직 인원 선택",
-                options=["당직 없음"] + selected_workers,
-                key=f"special_oncall_{i}"
-            )
-    if selected_date and selected_workers and selected_oncall is not None:
-        special_schedules.append((selected_date.strftime('%Y-%m-%d'), selected_workers, selected_oncall))
-
-# 입력 필드 추가 버튼
-if st.button("➕ 토요/휴일 스케줄 추가"):
-    st.session_state.special_schedule_count += 1
-    st.rerun()
-
-if special_schedules:
-    st.session_state.special_schedules = special_schedules  # 세션 상태 업데이트
-
-# Google Sheets 저장 함수 수정
-def save_special_schedules_to_sheets(special_schedules, month_str, client):
-    try:
-        spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
-        sheet_name = f"{month_str} 토요/휴일 일자"
-        
-        # 기존 시트가 있으면 가져오고, 없으면 새로 생성
-        try:
-            worksheet = spreadsheet.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=2)
-        
-        # 시트 초기화 및 헤더 설정
-        worksheet.clear()
-        headers = ["날짜", "당직 인원"]
-        worksheet.update('A1', [headers], value_input_option='RAW')
-        
-        # 스케줄 데이터가 있을 경우에만 저장
-        if special_schedules:
-            schedule_df = pd.DataFrame(
-                [(s[0], s[2] if s[2] != "당직 없음" else "") for s in special_schedules],
-                columns=headers
-            )
-            data_to_save = schedule_df.values.tolist()
-            worksheet.update('A2', data_to_save, value_input_option='RAW')
-            return True
-        else:
-            # 스케줄이 없으면 빈 데이터로 초기화
-            worksheet.update('A2', [[]], value_input_option='RAW')
-            st.warning(f"별도 토요/휴일 스케줄이 없습니다. {month_str} 토요/휴일 일자 시트가 빈 시트로 저장됩니다.")
-            return True
-            
-    except gspread.exceptions.APIError as e:
-        st.error(f"Google Sheets API 오류 (토요/휴일 스케줄 저장): {e.response.status_code} - {e.response.text}")
-        return False
-    except Exception as e:
-        st.error(f"토요/휴일 스케줄 저장 실패: {type(e).__name__} - {e}")
-        return False
-
 def update_worker_status(df, date_str, time_slot, worker, status, memo, color, day_map, week_numbers):
     """df_final 데이터프레임을 안전하게 업데이트하는 함수"""
     date_obj = pd.to_datetime(date_str)
@@ -1049,11 +982,12 @@ def update_worker_status(df, date_str, time_slot, worker, status, memo, color, d
         df = pd.concat([df, new_row], ignore_index=True)
     return df
 
-# 'def exec_balancing_pass(...):' 부터 'return df_final' 까지
-# 함수 전체를 아래의 최종 버전 코드로 교체하세요.
+# 기존 execute_adjustment_pass 함수 전체를 아래 코드로 교체하세요.
 
-def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs):
-    """(최종 버전) 희소성/중요도에 기반하여 가장 전략적인 1:1 교환을 실행하는 함수"""
+def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative):
+    """(공정성 강화 최종 버전) '쉬운 교환' 그룹 내에서 무작위 추첨을 우선하는 함수"""
+
+    # --- 1단계: 보충/제외 (1:1 교환)를 최대한 실행 ---
     iteration = 0
     while iteration < 100:
         iteration += 1
@@ -1070,112 +1004,62 @@ def exec_balancing_pass(df_final, active_weekdays, time_slot, target_count, init
         if not excess_dates or not shortage_dates:
             break
 
-        possible_moves = []
-        moved_workers_in_pass = set(df_final[df_final['상태'] == '보충']['근무자'].unique())
-
+        easy_moves = []
+        difficult_moves = []
+        
         for excess_date in excess_dates:
             excess_workers = df_final[(df_final['날짜'] == excess_date) & (df_final['시간대'] == time_slot) & (df_final['상태'] == '근무')]['근무자'].unique()
             must_work_on_excess = {r['이름'] for _, r in df_request.iterrows() if excess_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'꼭 근무({time_slot})'}
-            movable_workers = [w for w in excess_workers if w not in must_work_on_excess and w not in moved_workers_in_pass]
+            movable_workers = [w for w in excess_workers if w not in must_work_on_excess]
 
             for worker in movable_workers:
                 for shortage_date in shortage_dates:
                     # 모든 제약 조건 검사
                     shortage_day_name = day_map[pd.to_datetime(shortage_date).weekday()]
                     shortage_shift_key = f"{shortage_day_name} {time_slot}"
-                    
                     supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == shortage_shift_key]
                     if supplement_row.empty: continue
                     supplement_pool = set(val.replace('🔺','').strip() for val in supplement_row.iloc[0, 1:].dropna())
                     if worker not in supplement_pool: continue
-                    
                     if worker in initial_master_assignments.get((shortage_date, time_slot), set()): continue
-                    
                     no_supplement_req = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 불가({time_slot})'}
                     if worker in no_supplement_req: continue
-
                     if time_slot == '오후':
                         morning_workers = set(df_final[(df_final['날짜'] == shortage_date) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
-                        must_work_pm = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == '꼭 근무(오후)'}
-                        if worker not in morning_workers and worker not in must_work_pm: continue
+                        if worker not in morning_workers and worker not in {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == '꼭 근무(오후)'}: continue
                     
+                    move = {"worker": worker, "from": excess_date, "to": shortage_date}
                     difficult_req = {r['이름'] for _, r in df_request.iterrows() if shortage_date in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 어려움({time_slot})'}
-                    score = 1 if worker in difficult_req else 0
-                    
-                    possible_moves.append({"score": score, "worker": worker, "from": excess_date, "to": shortage_date})
+                    if worker in difficult_req:
+                        difficult_moves.append(move)
+                    else:
+                        easy_moves.append(move)
 
-        if not possible_moves:
-            break
+        best_move = None
+        if easy_moves:
+            random.shuffle(easy_moves)
+            best_move = easy_moves[0]
+        elif difficult_moves:
+            random.shuffle(difficult_moves)
+            best_move = difficult_moves[0]
+        else:
+            break # 실행할 수 있는 이동이 없으면 루프 종료
 
-        # '희소성' 점수 계산
-        worker_move_options = {worker: 0 for worker in df_master['이름'].unique()}
-        destination_fill_options = {date: 0 for date in shortage_dates}
-        for move in possible_moves:
-            worker_move_options[move['worker']] += 1
-            destination_fill_options[move['to']] += 1
+        # 선택된 이동 1회 실행
+        df_final = update_worker_status(df_final, best_move['from'], time_slot, best_move['worker'], '제외', f"{pd.to_datetime(best_move['to']).strftime('%-m월 %-d일')} 보충", '🔵 파란색', day_map, week_numbers)
+        df_final = update_worker_status(df_final, best_move['to'], time_slot, best_move['worker'], '보충', f"{pd.to_datetime(best_move['from']).strftime('%-m월 %-d일')}에서 이동", '🟢 초록색', day_map, week_numbers)
 
-        for move in possible_moves:
-            # 이동할 수 있는 곳이 적은 근무자일수록, 채울 수 있는 인원이 적은 목적지일수록 우선순위가 높다
-            move['worker_options'] = worker_move_options[move['worker']]
-            move['destination_options'] = destination_fill_options[move['to']]
-            
-        # 최종 우선순위 정렬:
-        # 1. '쉬운' 이동 (score)
-        # 2. 갈 곳이 한 곳뿐인 근무자 (worker_options)
-        # 3. 채울 사람이 한 명뿐인 목적지 (destination_options)
-        possible_moves.sort(key=lambda x: (x['score'], x['worker_options'], x['destination_options']))
-        
-        best_move = possible_moves[0]
-        
-        worker_to_move = best_move['worker']
-        from_date = best_move['from']
-        to_date = best_move['to']
-
-        df_final = update_worker_status(df_final, from_date, time_slot, worker_to_move, '제외', f'{pd.to_datetime(to_date).strftime("%-m월 %-d일")} 보충', '🔵 파란색', day_map, week_numbers)
-        df_final = update_worker_status(df_final, to_date, time_slot, worker_to_move, '보충', f'{pd.to_datetime(from_date).strftime("%-m월 %-d일")}에서 이동', '🟢 초록색', day_map, week_numbers)
-
-    return df_final
-
-def exec_final_adjustment(df_final, active_weekdays, time_slot, target_count, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative):
-    """최종 추가 보충/제외를 수행하는 함수"""
+    # --- 2단계: 1:1 교환으로 해결되지 않은 나머지 문제를 최종 조정 ---
+    # 먼저 모든 '추가 제외'를 실행
     for date in active_weekdays:
         date_str = date.strftime('%Y-%m-%d')
         current_workers = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '보충']))]['근무자'].unique()
         
-        if len(current_workers) < target_count:
-            needed = target_count - len(current_workers)
-            day_name = day_map[pd.to_datetime(date_str).weekday()]
-            shift_key = f"{day_name} {time_slot}"
-            supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == shift_key]
-            supplement_candidates = []
-            if not supplement_row.empty:
-                supplement_candidates = [val.replace('🔺', '').strip() for val in supplement_row.iloc[0, 1:].dropna()]
-
-            no_supplement_on_date = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 불가({time_slot})'}
-            
-            # '보충 어려움' 요청자 목록 생성
-            difficult_supplement_on_date = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 어려움({time_slot})'}
-
-            supplement_candidates = [w for w in supplement_candidates if w not in current_workers and w not in no_supplement_on_date]
-            
-            if time_slot == '오후':
-                morning_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
-                supplement_candidates = [w for w in supplement_candidates if w in morning_workers]
-            
-            # 정렬 기준: '보충 어려움' 요청자를 최후순위로, 그 외엔 누적 근무가 적은 순으로
-            supplement_candidates.sort(key=lambda w: (1 if w in difficult_supplement_on_date else 0, current_cumulative.get(time_slot, {}).get(w, 0)))
-
-            for worker_to_add in supplement_candidates[:needed]:
-                df_final = update_worker_status(df_final, date_str, time_slot, worker_to_add, '추가보충', '', '🟡 노란색', day_map, week_numbers)
-                current_cumulative.setdefault(time_slot, {})[worker_to_add] = current_cumulative.get(time_slot, {}).get(worker_to_add, 0) + 1
-        
-        elif len(current_workers) > target_count:
+        if len(current_workers) > target_count:
             over_count = len(current_workers) - target_count
             must_work_on_date = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'꼭 근무({time_slot})'}
-            
             removable_workers = [w for w in current_workers if w not in must_work_on_date]
             removable_workers.sort(key=lambda w: current_cumulative.get(time_slot, {}).get(w, 0), reverse=True)
-
             for worker_to_remove in removable_workers[:over_count]:
                 df_final = update_worker_status(df_final, date_str, time_slot, worker_to_remove, '추가제외', '', '🟣 보라색', day_map, week_numbers)
                 current_cumulative.setdefault(time_slot, {})[worker_to_remove] = current_cumulative.get(time_slot, {}).get(worker_to_remove, 0) - 1
@@ -1184,23 +1068,68 @@ def exec_final_adjustment(df_final, active_weekdays, time_slot, target_count, df
                     if not afternoon_worker_record.empty:
                         df_final = update_worker_status(df_final, date_str, '오후', worker_to_remove, '추가제외', '오전 추가제외로 동시 제외', '🟣 보라색', day_map, week_numbers)
                         current_cumulative.setdefault('오후', {})[worker_to_remove] = current_cumulative.get('오후', {}).get(worker_to_remove, 0) - 1
+    
+    # 그 다음 모든 '추가 보충'을 실행
+    for date in active_weekdays:
+        date_str = date.strftime('%Y-%m-%d')
+        current_workers = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '보충']))]['근무자'].unique()
+
+        if len(current_workers) < target_count:
+            needed = target_count - len(current_workers)
+            day_name = day_map[pd.to_datetime(date_str).weekday()]
+            shift_key = f"{day_name} {time_slot}"
+            supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == shift_key]
+            supplement_candidates = []
+            if not supplement_row.empty:
+                supplement_candidates = [val.replace('🔺','').strip() for val in supplement_row.iloc[0, 1:].dropna()]
+            
+            unavailable_workers = set(current_workers)
+            no_supplement_on_date = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 불가({time_slot})'}
+            difficult_supplement_on_date = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 어려움({time_slot})'}
+
+            supplement_candidates = [w for w in supplement_candidates if w not in unavailable_workers and w not in no_supplement_on_date]
+            if time_slot == '오후':
+                morning_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
+                supplement_candidates = [w for w in supplement_candidates if w in morning_workers]
+            
+            supplement_candidates.sort(key=lambda w: (1 if w in difficult_supplement_on_date else 0, current_cumulative.get(time_slot, {}).get(w, 0)))
+
+            for worker_to_add in supplement_candidates[:needed]:
+                df_final = update_worker_status(df_final, date_str, time_slot, worker_to_add, '추가보충', '', '🟡 노란색', day_map, week_numbers)
+                current_cumulative.setdefault(time_slot, {})[worker_to_add] = current_cumulative.get(time_slot, {}).get(worker_to_add, 0) + 1
+
     return df_final, current_cumulative
 
 # ========================= 메인 실행 로직 전체 교체 =========================
 
+st.divider()
 if st.button("🚀 근무 배정 실행", type="primary", use_container_width=True):
     st.session_state.assigned = False
     st.session_state.output = None
     st.session_state.downloaded = False
-    special_schedules = st.session_state.get("special_schedules", [])
     
     with st.spinner("근무 배정 중... 최적의 조합을 찾는데 다소 시간이 소요될 수 있습니다."):
         time.sleep(1)
-        client = get_gspread_client()
-        save_special_schedules_to_sheets(special_schedules, month_str, client)
+        
+        # 1단계에서 만든 함수 호출
+        df_special_schedule_for_month, df_display = load_monthly_special_schedules(month_str)
+
+        # 후속 로직에서 사용할 special_schedules 리스트 생성
+        special_schedules = []
+        if not df_special_schedule_for_month.empty:
+            for index, row in df_special_schedule_for_month.iterrows():
+                date_str = row['날짜'].strftime('%Y-%m-%d')
+                oncall_person = row['당직']
+                workers_str = row.get('근무', '')
+                
+                if workers_str and isinstance(workers_str, str):
+                    workers_list = [name.strip() for name in workers_str.split(',')]
+                else:
+                    workers_list = []
+                
+                special_schedules.append((date_str, workers_list, oncall_person))
 
         # --- 0단계: 모든 초기화 ---
-        debug_logs = []
         df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근무자', '상태', '메모', '색상'])
         month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
         _, last_day = calendar.monthrange(month_dt.year, month_dt.month)  # month_dt에 맞게 last_day 계산
@@ -1244,13 +1173,10 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
                 df_final = update_worker_status(df_final, date_str, time_slot_am, worker, '근무', '' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
             for vac in (vacationers & base_workers):
                 df_final = update_worker_status(df_final, date_str, time_slot_am, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
-        
-        # 1단계: 오전 균형 맞추기
-        df_final = exec_balancing_pass(df_final, active_weekdays, time_slot_am, target_count_am, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs=debug_logs)
-        
-        # 2단계: 오전 최종 조정
-        df_final, current_cumulative = exec_final_adjustment(df_final, active_weekdays, time_slot_am, target_count_am, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative)
 
+        # 1단계: 오전 균형 맞추기
+        df_final, current_cumulative = execute_adjustment_pass(df_final, active_weekdays, time_slot_am, target_count_am, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative)
+        
         # === 🌙 오후 스케줄링 (3, 4단계) ---
         time_slot_pm = '오후'
         target_count_pm = 5
@@ -1274,11 +1200,8 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
                 if not df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot_pm) & (df_final['근무자'] == vac) & (df_final['상태'] == '근무')].empty: continue
                 df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, '제외', '', '🔴 빨간색', day_map, week_numbers)
         
-        # 3단계: 오후 균형 다시 맞추기 (⭐️핵심⭐️)
-        df_final = exec_balancing_pass(df_final, active_weekdays, time_slot_pm, target_count_pm, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, debug_logs=debug_logs)
-        
         # 4단계: 오후 최종 조정
-        df_final, current_cumulative = exec_final_adjustment(df_final, active_weekdays, time_slot_pm, target_count_pm, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative)
+        df_final, current_cumulative = execute_adjustment_pass(df_final, active_weekdays, time_slot_pm, target_count_pm, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative)
 
         # === 📤 3단계: 최종 결과 생성 및 저장 ===
         df_cumulative_next = df_cumulative.copy().set_index('이름')
@@ -1585,24 +1508,15 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         st.session_state.assigned = True
         st.session_state.output = output
 
-        if debug_logs:
-            st.divider()
-            with st.expander("🔍 '보충/제외' 이동 불가 상세 로그 보기"):
-                st.warning("아래는 '보충/제외' 단계에서 특정 인원이 다른 날짜로 이동하지 못한 이유에 대한 모든 기록입니다.")
-                log_text = "\n".join(debug_logs)
-                st.text_area(
-                    label="디버그 로그 내용",
-                    value=log_text,
-                    height=300,
-                    help="[이동 불가] OOO (출발일→도착일): 사유"
-                )
-
         st.write(" ")
         st.markdown(f"**➕ {next_month_str} 누적 테이블**")
         st.dataframe(df_cumulative_next, use_container_width=True, hide_index=True)
         st.success(f"✅ {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
         st.divider()
         st.success(f"✅ {month_str} 스케줄 테이블이 Google Sheets에 저장되었습니다.")
+
+        st.session_state.assigned = True
+        st.session_state.output = output
 
         st.markdown("""<style>.download-button > button { background-color: #4CAF50; color: white; border-radius: 5px; padding: 10px; font-size: 16px; }</style>""", unsafe_allow_html=True)
         if st.session_state.assigned and not st.session_state.downloaded:

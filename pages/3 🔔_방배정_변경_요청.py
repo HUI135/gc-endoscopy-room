@@ -69,7 +69,11 @@ def load_room_data(month_str):
             st.info(f"{month_str} 방배정이 아직 완료되지 않았습니다.")
             return pd.DataFrame()
         df.fillna('', inplace=True)
-        df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
+        
+        # [수정] month_str에서 직접 연도를 추출하여 사용
+        target_year = month_str.split('년')[0]
+        df['날짜_dt'] = pd.to_datetime(target_year + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
+        
         df.dropna(subset=['날짜_dt'], inplace=True)
         return df
     except gspread.exceptions.APIError as e:
@@ -92,13 +96,16 @@ def load_special_schedules(month_str):
         if not gc: return pd.DataFrame()
         
         spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        worksheet = spreadsheet.worksheet(f"{month_str} 토요/휴일 일자")
+        
+        target_year = month_str.split('년')[0]
+        sheet_name = f"{target_year}년 토요/휴일 스케줄"
+
+        worksheet = spreadsheet.worksheet(sheet_name)
         records = worksheet.get_all_records()
         
         if not records: return pd.DataFrame()
         
         df = pd.DataFrame(records)
-        # '날짜' 열만 확인하고, '근무 인원' 열은 더 이상 확인하지 않습니다.
         if '날짜' not in df.columns: return pd.DataFrame()
 
         df.fillna('', inplace=True)
@@ -107,7 +114,8 @@ def load_special_schedules(month_str):
         return df
         
     except gspread.exceptions.WorksheetNotFound:
-        st.info(f"'{month_str} 토요/휴일 일자'가 아직 입력되지 않았습니다.")
+        # [수정] 에러 메시지에도 동적 시트 이름 반영
+        st.info(f"'{sheet_name}' 시트가 아직 입력되지 않았습니다.")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
@@ -159,7 +167,6 @@ def add_room_request_to_sheet(request_data, month_str):
             try:
                 worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
                 worksheet.append_row(headers)
-                st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (시트 생성): {str(e)}")
@@ -301,7 +308,7 @@ def is_person_assigned_at_time(df, person_name, date_obj, column_name, special_s
     if special_schedules_df is not None and not special_schedules_df.empty:
         special_row = special_schedules_df[special_schedules_df['날짜_dt'].dt.date == date_obj]
         if not special_row.empty:
-            workers = special_row.iloc[0]['근무 인원'].split(', ') if special_row.iloc[0]['근무 인원'] else []
+            workers = special_row.iloc[0]['근무'].split(', ') if special_row.iloc[0]['근무'] else []
             cleaned_workers = [re.sub(r'\[\d+\]', '', worker).strip() for worker in workers]
             if person_name in cleaned_workers:
                 return True

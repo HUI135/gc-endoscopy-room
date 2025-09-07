@@ -11,6 +11,7 @@ from google.oauth2.service_account import Credentials
 import gspread
 from gspread.exceptions import WorksheetNotFound
 import menu
+import re
 
 # 페이지 설정
 st.set_page_config(page_title="방배정 요청", page_icon="🏠", layout="wide")
@@ -99,9 +100,33 @@ def load_room_request_data_page3(sheet, sheet_name):
         st.error(f"방배정 요청 데이터 로드 중 오류 발생: {str(e)}")
         st.stop()
 
+def generate_saturday_events(df_saturday_schedule, current_user_name, year, month):
+    """토요/휴일 스케줄에서 현재 사용자의 이벤트를 생성하는 함수"""
+    events = []
+    status_colors = {"토요근무": "#6A5ACD", "당직": "#FF6347"}
+
+    if not df_saturday_schedule.empty:
+        # 해당 월의 데이터만 필터링
+        month_schedule = df_saturday_schedule[
+            (df_saturday_schedule['날짜'].dt.year == year) &
+            (df_saturday_schedule['날짜'].dt.month == month)
+        ]
+        
+        for _, row in month_schedule.iterrows():
+            date_obj = row['날짜'].date()
+            # 근무자 확인
+            work_staff = row.get('근무', '')
+            if isinstance(work_staff, str) and current_user_name in work_staff:
+                events.append({"title": "토요근무", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors.get("토요근무"), "source": "saturday"})
+            # 당직자 확인
+            on_call_staff = row.get('당직', '')
+            if isinstance(on_call_staff, str) and current_user_name == on_call_staff.strip():
+                events.append({"title": "당직", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors.get("당직"), "source": "saturday"})
+    return events
+
 def generate_master_events(df_user_master, year, month, week_labels):
     master_data = {}
-    요일리스트 = ["월", "화", "수", "목", "금", "토", "일"] 
+    요일리스트 = ["월", "화", "수", "목", "금"] # 평일만 처리하도록 수정
     
     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
     
@@ -119,39 +144,24 @@ def generate_master_events(df_user_master, year, month, week_labels):
                 master_data[week][day] = "근무없음"
 
     events = []
-    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"} # 평일 맵으로 수정
     _, last_day = calendar.monthrange(year, month)
     status_colors = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
-
-    # 해당 월의 첫 번째 일요일 찾기 (주차 계산의 기준)
     first_sunday = next((day for day in range(1, 8) if datetime.date(year, month, day).weekday() == 6), None)
 
     for day in range(1, last_day + 1):
         date_obj = datetime.date(year, month, day)
         weekday = date_obj.weekday()
-        if weekday in weekday_map:
+        if weekday in weekday_map: # 평일만 이벤트 생성
             day_name = weekday_map[weekday]
-            
-            # 날짜에 해당하는 주차 계산
-            if first_sunday is None: # 만약 첫 주에 일요일이 없다면
-                week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
-            else:
-                week_num = (day - first_sunday) // 7 + 1 if day >= first_sunday else 0
-
-            if week_num >= len(week_labels):
-                continue
-            
+            if first_sunday is None: week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
+            else: week_num = (day - first_sunday) // 7 + 1 if day >= first_sunday else 0
+            if week_num >= len(week_labels): continue
             week = week_labels[week_num]
             status = master_data.get(week, {}).get(day_name, "근무없음")
             
             if status and status != "근무없음":
-                events.append({
-                    "title": f"{status}",
-                    "start": date_obj.strftime("%Y-%m-%d"),
-                    "end": date_obj.strftime("%Y-%m-%d"),
-                    "color": status_colors.get(status, "#E0E0E0"),
-                    "source": "master"
-                })
+                events.append({"title": f"{status}", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors.get(status, "#E0E0E0"), "source": "master"})
     return events
 
 def generate_request_events(df_user_request, today):
@@ -190,6 +200,28 @@ def generate_request_events(df_user_request, today):
                     continue
     return events
 
+def load_saturday_schedule(sheet, year):
+    """지정된 연도의 토요/휴일 스케줄 데이터를 로드하는 함수"""
+    try:
+        worksheet_name = f"{year}년 토요/휴일 스케줄"
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        if not data:
+            st.warning(f"⚠️ '{worksheet_name}' 시트에 데이터가 없습니다.")
+            return pd.DataFrame(columns=["날짜", "근무", "당직"])
+        
+        df = pd.DataFrame(data)
+        df = df[df['날짜'] != '']
+        df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
+        df.dropna(subset=['날짜'], inplace=True)
+        return df
+    except WorksheetNotFound:
+        st.info(f"'{worksheet_name}' 시트를 찾을 수 없습니다. 토요일 근무가 표시되지 않을 수 있습니다.")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+    except Exception as e:
+        st.error(f"토요/휴일 스케줄 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+    
 def generate_room_request_events(df_user_room_request, today):
     label_map = {
         "1번방": "1번방", "2번방": "2번방", "3번방": "3번방", "4번방": "4번방", "5번방": "5번방",
@@ -217,7 +249,6 @@ def generate_room_request_events(df_user_room_request, today):
     return events
 
 # 데이터 초기화 로직
-# 데이터 초기화 로직
 def initialize_and_sync_data(gc, url, name, month_start, month_end):
     """페이지에 필요한 모든 데이터를 로드하고, 동기화하며, 세션 상태에 저장합니다."""
     try:
@@ -228,6 +259,7 @@ def initialize_and_sync_data(gc, url, name, month_start, month_end):
         df_master = load_master_data_page3(sheet)
         df_request = load_request_data_page3(sheet, f"{month_str} 요청")
         df_room_request = load_room_request_data_page3(sheet, f"{month_str} 방배정 요청")
+        df_saturday_schedule = load_saturday_schedule(sheet, year) # <-- 이 줄을 추가하세요.
 
         # 2. 신규 유저 마스터 데이터 동기화
         if not df_master.empty and name not in df_master["이름"].values:
@@ -264,7 +296,8 @@ def initialize_and_sync_data(gc, url, name, month_start, month_end):
         st.session_state["df_master"] = df_master
         st.session_state["df_request"] = df_request
         st.session_state["df_room_request"] = df_room_request
-        
+        st.session_state["df_saturday_schedule"] = df_saturday_schedule # <-- 이 줄을 추가하세요.
+
     except (gspread.exceptions.APIError, Exception) as e:
         st.error(f"데이터 초기화 및 동기화 중 오류가 발생했습니다: {e}")
         st.stop()
@@ -341,10 +374,15 @@ else:
     st.session_state["df_user_room_request"] = pd.DataFrame()
 
 # UI 렌더링 시작
+df_saturday = st.session_state.get("df_saturday_schedule", pd.DataFrame()) # 세션에서 토요일 데이터 가져오기
+
 master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels)
 request_events = generate_request_events(st.session_state["df_user_request"], next_month_date)
 room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month_date)
-all_events = master_events + request_events + room_request_events
+saturday_events = generate_saturday_events(df_saturday, name, year, month) # 토요일 이벤트 생성
+
+# 모든 이벤트를 하나로 합치기
+all_events = master_events + request_events + room_request_events + saturday_events
 
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
 
@@ -353,7 +391,8 @@ if st.button("🔄 새로고침 (R)"):
     try:
         with st.spinner("데이터를 다시 불러오는 중입니다..."):
             st.cache_data.clear()
-            initialize_and_sync_data(gc, url, name)
+            # 아래 함수 호출 부분에 month_start, month_end 추가
+            initialize_and_sync_data(gc, url, name, month_start, month_end)
         st.success("데이터가 새로고침되었습니다.")
         st.rerun()
     except NameError as e:
@@ -382,6 +421,7 @@ st.markdown("""
     font-size: 24px;
     font-weight: bold;
     margin-bottom: 20px;
+    color: black; /* 텍스트 색상 추가 */
 }
 div[data-testid="stHorizontalBlock"] {
     gap: 0.5rem;
@@ -393,18 +433,19 @@ div[data-testid="stHorizontalBlock"] {
     padding: 10px 0;
     border: 1px solid #e1e4e8;
     border-radius: 5px;
-    background-color: #f6f8fa;
+    background-color: #e9ecef;
+    color: black; /* 텍스트 색상 추가 */
 }
-/* 토요일, 일요일 색상 */
-.saturday { color: blue; }
-.sunday { color: red; }
+/* 토요일, 일요일 색상 (기존 스타일 유지) */
+.saturday { color: blue !important; } /* !important 추가하여 우선 적용 */
+.sunday { color: red !important; } /* !important 추가하여 우선 적용 */
 
 /* 날짜 하나하나를 의미하는 셀 */
 .calendar-day-cell {
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     padding: 6px;
-    min-height: 120px; /* 칸 높이 조절 */
+    min-height: 120px;
     background-color: white;
     display: flex;
     flex-direction: column;
@@ -414,8 +455,9 @@ div[data-testid="stHorizontalBlock"] {
     font-weight: bold;
     font-size: 14px;
     margin-bottom: 5px;
+    color: black; /* 텍스트 색상 추가 */
 }
-/* 다른 달의 날짜는 회색으로 */
+/* 다른 달의 날짜는 회색으로 (기존 스타일 유지) */
 .day-number.other-month {
     color: #ccc;
 }
@@ -549,14 +591,22 @@ def format_date_for_display(date_info):
         weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
         for date in date_info.split(","):
             date = date.strip()
-            date_part = date.split(" (")[0]
-            time_slot_match = date.split(" (")
-            time_slot = f"({time_slot_match[1]})" if len(time_slot_match) > 1 else ""
+            
+            # (오전) 또는 (오후) 파트를 분리
+            match = re.match(r'(\d{4}-\d{2}-\d{2})\s*\((.+)\)', date)
+            if match:
+                date_part, time_part = match.groups()
+                time_slot = f"({time_part})"
+            else:
+                date_part = date
+                time_slot = ""
             
             dt = datetime.datetime.strptime(date_part, "%Y-%m-%d")
             month_num = dt.month
             day = dt.day
             weekday_name = weekday_map[dt.weekday()]
+            
+            # 분리된 파트를 올바르게 조합
             formatted_date = f"{month_num}월 {day}일({weekday_name}) {time_slot}".strip()
             formatted_dates.append(formatted_date)
         return ", ".join(formatted_dates)
@@ -569,105 +619,138 @@ def format_date_for_display(date_info):
 요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방", "12번방",
            "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "오후 당직 제외"]
 
+# '추가' 및 '삭제' 섹션
+# 페이지가 새로고침될 때 입력창을 초기화해야 하는지 확인하는 '신호'
+if "clear_inputs" not in st.session_state:
+    st.session_state.clear_inputs = False
+
+# 'clear_inputs' 신호가 True이면, 위젯들의 상태를 초기화하고 신호를 다시 False로 변경
+if st.session_state.clear_inputs:
+    st.session_state.category_select = []
+    st.session_state.date_multiselect_new = []
+    st.session_state.timeslot_multiselect = []
+    st.session_state.clear_inputs = False # 신호 초기화
+
+요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방", "12번방",
+           "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "오후 당직 제외"]
+
 st.markdown("**🟢 방배정 요청사항 입력**")
-add_col1, add_col2, add_col3 = st.columns([2, 3, 1])
+add_col1, add_col2, add_col3, add_col4 = st.columns([2, 3, 1.5, 1])
 
 with add_col1:
     분류 = st.multiselect("요청 분류", 요청분류, key="category_select")
+
+# 날짜 선택 옵션을 준비하는 로직
+date_options_map = {}
+weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토"}
+
+# 1. 모든 평일(월-금)을 옵션에 추가
+for day in pd.date_range(month_start, month_end):
+    if day.weekday() < 5: # 0:월 ~ 4:금
+        weekday_name = weekday_map[day.weekday()]
+        display_date = f"{day.month}월 {day.day}일({weekday_name})"
+        save_date = day.strftime("%Y-%m-%d")
+        date_options_map[display_date] = {'save_date': save_date, 'is_saturday': False}
+
+# 2. 근무가 있는 토요일을 옵션에 추가
+if not df_saturday.empty:
+    user_saturdays = df_saturday[
+        (df_saturday['날짜'].dt.year == year) &
+        (df_saturday['날짜'].dt.month == month) &
+        (df_saturday.apply(lambda row: name in str(row.get('근무', '')) or name == str(row.get('당직', '')).strip(), axis=1))
+    ]
+    for _, row in user_saturdays.iterrows():
+        day = row['날짜']
+        weekday_name = weekday_map[day.weekday()]
+        display_date = f"{day.month}월 {day.day}일({weekday_name})"
+        save_date = day.strftime("%Y-%m-%d")
+        date_options_map[display_date] = {'save_date': save_date, 'is_saturday': True}
+
+# 날짜순으로 정렬된 옵션 리스트 생성
+sorted_date_options = sorted(date_options_map.keys(), key=lambda d: datetime.datetime.strptime(date_options_map[d]['save_date'], "%Y-%m-%d"))
+
 with add_col2:
-    available_dates = []
-    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"} # 월요일=0, 금요일=4
-    
-    # 월의 시작일부터 마지막 날까지 모든 날짜를 순회
-    for day in pd.date_range(month_start, month_end):
-        # 날짜가 평일(월~금)인 경우에만 목록에 추가
-        if day.weekday() in weekday_map:
-            weekday_name = weekday_map[day.weekday()]
-            display_date = f"{day.month}월 {day.day}일({weekday_name})"
-            save_date = day.strftime("%Y-%m-%d")
-            
-            # 오전과 오후 선택지를 모두 추가
-            available_dates.append((f"{display_date} 오전", save_date, "오전"))
-            available_dates.append((f"{display_date} 오후", save_date, "오후"))
+    선택된_날짜들 = st.multiselect("요청 일자", sorted_date_options, key="date_multiselect_new")
 
-    date_options = [date_str for date_str, _, _ in available_dates]
-    date_values = [(save_date, time_slot) for _, save_date, time_slot in available_dates]
-    날짜 = st.multiselect("요청 일자", date_options, key="date_multiselect")
-
-def format_date_to_korean(date_str, period):
-    try:
-        date_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d")
-        return f"{date_obj.strftime('%Y-%m-%d')} ({period})"
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"날짜 형식 변환 중 오류 발생: {str(e)}")
-        return date_str
-
-날짜정보 = ""
-if 날짜:
-    date_indices = [(i, date_values[i]) for i, opt in enumerate(date_options) if opt in 날짜]
-    sorted_dates = sorted(date_indices, key=lambda x: (x[1][0], x[1][1]))
-    날짜정보 = ", ".join([
-        format_date_to_korean(date_values[idx][0], date_values[idx][1])
-        for idx, _ in sorted_dates
-    ])
+# 선택된 날짜 중 평일 또는 토요일이 있는지 확인
+has_weekday = any(not date_options_map.get(d, {}).get('is_saturday', True) for d in 선택된_날짜들)
+has_saturday = any(date_options_map.get(d, {}).get('is_saturday', True) for d in 선택된_날짜들)
 
 with add_col3:
+    # 평일을 선택했을 때만 시간대 선택이 활성화됨
+    선택된_시간대들 = st.multiselect("시간대 선택", ["오전", "오후"], key="timeslot_multiselect", disabled=not has_weekday)
+
+if has_saturday and "오후" in 선택된_시간대들:
+    st.warning("⚠️ **토요일은 오전 근무만 가능합니다.** 선택하신 '오후' 시간대는 평일에만 적용됩니다.")
+
+with add_col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
     submit_add = st.button("📅 추가", use_container_width=True)
 
+# (기존 if submit_add: 블록 전체를 아래 코드로 교체)
+
 if submit_add:
+    # 1. 저장될 '날짜정보' 문자열 생성
+    날짜정보 = ""
+    if 선택된_날짜들:
+        final_date_list = []
+        for display_date in 선택된_날짜들:
+            info = date_options_map[display_date]
+            save_date = info['save_date']
+            if info['is_saturday']:
+                final_date_list.append(f"{save_date} (오전)")
+            elif has_weekday and 선택된_시간대들:
+                for timeslot in 선택된_시간대들:
+                    final_date_list.append(f"{save_date} ({timeslot})")
+        final_date_list.sort()
+        날짜정보 = ", ".join(final_date_list)
+    
+    # 2. 저장 로직 실행
     try:
         if 날짜정보 and 분류:
-            with st.spinner("요청사항을 추가 중입니다..."):
-                sheet = st.session_state["sheet"] # <-- 이렇게 수정하세요
-                try:
-                    worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
-                except WorksheetNotFound:
-                    worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
-                    worksheet2.append_row(["이름", "분류", "날짜정보"])
-                
-                df_room_request_temp = st.session_state["df_room_request"].copy()
-                new_requests = []
-                for category in 분류:
-                    for date in 날짜정보.split(","):
-                        date = date.strip()
-                        existing_request = df_room_request_temp[(df_room_request_temp['이름'] == name) & (df_room_request_temp['날짜정보'] == date) & (df_room_request_temp['분류'] == category)]
-                        if existing_request.empty:
-                            new_requests.append({"이름": name, "분류": category, "날짜정보": date})
+            sheet = st.session_state["sheet"]
+            try:
+                worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
+            except WorksheetNotFound:
+                worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
+                worksheet2.append_row(["이름", "분류", "날짜정보"])
+            
+            df_room_request_temp = st.session_state["df_room_request"].copy()
+            new_requests = []
+            for category in 분류:
+                for date in 날짜정보.split(","):
+                    date = date.strip()
+                    if not df_room_request_temp[(df_room_request_temp['이름'] == name) & (df_room_request_temp['날짜정보'] == date) & (df_room_request_temp['분류'] == category)].empty:
+                        continue
+                    new_requests.append({"이름": name, "분류": category, "날짜정보": date})
 
-                if new_requests:
+            if new_requests:
+                with st.spinner("요청사항을 추가 중입니다..."):
                     new_request_df = pd.DataFrame(new_requests)
-                    df_room_request_temp = pd.concat([df_room_request_temp, new_request_df], ignore_index=True)
-                    df_room_request_temp = df_room_request_temp.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
+                    df_room_request_temp = pd.concat([df_room_request_temp, new_request_df], ignore_index=True).sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
                     
-                    try:
-                        worksheet2.clear()
-                        worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
-                    except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                        st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
-                        st.stop()
+                    worksheet2.clear()
+                    worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
                     
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
-                    st.success("요청이 성공적으로 기록되었습니다.")
-                    time.sleep(1.5)
-                    st.rerun()
-                else:
-                    st.info("ℹ️ 이미 존재하는 요청사항입니다.")
+                    
+                    # --- 스피너가 보이도록 1초 강제 대기 ---
+                    time.sleep(1)
+                
+                st.success("요청이 성공적으로 기록되었습니다.")
+                st.session_state.clear_inputs = True
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.info("ℹ️ 이미 존재하는 요청사항입니다.")
         else:
             st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.")
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
-        st.stop()
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"요청 추가 중 오류 발생: {str(e)}")
-        st.stop()
 
 st.write(" ")
+
 st.markdown(f"<h6 style='font-weight:bold;'>🔴 방배정 요청사항 삭제</h6>", unsafe_allow_html=True)
 if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
     del_col1, del_col2 = st.columns([4, 0.5])

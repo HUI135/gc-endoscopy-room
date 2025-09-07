@@ -142,12 +142,43 @@ def initialize_page_data(gc, url, name, week_labels):
         st.error(f"데이터 초기화 중 오류가 발생했습니다: {e}")
         st.stop()
 
+# 데이터 로드 함수
+@st.cache_data(show_spinner=False)
+def load_saturday_schedule(_gc, url, year):
+    """지정된 연도의 토요/휴일 스케줄 데이터를 로드하는 함수"""
+    try:
+        sheet = _gc.open_by_url(url)
+        worksheet_name = f"{year}년 토요/휴일 스케줄"
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        if not data:
+            st.warning(f"⚠️ '{worksheet_name}' 시트에 데이터가 없습니다.")
+            return pd.DataFrame(columns=["날짜", "근무", "당직"])
+        
+        df = pd.DataFrame(data)
+        # '날짜' 열이 비어있거나 잘못된 형식의 데이터를 제외하고 datetime으로 변환
+        df = df[df['날짜'] != '']
+        df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
+        df.dropna(subset=['날짜'], inplace=True) # 날짜 변환 실패한 행 제거
+        return df
+    except WorksheetNotFound:
+        st.info(f"'{year}년 토요/휴일 스케줄' 시트를 찾을 수 없습니다. 토요일 근무가 표시되지 않을 수 있습니다.")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+    except APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (토요/휴일 스케줄): {str(e)}")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"토요/휴일 스케줄 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame(columns=["날짜", "근무", "당직"])
+
 # 캘린더 이벤트 생성 함수
-def generate_calendar_events(df_user_master, year, month, week_labels):
+def generate_calendar_events(df_user_master, df_saturday_schedule, current_user_name, year, month, week_labels):
+    # --- 1. 평일 스케줄 데이터 가공 (기존 로직) ---
     master_data = {}
     요일리스트 = ["월", "화", "수", "목", "금"]
     
-    has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
     
     for week in week_labels:
@@ -163,17 +194,26 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
             else:
                 master_data[week][day] = "근무없음"
 
+    # --- 2. 캘린더 이벤트 생성 ---
     events = []
-    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"}
+    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토"}
     _, last_day = calendar.monthrange(year, month)
-    status_colors = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
+    status_colors = {
+        "오전": "#48A6A7", 
+        "오후": "#FCB454", 
+        "오전 & 오후": "#F38C79",
+        "토요근무": "#6A5ACD",  # 토요근무 색상
+        "당직": "#FF6347"    # 당직 색상
+    }
 
     first_sunday = next((day for day in range(1, last_day + 1) if datetime.date(year, month, day).weekday() == 6), None)
     
     for day in range(1, last_day + 1):
         date_obj = datetime.date(year, month, day)
         weekday = date_obj.weekday()
-        if weekday in weekday_map:
+
+        # 평일(월~금) 처리
+        if weekday <= 4:
             day_name = weekday_map[weekday]
             week_num = 0 if first_sunday and day < first_sunday else (day - first_sunday) // 7 + 1 if first_sunday else (day - 1) // 7
             if week_num >= len(week_labels):
@@ -187,8 +227,32 @@ def generate_calendar_events(df_user_master, year, month, week_labels):
                     "end": date_obj.strftime("%Y-%m-%d"),
                     "color": status_colors.get(status, "#E0E0E0")
                 })
+        
+        # 토요일 처리
+        elif weekday == 5:
+            saturday_row = df_saturday_schedule[df_saturday_schedule['날짜'].dt.date == date_obj]
+            if not saturday_row.empty:
+                # '근무' 인원 목록에 현재 사용자가 있는지 확인
+                work_staff = saturday_row.iloc[0].get('근무', '')
+                if isinstance(work_staff, str) and current_user_name in work_staff:
+                    events.append({
+                        "title": "토요근무",
+                        "start": date_obj.strftime("%Y-%m-%d"),
+                        "end": date_obj.strftime("%Y-%m-%d"),
+                        "color": status_colors.get("토요근무")
+                    })
+                
+                # '당직' 인원에 현재 사용자가 있는지 확인
+                on_call_staff = saturday_row.iloc[0].get('당직', '')
+                if isinstance(on_call_staff, str) and current_user_name == on_call_staff.strip():
+                     events.append({
+                        "title": "당직",
+                        "start": date_obj.strftime("%Y-%m-%d"),
+                        "end": date_obj.strftime("%Y-%m-%d"),
+                        "color": status_colors.get("당직")
+                    })
     return events
-
+    
 # 기본 변수 설정
 url = st.secrets["google_sheet"]["url"]
 gc = get_gspread_client()
@@ -230,8 +294,11 @@ week_nums = sorted(set(d.isocalendar()[1] for d in dates))
 week_labels = [f"{i+1}주" for i in range(len(week_nums))]
 has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.empty else False
 
-# 캘린더 이벤트 생성
-events = generate_calendar_events(df_user_master, year, month, week_labels)
+# 토요/휴일 스케줄 로드
+df_saturday = load_saturday_schedule(gc, url, year)
+
+# 캘린더 이벤트 생성 (토요일 데이터와 사용자 이름 추가)
+events = generate_calendar_events(df_user_master, df_saturday, name, year, month, week_labels)
 
 calendar_options = {
     "initialView": "dayGridMonth",
@@ -253,7 +320,7 @@ calendar_options = {
 
 st.header(f"📅 {name} 님의 마스터 스케줄", divider='rainbow')
 
-st.error("📅 [마스터 수정] 기능은 반드시 강승주 팀장님의 확인 후에 수정해 주시기 바랍니다.")
+# st.error("📅 [마스터 수정] 기능은 반드시 강승주 팀장님의 확인 후에 수정해 주시기 바랍니다.")
 
 # 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
@@ -284,6 +351,7 @@ st.markdown("""
     font-size: 24px;
     font-weight: bold;
     margin-bottom: 20px;
+    color: black; /* 텍스트 색상 추가 */
 }
 div[data-testid="stHorizontalBlock"] {
     gap: 0.5rem;
@@ -295,18 +363,19 @@ div[data-testid="stHorizontalBlock"] {
     padding: 10px 0;
     border: 1px solid #e1e4e8;
     border-radius: 5px;
-    background-color: #f6f8fa;
+    background-color: #e9ecef;
+    color: black; /* 텍스트 색상 추가 */
 }
-/* 토요일, 일요일 색상 */
-.saturday { color: blue; }
-.sunday { color: red; }
+/* 토요일, 일요일 색상 (기존 스타일 유지) */
+.saturday { color: blue !important; } /* !important 추가하여 우선 적용 */
+.sunday { color: red !important; } /* !important 추가하여 우선 적용 */
 
 /* 날짜 하나하나를 의미하는 셀 */
 .calendar-day-cell {
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     padding: 6px;
-    min-height: 120px; /* 칸 높이 조절 */
+    min-height: 120px;
     background-color: white;
     display: flex;
     flex-direction: column;
@@ -316,8 +385,9 @@ div[data-testid="stHorizontalBlock"] {
     font-weight: bold;
     font-size: 14px;
     margin-bottom: 5px;
+    color: black; /* 텍스트 색상 추가 */
 }
-/* 다른 달의 날짜는 회색으로 */
+/* 다른 달의 날짜는 회색으로 (기존 스타일 유지) */
 .day-number.other-month {
     color: #ccc;
 }
@@ -396,146 +466,146 @@ with st.container():
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
 
-# 마스터 스케줄 편집
-st.divider()
-st.subheader("📅 마스터 스케줄 편집")
-st.write("- 월 단위 또는 주 단위로 본인의 마스터 스케줄을 수정할 수 있습니다.")
+# # 마스터 스케줄 편집
+# st.divider()
+# st.subheader("📅 마스터 스케줄 편집")
+# st.write("- 월 단위 또는 주 단위로 본인의 마스터 스케줄을 수정할 수 있습니다.")
 
-# 월 단위 일괄 설정
-with st.expander("📅 월 단위로 일괄 설정"):
-    has_weekly_specific = any(w in df_user_master["주차"].values for w in week_labels)
-    every_week_df = df_user_master[df_user_master["주차"] == "매주"]
-    default_bulk = {}
+# # 월 단위 일괄 설정
+# with st.expander("📅 월 단위로 일괄 설정"):
+#     has_weekly_specific = any(w in df_user_master["주차"].values for w in week_labels)
+#     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
+#     default_bulk = {}
     
-    if has_weekly_specific:
-        for day in 요일리스트:
-            day_values = []
-            for week in week_labels:
-                week_df = df_user_master[df_user_master["주차"] == week]
-                day_specific = week_df[week_df["요일"] == day]
-                if not day_specific.empty:
-                    day_values.append(day_specific.iloc[0]["근무여부"])
-                elif not every_week_df.empty:
-                    day_every = every_week_df[every_week_df["요일"] == day]
-                    day_values.append(day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음")
-                else:
-                    day_values.append("근무없음")
-            if day_values and all(v == day_values[0] for v in day_values):
-                default_bulk[day] = day_values[0]
-            else:
-                most_common = Counter(day_values).most_common(1)[0][0]
-                default_bulk[day] = most_common
-    elif has_weekly:
-        default_bulk = every_week_df.set_index("요일")["근무여부"].to_dict()
-    for day in 요일리스트:
-        if day not in default_bulk:
-            default_bulk[day] = "근무없음"
+#     if has_weekly_specific:
+#         for day in 요일리스트:
+#             day_values = []
+#             for week in week_labels:
+#                 week_df = df_user_master[df_user_master["주차"] == week]
+#                 day_specific = week_df[week_df["요일"] == day]
+#                 if not day_specific.empty:
+#                     day_values.append(day_specific.iloc[0]["근무여부"])
+#                 elif not every_week_df.empty:
+#                     day_every = every_week_df[every_week_df["요일"] == day]
+#                     day_values.append(day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음")
+#                 else:
+#                     day_values.append("근무없음")
+#             if day_values and all(v == day_values[0] for v in day_values):
+#                 default_bulk[day] = day_values[0]
+#             else:
+#                 most_common = Counter(day_values).most_common(1)[0][0]
+#                 default_bulk[day] = most_common
+#     elif has_weekly:
+#         default_bulk = every_week_df.set_index("요일")["근무여부"].to_dict()
+#     for day in 요일리스트:
+#         if day not in default_bulk:
+#             default_bulk[day] = "근무없음"
 
-    if has_weekly and all(df_user_master["근무여부"] == "근무없음"):
-        st.info("마스터 입력이 필요합니다.")
-    elif has_weekly_specific:
-        st.warning("현재 주차별 근무 일정이 다릅니다. 월 단위로 초기화하려면 내용을 입력하세요.")
+#     if has_weekly and all(df_user_master["근무여부"] == "근무없음"):
+#         st.info("마스터 입력이 필요합니다.")
+#     elif has_weekly_specific:
+#         st.warning("현재 주차별 근무 일정이 다릅니다. 월 단위로 초기화하려면 내용을 입력하세요.")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    월값 = col1.selectbox("월", 근무옵션, index=근무옵션.index(default_bulk.get("월", "근무없음")), key=f"월_bulk_{name}")
-    화값 = col2.selectbox("화", 근무옵션, index=근무옵션.index(default_bulk.get("화", "근무없음")), key=f"화_bulk_{name}")
-    수값 = col3.selectbox("수", 근무옵션, index=근무옵션.index(default_bulk.get("수", "근무없음")), key=f"수_bulk_{name}")
-    목값 = col4.selectbox("목", 근무옵션, index=근무옵션.index(default_bulk.get("목", "근무없음")), key=f"목_bulk_{name}")
-    금값 = col5.selectbox("금", 근무옵션, index=근무옵션.index(default_bulk.get("금", "근무없음")), key=f"금_bulk_{name}")
+#     col1, col2, col3, col4, col5 = st.columns(5)
+#     월값 = col1.selectbox("월", 근무옵션, index=근무옵션.index(default_bulk.get("월", "근무없음")), key=f"월_bulk_{name}")
+#     화값 = col2.selectbox("화", 근무옵션, index=근무옵션.index(default_bulk.get("화", "근무없음")), key=f"화_bulk_{name}")
+#     수값 = col3.selectbox("수", 근무옵션, index=근무옵션.index(default_bulk.get("수", "근무없음")), key=f"수_bulk_{name}")
+#     목값 = col4.selectbox("목", 근무옵션, index=근무옵션.index(default_bulk.get("목", "근무없음")), key=f"목_bulk_{name}")
+#     금값 = col5.selectbox("금", 근무옵션, index=근무옵션.index(default_bulk.get("금", "근무없음")), key=f"금_bulk_{name}")
 
-    if st.button("💾 월 단위 저장", key="save_monthly"):
-        try:
-            sheet = gc.open_by_url(url)
-            worksheet1 = sheet.worksheet("마스터")
-            rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": {"월": 월값, "화": 화값, "수": 수값, "목": 목값, "금": 금값}[요일]} for 요일 in 요일리스트]
-            updated_df = pd.DataFrame(rows)
-            updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-            updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
-            df_master = df_master[df_master["이름"] != name]
-            df_result = pd.concat([df_master, updated_df], ignore_index=True)
-            df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-            df_result = df_result.sort_values(by=["이름", "주차", "요일"])
-            if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
-                st.session_state["df_master"] = df_result
-                st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
-                st.success("월 단위 수정사항이 저장되었습니다.")
-                time.sleep(1.5)
-                # st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("마스터 시트 저장 실패")
-                st.stop()
-        except APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"월 단위 저장 중 오류 발생: {str(e)}")
-            st.stop()
+#     if st.button("💾 월 단위 저장", key="save_monthly"):
+#         try:
+#             sheet = gc.open_by_url(url)
+#             worksheet1 = sheet.worksheet("마스터")
+#             rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": {"월": 월값, "화": 화값, "수": 수값, "목": 목값, "금": 금값}[요일]} for 요일 in 요일리스트]
+#             updated_df = pd.DataFrame(rows)
+#             updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+#             updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
+#             df_master = df_master[df_master["이름"] != name]
+#             df_result = pd.concat([df_master, updated_df], ignore_index=True)
+#             df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+#             df_result = df_result.sort_values(by=["이름", "주차", "요일"])
+#             if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
+#                 st.session_state["df_master"] = df_result
+#                 st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
+#                 st.success("월 단위 수정사항이 저장되었습니다.")
+#                 time.sleep(1.5)
+#                 # st.cache_data.clear()
+#                 st.rerun()
+#             else:
+#                 st.error("마스터 시트 저장 실패")
+#                 st.stop()
+#         except APIError as e:
+#             st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+#             st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
+#             st.stop()
+#         except Exception as e:
+#             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+#             st.error(f"월 단위 저장 중 오류 발생: {str(e)}")
+#             st.stop()
 
-# 주 단위 설정
-with st.expander("📅 주 단위로 설정"):
-    st.markdown("**주 단위로 근무 여부가 다른 경우 아래 내용들을 입력해주세요.**")
-    master_data = {}
-    every_week_df = df_user_master[df_user_master["주차"] == "매주"]
+# # 주 단위 설정
+# with st.expander("📅 주 단위로 설정"):
+#     st.markdown("**주 단위로 근무 여부가 다른 경우 아래 내용들을 입력해주세요.**")
+#     master_data = {}
+#     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
     
-    for week in week_labels:
-        master_data[week] = {}
-        week_df = df_user_master[df_user_master["주차"] == week]
-        for day in 요일리스트:
-            day_specific = week_df[week_df["요일"] == day]
-            if not day_specific.empty:
-                master_data[week][day] = day_specific.iloc[0]["근무여부"]
-            elif not every_week_df.empty:
-                day_every = every_week_df[every_week_df["요일"] == day]
-                master_data[week][day] = day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음"
-            else:
-                master_data[week][day] = "근무없음"
+#     for week in week_labels:
+#         master_data[week] = {}
+#         week_df = df_user_master[df_user_master["주차"] == week]
+#         for day in 요일리스트:
+#             day_specific = week_df[week_df["요일"] == day]
+#             if not day_specific.empty:
+#                 master_data[week][day] = day_specific.iloc[0]["근무여부"]
+#             elif not every_week_df.empty:
+#                 day_every = every_week_df[every_week_df["요일"] == day]
+#                 master_data[week][day] = day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음"
+#             else:
+#                 master_data[week][day] = "근무없음"
 
-    for week in week_labels:
-        st.markdown(f"**🗓 {week}**")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        master_data[week]["월"] = col1.selectbox(f"월", 근무옵션, index=근무옵션.index(master_data[week]["월"]), key=f"{week}_월_{name}")
-        master_data[week]["화"] = col2.selectbox(f"화", 근무옵션, index=근무옵션.index(master_data[week]["화"]), key=f"{week}_화_{name}")
-        master_data[week]["수"] = col3.selectbox(f"수", 근무옵션, index=근무옵션.index(master_data[week]["수"]), key=f"{week}_수_{name}")
-        master_data[week]["목"] = col4.selectbox(f"목", 근무옵션, index=근무옵션.index(master_data[week]["목"]), key=f"{week}_목_{name}")
-        master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금_{name}")
+#     for week in week_labels:
+#         st.markdown(f"**🗓 {week}**")
+#         col1, col2, col3, col4, col5 = st.columns(5)
+#         master_data[week]["월"] = col1.selectbox(f"월", 근무옵션, index=근무옵션.index(master_data[week]["월"]), key=f"{week}_월_{name}")
+#         master_data[week]["화"] = col2.selectbox(f"화", 근무옵션, index=근무옵션.index(master_data[week]["화"]), key=f"{week}_화_{name}")
+#         master_data[week]["수"] = col3.selectbox(f"수", 근무옵션, index=근무옵션.index(master_data[week]["수"]), key=f"{week}_수_{name}")
+#         master_data[week]["목"] = col4.selectbox(f"목", 근무옵션, index=근무옵션.index(master_data[week]["목"]), key=f"{week}_목_{name}")
+#         master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금_{name}")
 
-    if st.button("💾 주 단위 저장", key="save_weekly"):
-        try:
-            sheet = gc.open_by_url(url)
-            worksheet1 = sheet.worksheet("마스터")
-            rows = []
-            for 요일 in 요일리스트:
-                week_shifts = [master_data[week][요일] for week in week_labels]
-                if all(shift == week_shifts[0] for shift in week_shifts):
-                    rows.append({"이름": name, "주차": "매주", "요일": 요일, "근무여부": week_shifts[0]})
-                else:
-                    for week in week_labels:
-                        rows.append({"이름": name, "주차": week, "요일": 요일, "근무여부": master_data[week][요일]})
-            updated_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
-            updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-            updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
-            df_master = df_master[df_master["이름"] != name]
-            df_result = pd.concat([df_master, updated_df], ignore_index=True)
-            df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-            df_result = df_result.sort_values(by=["이름", "주차", "요일"])
-            if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
-                st.session_state["df_master"] = df_result
-                st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
-                st.success("주 단위 수정사항이 저장되었습니다.")
-                time.sleep(1.5)
-                # st.cache_data.clear()
-                st.rerun()
-            else:
-                st.error("마스터 시트 저장 실패")
-                st.stop()
-        except APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
-            st.stop()
+#     if st.button("💾 주 단위 저장", key="save_weekly"):
+#         try:
+#             sheet = gc.open_by_url(url)
+#             worksheet1 = sheet.worksheet("마스터")
+#             rows = []
+#             for 요일 in 요일리스트:
+#                 week_shifts = [master_data[week][요일] for week in week_labels]
+#                 if all(shift == week_shifts[0] for shift in week_shifts):
+#                     rows.append({"이름": name, "주차": "매주", "요일": 요일, "근무여부": week_shifts[0]})
+#                 else:
+#                     for week in week_labels:
+#                         rows.append({"이름": name, "주차": week, "요일": 요일, "근무여부": master_data[week][요일]})
+#             updated_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+#             updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+#             updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
+#             df_master = df_master[df_master["이름"] != name]
+#             df_result = pd.concat([df_master, updated_df], ignore_index=True)
+#             df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+#             df_result = df_result.sort_values(by=["이름", "주차", "요일"])
+#             if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
+#                 st.session_state["df_master"] = df_result
+#                 st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
+#                 st.success("주 단위 수정사항이 저장되었습니다.")
+#                 time.sleep(1.5)
+#                 # st.cache_data.clear()
+#                 st.rerun()
+#             else:
+#                 st.error("마스터 시트 저장 실패")
+#                 st.stop()
+#         except APIError as e:
+#             st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+#             st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
+#             st.stop()
+#         except Exception as e:
+#             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+#             st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
+#             st.stop()

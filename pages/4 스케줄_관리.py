@@ -174,34 +174,32 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
 
 def load_request_data_page4():
     try:
+        # 캐시 지우기
+        st.cache_resource.clear()
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
 
-        mapping = sheet.worksheet("매핑")
-        st.session_state["mapping"] = mapping
-        mapping_data = mapping.get_all_records()
-        
+        today = datetime.datetime.now(ZoneInfo("Asia/Seoul")).date()
+        next_month = today.replace(day=1) + relativedelta(months=1)
+
+        # 디버깅: 현재 시트 목록 출력
+        all_sheets = [ws.title for ws in sheet.worksheets()]
+
         # 매핑 시트 로드
         mapping = sheet.worksheet("매핑")
         st.session_state["mapping"] = mapping
         mapping_values = mapping.get_all_values()
         
-        # --- 이 부분을 교체해주세요 ---
         if not mapping_values or len(mapping_values) <= 1:
             df_map = pd.DataFrame(columns=["이름", "사번"])
         else:
             headers = mapping_values[0]
             data = mapping_values[1:]
             df_map = pd.DataFrame(data, columns=headers)
-            # 빈 문자열을 NaN으로 바꾸고, 모든 값이 비어있는 행을 삭제
             df_map.replace('', np.nan, inplace=True)
             df_map.dropna(how='all', inplace=True)
-
             if "이름" in df_map.columns and "사번" in df_map.columns:
-                if not df_map.empty:
-                    df_map = df_map[["이름", "사번"]]
-                else:
-                    df_map = pd.DataFrame(columns=["이름", "사번"])
+                df_map = df_map[["이름", "사번"]]
             else:
                 df_map = pd.DataFrame(columns=["이름", "사번"])
 
@@ -258,6 +256,21 @@ def load_request_data_page4():
         st.session_state["df_cumulative"] = df_cumulative_temp
         st.session_state["edited_df_cumulative"] = df_cumulative_temp.copy()
         st.session_state["worksheet4"] = worksheet4
+
+        # 토요/휴일 스케줄 로드
+        worksheet_name = f"{next_month.year}년 토요/휴일 스케줄"
+        try:
+            worksheet_holiday = sheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            worksheet_holiday = sheet.add_worksheet(title=worksheet_name, rows="100", cols="20")
+            worksheet_holiday.append_row(["날짜", "근무", "당직"])
+        holiday_data = worksheet_holiday.get_all_records()
+        df_holiday = pd.DataFrame(holiday_data) if holiday_data else pd.DataFrame(columns=["날짜", "근무", "당직"])
+        df_holiday["날짜"] = pd.to_datetime(df_holiday["날짜"], errors='coerce').dt.date
+        df_holiday = df_holiday.sort_values(by="날짜")
+        st.session_state["df_holiday"] = df_holiday
+        st.session_state["worksheet_holiday"] = worksheet_holiday
 
         # 근무 및 보충 테이블 생성
         st.session_state["df_shift"] = generate_shift_table(df_master)
@@ -1033,6 +1046,163 @@ with st.expander("📅 주 단위로 설정"):
             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
             st.stop()
+
+st.divider()
+st.subheader(f"📅 {next_month.year}년 토요/휴일 스케줄 관리")
+st.write("- 토요/휴일 스케줄을 추가하거나 삭제할 수 있습니다.")
+
+# Google Sheet for Saturday/Holiday schedule
+def load_holiday_schedule():
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(url)
+        worksheet_name = f"{next_month.year}년 토요/휴일 스케줄"
+        try:
+            worksheet_holiday = sheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            worksheet_holiday = sheet.add_worksheet(title=worksheet_name, rows="100", cols="20")
+            worksheet_holiday.append_row(["날짜", "근무", "당직"])
+        
+        holiday_data = worksheet_holiday.get_all_records()
+        df_holiday = pd.DataFrame(holiday_data) if holiday_data else pd.DataFrame(columns=["날짜", "근무", "당직"])
+        df_holiday["날짜"] = pd.to_datetime(df_holiday["날짜"], errors='coerce').dt.date
+        df_holiday = df_holiday.sort_values(by="날짜")
+        
+        st.session_state["df_holiday"] = df_holiday
+        st.session_state["worksheet_holiday"] = worksheet_holiday
+        return True
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (토요/휴일 데이터 로드): {str(e)}")
+        return False
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
+        return False
+
+# Load holiday schedule initially
+if "df_holiday" not in st.session_state:
+    load_holiday_schedule()
+
+# Retrieve holiday schedule from session state
+df_holiday = st.session_state.get("df_holiday", pd.DataFrame(columns=["날짜", "근무", "당직"]))
+worksheet_holiday = st.session_state.get("worksheet_holiday")
+
+# Display the holiday schedule
+st.markdown("**📋 토요/휴일 스케줄 테이블**")
+if not df_holiday.empty:
+    st.dataframe(df_holiday, use_container_width=True, hide_index=True)
+else:
+    st.info("현재 토요/휴일 스케줄이 없습니다. 아래에서 추가해주세요.")
+
+# [추가된 부분 1] form 제출 성공 플래그가 있으면, 위젯 값들을 초기화합니다.
+# 이 코드는 반드시 st.form 보다 위에 있어야 합니다.
+if st.session_state.get("form_submitted", False):
+    st.session_state.new_holiday_workers = []
+    st.session_state.new_holiday_duty = ""
+    # 날짜는 기본값인 다음 달 시작일로 되돌립니다.
+    st.session_state.new_holiday_date = next_month_start 
+    st.session_state.form_submitted = False # 확인 후 플래그를 다시 리셋합니다.
+
+# Add a new row
+st.markdown("**🟢 토요/휴일 스케줄 추가**")
+with st.form("add_holiday_schedule_form"):
+    col_date, col_workers, col_duty = st.columns([1, 2, 1])
+    with col_date:
+        # 키(key)는 그대로 유지합니다.
+        new_date = st.date_input("날짜 선택", min_value=next_month_start, max_value=next_month_end, key="new_holiday_date")
+    with col_workers:
+        available_names = sorted(df_map["이름"].unique()) if not df_map.empty else []
+        new_workers = st.multiselect("근무자 선택", available_names, key="new_holiday_workers")
+    with col_duty:
+        # 1. 선택 목록의 첫 번째 항목을 "" -> "당직 없음"으로 변경
+        new_duty = st.selectbox("당직자 선택", ["당직 없음"] + available_names, key="new_holiday_duty")
+    
+    submit_add = st.form_submit_button("✔️ 추가")
+    if submit_add:
+        if not new_date:
+            st.error("날짜를 선택하세요.")
+        elif not new_workers:
+            st.error("근무자를 선택하세요.")
+        # [수정됨] 
+        # 1. "당직 없음"을 막는 elif 블록을 완전히 삭제했습니다.
+        # 2. 아래 조건문은 당직자가 실제 사람 이름일 때만 검사하도록 수정했습니다.
+        elif new_duty != "당직 없음" and new_duty not in new_workers:
+            st.error("당직자는 근무자 목록에 포함되어야 합니다.")
+        elif new_date in df_holiday["날짜"].values:
+            st.error(f"{new_date}는 이미 스케줄에 존재합니다.")
+        else:
+            try:
+                new_row = pd.DataFrame({
+                    "날짜": [new_date],
+                    "근무": [", ".join(new_workers)],
+                    "당직": [new_duty]
+                })
+                df_holiday = pd.concat([df_holiday, new_row], ignore_index=True).sort_values(by="날짜")
+                
+                df_holiday_for_update = df_holiday.copy()
+                df_holiday_for_update["날짜"] = df_holiday_for_update["날짜"].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else "")
+                
+                update_data = [df_holiday_for_update.columns.tolist()] + df_holiday_for_update.values.tolist()
+                if update_sheet_with_retry(worksheet_holiday, update_data):
+                    st.session_state["df_holiday"] = df_holiday
+                    st.success(f"{new_date} 스케줄이 추가되었습니다.")
+                    time.sleep(1.5)
+                    
+                    # [추가된 부분 2] 직접 값을 바꾸는 대신, 성공했다는 "플래그"만 남깁니다.
+                    st.session_state.form_submitted = True
+                    st.rerun()
+                else:
+                    st.error("토요/휴일 시트 추가 실패")
+                    st.stop()
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (스케줄 추가): {str(e)}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"스케줄 추가 중 오류 발생: {str(e)}")
+                st.stop()
+
+# Delete a row
+st.markdown("**🔴 토요/휴일 스케줄 삭제**")
+if not df_holiday.empty:
+    # st.form으로 삭제 관련 위젯들을 감쌉니다.
+    with st.form("delete_holiday_schedule_form"):
+        sorted_dates = sorted(df_holiday["날짜"].astype(str).unique())
+        selected_date = st.selectbox("삭제할 날짜 선택", sorted_dates, key="delete_holiday_date")
+        
+        # st.button 대신 st.form_submit_button을 사용합니다.
+        submit_delete = st.form_submit_button("🗑️ 삭제")
+        
+        if submit_delete:
+            try:
+                # 선택한 날짜에 해당하는 행 제거
+                df_holiday = df_holiday[df_holiday["날짜"] != pd.to_datetime(selected_date).date()]
+                # 날짜를 문자열로 변환
+                df_holiday_for_update = df_holiday.copy()
+                df_holiday_for_update["날짜"] = df_holiday_for_update["날짜"].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else "")
+                # Google Sheets 업데이트
+                update_data = [df_holiday_for_update.columns.tolist()] + df_holiday_for_update.values.tolist()
+                if update_sheet_with_retry(worksheet_holiday, update_data):
+                    st.session_state["df_holiday"] = df_holiday  # 원본 df_holiday는 datetime.date 유지
+                    st.success(f"{selected_date} 스케줄이 삭제되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.error("토요/휴일 시트 삭제 실패")
+                    st.stop()
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (스케줄 삭제): {str(e)}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"스케줄 삭제 중 오류 발생: {str(e)}")
+                st.stop()
+else:
+    st.info("삭제할 스케줄이 없습니다.")
 
 load_data_page4()
 df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))

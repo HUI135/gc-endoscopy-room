@@ -34,8 +34,8 @@ def menu():
             st.switch_page("Home.py")
 
 
-        if st.sidebar.button("📅 마스터 수정", use_container_width=True, disabled=(current_page_basename == "1 📅_마스터_수정.py")):
-            st.switch_page("pages/1 📅_마스터_수정.py")
+        if st.sidebar.button("📅 마스터 보기", use_container_width=True, disabled=(current_page_basename == "1 📅_마스터_보기.py")):
+            st.switch_page("pages/1 📅_마스터_보기.py")
 
         # ... (다른 페이지 버튼들도 동일한 패턴)
         if st.sidebar.button("🙋‍♂️요청사항 입력", use_container_width=True, disabled=(current_page_basename == "2 🙋‍♂️_요청사항_입력.py")):
