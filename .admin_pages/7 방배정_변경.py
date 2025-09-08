@@ -15,7 +15,7 @@ import os
 from dateutil.relativedelta import relativedelta
 
 # --- 페이지 기본 설정 ---
-st.set_page_config(page_title="방 배정 변경", page_icon="🔄", layout="wide")
+st.set_page_config(page_title="방배정 변경", page_icon="🔄", layout="wide")
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
 
@@ -357,7 +357,7 @@ now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
-st.header(f"🔄 {month_str} 방 배정 변경", divider='rainbow')
+st.header(f"🔄 {month_str} 방배정 변경", divider='rainbow')
 
 # 데이터 로드 및 새로고침 로직 통합
 def load_and_initialize_data():
@@ -547,7 +547,7 @@ with col_final2:
         st.warning("⚠️ 변경사항이 있습니다. 먼저 **'변경사항 저장'** 버튼을 눌러주세요.")
     
     if st.button("🚀 방배정 수행 및 결과 보기", type="primary", use_container_width=True, disabled=has_unsaved_changes):
-        with st.spinner("방 배정 중..."):
+        with st.spinner("방배정 중..."):
             time.sleep(3)
             st.session_state['show_final_results'] = True
     else:

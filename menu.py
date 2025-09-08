@@ -56,12 +56,12 @@ def menu():
             st.sidebar.header("관리자 메뉴")
             if st.session_state.get("admin_mode", False):
                 if st.sidebar.button("⚙️ 스케줄 관리", use_container_width=True, disabled=(current_page_basename == "4 스케줄_관리.py")):
-                    st.switch_page("pages/4 스케줄_관리.py")
+                    st.switch_page(".admin_pages/4 스케줄_관리.py")
                 if st.sidebar.button("🗓️ 스케줄 배정", use_container_width=True, disabled=(current_page_basename == "5 스케줄_배정.py")):
-                    st.switch_page("pages/5 스케줄_배정.py")
-                if st.sidebar.button("🚪 방 배정", use_container_width=True, disabled=(current_page_basename == "6 방_배정.py")):
-                    st.switch_page("pages/6 방_배정.py")
-                if st.sidebar.button("🔄 방 배정 변경", use_container_width=True, disabled=(current_page_basename == "7 방_배정_변경.py")):
-                    st.switch_page("pages/7 방_배정_변경.py")
+                    st.switch_page(".admin_pages/5 스케줄_배정.py")
+                if st.sidebar.button("🚪 방배정", use_container_width=True, disabled=(current_page_basename == "6 방배정.py")):
+                    st.switch_page(".admin_pages/6 방배정.py")
+                if st.sidebar.button("🔄 방배정 변경", use_container_width=True, disabled=(current_page_basename == "7 방배정_변경.py")):
+                    st.switch_page(".admin_pages/7 방배정_변경.py")
             else:
                 st.sidebar.info("관리자 메뉴를 보려면 Home 페이지에서 인증하세요.")
