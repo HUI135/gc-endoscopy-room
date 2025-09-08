@@ -15,8 +15,7 @@ import shutil
 import traceback
 import json
 
-# st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
-
+st.set_page_config(page_title="챗봇에게 물어보기", page_icon="🤖", layout="wide")
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
 

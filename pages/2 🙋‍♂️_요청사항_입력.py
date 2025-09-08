@@ -551,6 +551,42 @@ with st.container():
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
 
+# 이번 달 토요/휴일 스케줄 필터링 및 출력
+st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
+current_month_schedule_df = df_saturday[
+    (df_saturday['날짜'].dt.year == year) & 
+    (df_saturday['날짜'].dt.month == month)
+].sort_values(by='날짜')
+
+if not current_month_schedule_df.empty:
+    # 요일 한글 변환 맵
+    weekday_map_ko = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+    
+    # 날짜를 "월 일(요일)" 형식의 리스트로 변환
+    schedule_list = [
+        date.strftime(f"%-m월 %-d일({weekday_map_ko[date.weekday()]})") 
+        for date in current_month_schedule_df['날짜']
+    ]
+    
+    # 최종 문자열 생성
+    schedule_str = ", ".join(schedule_list)
+    
+    # ✅ HTML/CSS를 사용하여 배경색과 스타일 적용
+    styled_text = f"""
+    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+        📅 <strong>이번 달 토요/휴일 스케줄:</strong> {schedule_str}
+    </div>
+    """
+    st.markdown(styled_text, unsafe_allow_html=True)
+
+else:
+    # ✅ 스케줄이 없을 경우에도 동일한 스타일 적용
+    styled_text = """
+    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+        📅 이번 달에는 예정된 토요/휴일 근무가 없습니다.
+    </div>
+    """
+    st.markdown(styled_text, unsafe_allow_html=True)
 st.divider()
 
 # 요청사항 입력 UI
@@ -577,13 +613,29 @@ with col2:
 with col3:
     if not is_disabled:
         if 방식 == "일자 선택":
+            # 1. 해당 월의 모든 평일(월~금) 날짜를 가져옵니다.
+            all_days_in_month = [month_start + datetime.timedelta(days=i) for i in range((month_end - month_start).days + 1)]
+            weekdays_in_month = [day for day in all_days_in_month if day.weekday() < 5]
+
+            # 2. '토요/휴일 스케줄'에 등록된 날짜를 가져옵니다.
+            schedule_dates = df_saturday[
+                (df_saturday['날짜'].dt.year == year) & 
+                (df_saturday['날짜'].dt.month == month)
+            ]['날짜'].dt.date.tolist()
+
+            # 3. 두 리스트를 합치고, 중복을 제거한 후 정렬하여 최종 선택지를 만듭니다.
+            selectable_dates = sorted(list(set(weekdays_in_month + schedule_dates)))
+            
+            # 날짜 포맷팅 함수 정의
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
             def format_date(date_obj):
                 return f"{date_obj.strftime('%-m월 %-d일')} ({weekday_map[date_obj.weekday()]})"
+            
+            # 수정된 날짜 리스트로 multiselect 위젯 생성
             st.multiselect("요청 일자", 
-              [month_start + datetime.timedelta(days=i) for i in range((month_end - month_start).days + 1)], 
-              format_func=format_date, 
-              key="date_multiselect")
+                          selectable_dates, 
+                          format_func=format_date, 
+                          key="date_multiselect")
         elif 방식 == "기간 선택":
             st.date_input("요청 기간", value=(month_start, month_start + datetime.timedelta(days=1)), min_value=month_start, max_value=month_end, key="date_range")
         elif 방식 == "주/요일 선택":

@@ -466,6 +466,43 @@ with st.container():
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
 
+# 이번 달 토요/휴일 스케줄 필터링 및 스타일 적용하여 출력
+st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
+current_month_schedule_df = df_saturday[
+    (df_saturday['날짜'].dt.year == year) & 
+    (df_saturday['날짜'].dt.month == month)
+].sort_values(by='날짜')
+
+if not current_month_schedule_df.empty:
+    # 요일 한글 변환 맵
+    weekday_map_ko = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+    
+    # 날짜를 "월 일(요일)" 형식의 리스트로 변환
+    schedule_list = [
+        date.strftime(f"%-m월 %-d일({weekday_map_ko[date.weekday()]})") 
+        for date in current_month_schedule_df['날짜']
+    ]
+    
+    # 최종 문자열 생성
+    schedule_str = ", ".join(schedule_list)
+    
+    # HTML/CSS를 사용하여 배경색과 스타일 적용
+    styled_text = f"""
+    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+        📅 <strong>이번 달 토요/휴일 스케줄:</strong> {schedule_str}
+    </div>
+    """
+    st.markdown(styled_text, unsafe_allow_html=True)
+
+else:
+    # 스케줄이 없을 경우에도 동일한 스타일 적용
+    styled_text = """
+    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+        📅 이번 달에는 예정된 토요/휴일 근무가 없습니다.
+    </div>
+    """
+    st.markdown(styled_text, unsafe_allow_html=True)
+
 # # 마스터 스케줄 편집
 # st.divider()
 # st.subheader("📅 마스터 스케줄 편집")
