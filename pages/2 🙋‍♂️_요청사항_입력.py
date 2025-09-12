@@ -133,7 +133,7 @@ def create_calendar_events(df_master, df_request, df_saturday_schedule, current_
 
     # --- 3. 요청사항 이벤트 생성 (기존 로직) ---
     status_colors_request = {"휴가": "#A1C1D3", "학회": "#B4ABE4", "보충 어려움(오전)": "#FFD3B5", "보충 어려움(오후)": "#FFD3B5", "보충 불가(오전)": "#FFB6C1", "보충 불가(오후)": "#FFB6C1", "꼭 근무(오전)": "#C3E6CB", "꼭 근무(오후)": "#C3E6CB"}
-    label_map = {"휴가": "휴가🎉", "학회": "학회📚", "보충 어려움(오전)": "보충⚠️(오전)", "보충 어려움(오후)": "보충⚠️(오후)", "보충 불가(오전)": "보충🚫(오전)", "보충 불가(오후)": "보충🚫(오후)", "꼭 근무(오전)": "꼭근무(오전)", "꼭 근무(오후)": "꼭근무(오후)"}
+    label_map = {"휴가": "휴가🎉", "학회": "학회📚", "보충 어려움(오전)": "보충 어려움(오전)", "보충 어려움(오후)": "보충 어려움(오후)", "보충 불가(오전)": "보충 불가(오전)", "보충 불가(오후)": "보충 불가(오후)", "꼭 근무(오전)": "꼭근무(오전)", "꼭 근무(오후)": "꼭근무(오후)"}
     if not df_request.empty:
         for _, row in df_request.iterrows():
             분류, 날짜정보 = row["분류"], row["날짜정보"]
@@ -489,6 +489,11 @@ div[data-testid="stHorizontalBlock"] {
 }
 </style>
 """, unsafe_allow_html=True)
+
+if df_user_request.empty:
+    with st.container(border=True):
+        st.write(f"🔔 {month_str}에 등록하신 '요청사항'이 없습니다.")
+st.write(" ")
 
 # 2. 캘린더 UI 렌더링 (테두리 제거)
 

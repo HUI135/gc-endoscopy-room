@@ -14,7 +14,7 @@ import menu
 import re
 
 # 페이지 설정
-st.set_page_config(page_title="방배정 요청", page_icon="🏠", layout="wide")
+st.set_page_config(page_title="방배정 요청 입력", page_icon="🏠", layout="wide")
 
 import os
 st.session_state.current_page = os.path.basename(__file__)
@@ -171,8 +171,8 @@ def generate_request_events(df_user_request, today):
         "꼭 근무(오후)": "#C3E6CB",
     }
     label_map = {
-        "휴가": "휴가🎉", "학회": "학회📚", "보충 어려움(오전)": "보충⚠️(오전)", "보충 어려움(오후)": "보충⚠️(오후)",
-        "보충 불가(오전)": "보충🚫(오전)", "보충 불가(오후)": "보충🚫(오후)", "꼭 근무(오전)": "꼭근무(오전)",
+        "휴가": "휴가🎉", "학회": "학회📚", "보충 어려움(오전)": "보충 어려움(오전)", "보충 어려움(오후)": "보충 어려움(오후)",
+        "보충 불가(오전)": "보충 불가(오전)", "보충 불가(오후)": "보충 불가(오후)", "꼭 근무(오전)": "꼭근무(오전)",
         "꼭 근무(오후)": "꼭근무(오후)"
     }
     
@@ -382,7 +382,7 @@ room_request_events = generate_room_request_events(st.session_state["df_user_roo
 saturday_events = generate_saturday_events(df_saturday, name, year, month) # 토요일 이벤트 생성
 
 # 모든 이벤트를 하나로 합치기
-all_events = master_events + request_events + room_request_events + saturday_events
+all_events = master_events + room_request_events + saturday_events
 
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
 
@@ -475,9 +475,14 @@ div[data-testid="stHorizontalBlock"] {
 </style>
 """, unsafe_allow_html=True)
 
+if st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
+    with st.container(border=True):
+        st.write(f"🔔 {month_str}에 등록하신 '방배정 요청'이 없습니다.")
+    st.write("")
+
 # 2. 캘린더 UI 렌더링
 # 제목 표시
-st.markdown(f'<div class="calendar-title">{month_str} 방배정</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="calendar-title">{month_str} 방배정 요청</div>', unsafe_allow_html=True)
 
 # 캘린더 격자 생성
 with st.container():
