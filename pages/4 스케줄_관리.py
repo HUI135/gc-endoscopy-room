@@ -1204,6 +1204,162 @@ if not df_holiday.empty:
 else:
     st.info("삭제할 스케줄이 없습니다.")
 
+st.divider()
+st.subheader(f"📅 {next_month.year}년 휴관일 관리")
+st.write("- 휴관일을 추가하거나 삭제할 수 있습니다.")
+
+# Function to load closing days schedule
+def load_closing_days_schedule():
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(url)
+        worksheet_name = f"{next_month.year}년 휴관일"
+        try:
+            worksheet_closing = sheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            worksheet_closing = sheet.add_worksheet(title=worksheet_name, rows="100", cols="1")
+            worksheet_closing.append_row(["날짜"])
+        
+        closing_data = worksheet_closing.get_all_records()
+        df_closing = pd.DataFrame(closing_data) if closing_data else pd.DataFrame(columns=["날짜"])
+        df_closing["날짜"] = pd.to_datetime(df_closing["날짜"], errors='coerce').dt.date
+        df_closing = df_closing.sort_values(by="날짜")
+        
+        st.session_state["df_closing"] = df_closing
+        st.session_state["worksheet_closing"] = worksheet_closing
+        return True
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (휴관일 데이터 로드): {str(e)}")
+        return False
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"휴관일 데이터 로드 중 오류 발생: {str(e)}")
+        return False
+
+# Load closing days schedule initially
+if "df_closing" not in st.session_state:
+    load_closing_days_schedule()
+
+# Retrieve closing days schedule from session state
+df_closing = st.session_state.get("df_closing", pd.DataFrame(columns=["날짜"]))
+worksheet_closing = st.session_state.get("worksheet_closing")
+
+# Display the closing days table
+st.markdown("**📋 휴관일 테이블**")
+if not df_closing.empty:
+    st.dataframe(df_closing, use_container_width=True, hide_index=True)
+else:
+    st.info("현재 등록된 휴관일이 없습니다. 아래에서 추가해주세요.")
+
+# [추가된 부분] 폼 제출 성공 플래그가 있으면, 위젯 값을 초기화합니다.
+if st.session_state.get("closing_form_submitted", False):
+    st.session_state.new_closing_date = next_month_start 
+    st.session_state.closing_form_submitted = False # 확인 후 플래그를 다시 리셋합니다.
+
+# Add new closing days (supports single day or date range for the whole year)
+st.markdown("**🟢 휴관일 추가**")
+st.write("- 하루만 추가하려면 시작일과 종료일을 같은 날짜로 선택하세요.")
+
+# --- 수정된 부분 ---
+# 선택 가능한 날짜 범위를 올해 전체로 설정합니다.
+current_year = next_month.year
+year_start = datetime.date(current_year, 1, 1)
+year_end = datetime.date(current_year, 12, 31)
+# --- 여기까지 ---
+
+with st.form("add_closing_day_form"):
+    # date_input의 min_value와 max_value를 올해의 시작과 끝으로 변경합니다.
+    selected_period = st.date_input(
+        "날짜 또는 기간 선택",
+        value=[next_month_start, next_month_start], # 기본 선택값은 다음 달 시작일
+        min_value=year_start,   # 최솟값: 올해 1월 1일
+        max_value=year_end,     # 최댓값: 올해 12월 31일
+        key="new_closing_period"
+    )
+    
+    submit_add_closing = st.form_submit_button("✔️ 추가")
+    if submit_add_closing:
+        if not selected_period or len(selected_period) != 2:
+            st.error("휴관일로 추가할 날짜 또는 기간을 선택해주세요.")
+            st.stop()
+        
+        start_date, end_date = selected_period
+        
+        if start_date > end_date:
+            st.error("시작일은 종료일보다 이전이거나 같아야 합니다.")
+            st.stop()
+
+        try:
+            all_dates_in_period = pd.date_range(start=start_date, end=end_date)
+            new_dates_to_add = []
+
+            for date in all_dates_in_period:
+                if date.date() not in df_closing["날짜"].values:
+                    new_dates_to_add.append(date.date())
+
+            if not new_dates_to_add:
+                st.warning("선택하신 날짜(기간)는 모두 이미 휴관일로 등록되어 있습니다.")
+                st.stop()
+
+            new_rows = pd.DataFrame({"날짜": new_dates_to_add})
+            df_closing = pd.concat([df_closing, new_rows], ignore_index=True).sort_values(by="날짜")
+            
+            df_closing_for_update = df_closing.copy()
+            df_closing_for_update["날짜"] = df_closing_for_update["날짜"].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else "")
+            
+            update_data = [df_closing_for_update.columns.tolist()] + df_closing_for_update.values.tolist()
+            
+            if update_sheet_with_retry(worksheet_closing, update_data):
+                st.session_state["df_closing"] = df_closing
+                st.success(f"총 {len(new_dates_to_add)}개의 휴관일이 성공적으로 추가되었습니다.")
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.error("휴관일 시트 추가에 실패했습니다.")
+                st.stop()
+                
+        except Exception as e:
+            st.error(f"휴관일 추가 중 오류가 발생했습니다: {str(e)}")
+            st.stop()
+            
+# Delete a closing day
+st.markdown("**🔴 휴관일 삭제**")
+if not df_closing.empty:
+    with st.form("delete_closing_day_form"):
+        sorted_dates = sorted(df_closing["날짜"].astype(str).unique())
+        selected_date_to_delete = st.selectbox("삭제할 날짜 선택", sorted_dates, key="delete_closing_date")
+        
+        submit_delete_closing = st.form_submit_button("🗑️ 삭제")
+        
+        if submit_delete_closing:
+            try:
+                df_closing = df_closing[df_closing["날짜"] != pd.to_datetime(selected_date_to_delete).date()]
+                
+                df_closing_for_update = df_closing.copy()
+                df_closing_for_update["날짜"] = df_closing_for_update["날짜"].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else "")
+                
+                update_data = [df_closing_for_update.columns.tolist()] + df_closing_for_update.values.tolist()
+                if update_sheet_with_retry(worksheet_closing, update_data):
+                    st.session_state["df_closing"] = df_closing
+                    st.success(f"{selected_date_to_delete} 휴관일이 삭제되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.error("휴관일 시트 삭제 실패")
+                    st.stop()
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (휴관일 삭제): {str(e)}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"휴관일 삭제 중 오류 발생: {str(e)}")
+                st.stop()
+else:
+    st.info("삭제할 휴관일이 없습니다.")
+
 load_data_page4()
 df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))
 df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
@@ -1221,86 +1377,3 @@ def excel_download(name, sheet1, name1, sheet2, name2, sheet3, name3, sheet4, na
     
     excel_data = output.getvalue()
     return excel_data
-
-# 기존 코드에서 누적 테이블 및 버튼 부분만 수정
-st.divider()
-st.subheader(f"✨ {month_str} 테이블 종합")
-
-df_shift_processed = split_column_to_multiple(st.session_state["df_shift"], "근무", "근무")
-df_supplement_processed = split_column_to_multiple(st.session_state["df_supplement"], "보충", "보충")
-
-st.write(" ")
-st.markdown("**✅ 근무 테이블**")
-st.dataframe(st.session_state["df_shift"], use_container_width=True, hide_index=True)
-
-st.markdown("**☑️ 보충 테이블**")
-st.dataframe(st.session_state["df_supplement"], use_container_width=True, hide_index=True)
-
-# 누적 테이블
-st.markdown("**➕ 누적 테이블**")
-st.write("- 변동이 있는 경우, 수정 가능합니다.")
-
-# 세션 상태에 편집된 누적 테이블 저장
-if "edited_df_cumulative" not in st.session_state:
-    st.session_state["edited_df_cumulative"] = df_cumulative.copy()
-
-# 편집 가능한 테이블 표시
-edited_df = st.data_editor(
-    st.session_state["edited_df_cumulative"],
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "이름": {"editable": False},  # 이름은 수정 불가
-        "오전누적": {"type": "number"},
-        "오후누적": {"type": "number"},
-        "오전당직 (온콜)": {"type": "number"},
-        "오후당직": {"type": "number"}
-    }
-)
-
-# 저장 버튼과 다운로드 버튼을 같은 행에 배치
-col_save, col_download = st.columns([1, 1])
-
-with col_save:
-    if st.button("💾 누적 테이블 수정사항 저장"):
-        try:
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(url)
-            worksheet4 = sheet.worksheet(f"{month_str} 누적")
-            
-            # 편집된 데이터를 세션 상태에 저장
-            st.session_state["edited_df_cumulative"] = edited_df
-            st.session_state["df_cumulative"] = edited_df.copy()
-            
-            # Google Sheets에 업데이트
-            update_data = [edited_df.columns.tolist()] + edited_df.values.tolist()
-            if update_sheet_with_retry(worksheet4, update_data):
-                st.success(f"{month_str} 누적 테이블이 성공적으로 저장되었습니다.")
-                time.sleep(1.5)
-                st.rerun()
-            else:
-                st.error("누적 테이블 저장 실패")
-                st.stop()
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (누적 테이블 저장): {str(e)}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"누적 테이블 저장 중 오류 발생: {str(e)}")
-            st.stop()
-
-with col_download:
-    excel_data = excel_download(
-        name=f"{month_str} 테이블 종합",
-        sheet1=df_shift_processed, name1="근무 테이블",
-        sheet2=df_supplement_processed, name2="보충 테이블",
-        sheet3=st.session_state["df_request"], name3="요청사항 테이블",
-        sheet4=st.session_state["df_cumulative"], name4="누적 테이블"
-    )
-    st.download_button(
-        label="📥 상단 테이블 다운로드",
-        data=excel_data,
-        file_name=f"{month_str} 테이블 종합.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )

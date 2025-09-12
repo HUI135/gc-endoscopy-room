@@ -428,6 +428,7 @@ df_supplement = st.session_state.get("df_supplement", pd.DataFrame())  # 세션 
 
 st.divider()
 st.subheader(f"✨ {month_str} 테이블 종합")
+st.write("- 당월 근무자와 보충 가능 인원을 확인하거나, 누적 테이블을 수정할 수 있습니다.\n- 보충 테이블에서 '🔺' 표시가 있는 인원은 해당일 오전 근무가 없으므로, 보충 시 오전·오후 모두 보충되어야 함을 의미합니다.")
 with st.expander("📁 테이블 펼쳐보기"):
 
     # 데이터 전처리: 근무 테이블과 보충 테이블의 열 분리
@@ -457,7 +458,57 @@ with st.expander("📁 테이블 펼쳐보기"):
 
     # 누적 테이블
     st.markdown("**➕ 누적 테이블**")
-    st.dataframe(df_cumulative, use_container_width=True, hide_index=True)
+    st.write("- 변동이 있는 경우, 수정 가능합니다.")
+
+    # 세션 상태에 편집된 누적 테이블 저장
+    if "edited_df_cumulative" not in st.session_state:
+        st.session_state["edited_df_cumulative"] = df_cumulative.copy()
+
+    # 편집 가능한 테이블 표시
+    edited_df = st.data_editor(
+        st.session_state["edited_df_cumulative"],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "이름": {"editable": False},  # 이름은 수정 불가
+            "오전누적": {"type": "number"},
+            "오후누적": {"type": "number"},
+            "오전당직 (온콜)": {"type": "number"},
+            "오후당직": {"type": "number"}
+        }
+    )
+
+    # 저장 버튼과 다운로드 버튼을 같은 행에 배치
+    col_save, col_download = st.columns([1, 1])
+
+    with col_save:
+        if st.button("💾 누적 테이블 수정사항 저장"):
+            try:
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(url)
+                worksheet4 = sheet.worksheet(f"{month_str} 누적")
+                
+                # 편집된 데이터를 세션 상태에 저장
+                st.session_state["edited_df_cumulative"] = edited_df
+                st.session_state["df_cumulative"] = edited_df.copy()
+                
+                # Google Sheets에 업데이트
+                update_data = [edited_df.columns.tolist()] + edited_df.values.tolist()
+                if update_sheet_with_retry(worksheet4, update_data):
+                    st.success(f"{month_str} 누적 테이블이 성공적으로 저장되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.error("누적 테이블 저장 실패")
+                    st.stop()
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 (누적 테이블 저장): {str(e)}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"누적 테이블 저장 중 오류 발생: {str(e)}")
+                st.stop()
 
     # 다운로드 버튼 추가
     excel_data = excel_download(
@@ -858,7 +909,52 @@ def load_monthly_special_schedules(month_str):
     except Exception as e:
         st.error(f"토요/휴일 스케줄을 불러오는 중 오류가 발생했습니다: {e}")
         return pd.DataFrame(), pd.DataFrame()
-    
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_closing_days(month_str):
+    """yyyy년 휴관일 시트에서 특정 월의 휴관일 목록을 불러옵니다."""
+    try:
+        client = get_gspread_client()
+        spreadsheet = client.open_by_url(st.secrets["google_sheet"]["url"])
+        
+        # 시트 이름에서 연도 추출 (예: "2025년 10월" -> "2025")
+        target_year = month_str.split('년')[0]
+        sheet_name = f"{target_year}년 휴관일"
+        
+        worksheet = spreadsheet.worksheet(sheet_name)
+        data = worksheet.get_all_records()
+        df_closing = pd.DataFrame(data)
+
+        if df_closing.empty or "날짜" not in df_closing.columns:
+            return [], pd.DataFrame(columns=["날짜"]) # 휴관일이 없으면 빈 리스트와 데이터프레임 반환
+
+        # 날짜 형식 변환 및 해당 월 필터링
+        df_closing['날짜'] = pd.to_datetime(df_closing['날짜'])
+        target_month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+        
+        df_monthly_closing = df_closing[
+            df_closing['날짜'].dt.month == target_month_dt.month
+        ].copy()
+
+        # 화면 표시용 데이터프레임 생성
+        df_display = df_monthly_closing.copy()
+        weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+        df_display['날짜'] = df_display['날짜'].apply(
+            lambda x: f"{x.month}월 {x.day}일 ({weekday_map[x.weekday()]})"
+        )
+
+        # 배정 로직에서 사용할 날짜 리스트 (YYYY-MM-DD 형식)
+        closing_dates_list = df_monthly_closing['날짜'].dt.strftime('%Y-%m-%d').tolist()
+        
+        return closing_dates_list, df_display
+
+    except gspread.exceptions.WorksheetNotFound:
+        st.info(f"ℹ️ '{sheet_name}' 시트를 찾을 수 없어 휴관일을 불러오지 않았습니다.")
+        return [], pd.DataFrame(columns=["날짜"])
+    except Exception as e:
+        st.error(f"휴관일 정보를 불러오는 중 오류가 발생했습니다: {e}")
+        return [], pd.DataFrame(columns=["날짜"])
+
 def transform_schedule_data(df, df_excel, month_start, month_end):
     df = df[df['상태'].isin(['근무', '보충', '추가보충'])][['날짜', '시간대', '근무자', '요일']].copy()
     
@@ -920,35 +1016,26 @@ if not df_monthly_schedule.empty:
 else:
     st.info(f"ℹ️ '{month_str}'에 해당하는 토요/휴일 스케줄이 없습니다.")
 
-# 휴관일 선택 UI 추가
+# 휴관일 자동 로드 및 표시
 st.write(" ")
-st.markdown("**📅 센터 휴관일 추가**")
+st.markdown(f"**📅 {month_str} 휴관일 정보**")
 
-# month_str에 해당하는 평일 날짜 생성 (이미 정의된 weekdays 사용)
-holiday_options = []
-for date in weekdays:
-    date_str = date.strftime('%Y-%m-%d')
-    date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
-    day_name = day_map[date_obj.weekday()]
-    holiday_format = f"{date_obj.month}월 {date_obj.day}일({day_name})"
-    holiday_options.append((holiday_format, date_str))
+# 위에서 추가한 함수를 호출하여 휴관일 데이터를 가져옵니다.
+holiday_dates, df_closing_display = load_closing_days(month_str)
 
-# st.multiselect로 휴관일 선택
-selected_holidays = st.multiselect(
-    label=f"{month_str} 평일 중 휴관일을 선택",
-    options=[option[0] for option in holiday_options],
-    default=[],
-    key="holiday_select",
-    help="선택한 날짜는 근무 배정에서 제외됩니다."
-)
-
-# 선택된 휴관일을 날짜 형식(YYYY-MM-DD)으로 변환
-holiday_dates = []
-for holiday in selected_holidays:
-    for option in holiday_options:
-        if option[0] == holiday:
-            holiday_dates.append(option[1])
-            break
+if holiday_dates:
+    st.write("- 아래 날짜는 근무 배정에서 제외됩니다.")
+    
+    # DataFrame에서 날짜 목록을 텍스트 리스트로 변환
+    formatted_dates_list = df_closing_display['날짜'].tolist()
+    
+    # 리스트를 ', '로 연결하여 하나의 문자열로 만듦
+    display_string = ", ".join(formatted_dates_list)
+    
+    # st.write를 사용해 일반 텍스트로 표시
+    st.write("➡️", display_string)
+else:
+    st.info(f"ℹ️ {month_str}에는 휴관일이 없습니다.")
 
 # df_master와 df_request에서 이름 추출 및 중복 제거
 names_in_master = set(df_master["이름"].unique().tolist())
@@ -1464,9 +1551,9 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, month_start, month_end)
         try:
             try:
-                worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
+                worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄 test")
             except gspread.exceptions.WorksheetNotFound:
-                worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄", rows=1000, cols=50)
+                worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄 test", rows=1000, cols=50)
             worksheet_schedule.clear()
             data_to_save = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.astype(str).values.tolist()
             worksheet_schedule.update('A1', data_to_save, value_input_option='RAW')
@@ -1486,9 +1573,9 @@ if st.button("🚀 근무 배정 실행", type="primary", use_container_width=Tr
         df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True)
         try:
             try:
-                worksheet_cumulative = sheet.worksheet(f"{next_month_str} 누적")
+                worksheet_cumulative = sheet.worksheet(f"{next_month_str} 누적 test")
             except gspread.exceptions.WorksheetNotFound:
-                worksheet_cumulative = sheet.add_worksheet(title=f"{next_month_str} 누적", rows=1000, cols=20)
+                worksheet_cumulative = sheet.add_worksheet(title=f"{next_month_str} 누적 test", rows=1000, cols=20)
             worksheet_cumulative.clear()
             cumulative_data_to_save = [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist()
             worksheet_cumulative.update('A1', cumulative_data_to_save, value_input_option='USER_ENTERED')
