@@ -25,14 +25,15 @@ if not st.session_state.get("login_success", False):
     st.stop()
 
 # --- 상수 및 기본 설정 ---
-from zoneinfo import ZoneInfo
 kst = ZoneInfo("Asia/Seoul")
 now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
 YEAR_STR = month_str.split('년')[0]
-AM_COLS = [str(i) for i in range(1, 13)] + ['온콜']
+# '온콜'을 AM_COLS에서 분리하여 명확하게 관리
+AM_COLS = [str(i) for i in range(1, 13)]
+ONCALL_COL = '오전당직(온콜)'
 PM_COLS = [f'오후{i}' for i in range(1, 6)]
 REQUEST_SHEET_NAME = f"{month_str} 스케줄 변경요청"
 
@@ -67,8 +68,6 @@ def load_schedule_data(month_str):
             st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
             return pd.DataFrame()
         df = pd.DataFrame(records)
-        if '오전당직(온콜)' in df.columns:
-            df.rename(columns={'오전당직(온콜)': '온콜'}, inplace=True)
         if '날짜' not in df.columns:
             st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
             return pd.DataFrame()
@@ -201,36 +200,71 @@ def get_shift_type(col_name):
         return "오후"
     return "기타"
 
+# ✅ 수정된 get_person_shifts 함수
 def get_person_shifts(df, person_name):
-    shifts = []
+    # 중복을 방지하기 위해 세트(set)를 사용
+    shifts_set = set()
+
     am_cols_in_df = [col for col in AM_COLS if col in df.columns]
+    oncall_col_in_df = ONCALL_COL if ONCALL_COL in df.columns else None
     pm_cols_in_df = [col for col in PM_COLS if col in df.columns]
+
     for _, row in df.iterrows():
         dt = row['날짜_dt']
-        date_str = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
-        for col in am_cols_in_df:
-            if row[col] == person_name:
-                shifts.append({'date_obj': dt.date(), 'shift_type': '오전', 'col_name': col, 'display_str': f"{date_str} - 오전", 'person_name': person_name})
-        for col in pm_cols_in_df:
-            if row[col] == person_name:
-                shifts.append({'date_obj': dt.date(), 'shift_type': '오후', 'col_name': col, 'display_str': f"{date_str} - 오후", 'person_name': person_name})
-    return shifts
+        date_str_display = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
+
+        # 1. 온콜 근무 확인
+        if oncall_col_in_df and row[oncall_col_in_df] == person_name:
+            shift_type = '오전당직(온콜)'
+            display_str = f"{date_str_display} - {shift_type}"
+            shifts_set.add((dt.date(), shift_type, display_str, person_name))
+
+        # 2. 일반 오전 근무 확인
+        is_in_am = any(row[col] == person_name for col in am_cols_in_df)
+        if is_in_am:
+            shift_type = '오전'
+            display_str = f"{date_str_display} - {shift_type}"
+            shifts_set.add((dt.date(), shift_type, display_str, person_name))
+
+        # 3. 오후 근무 확인
+        is_in_pm = any(row[col] == person_name for col in pm_cols_in_df)
+        if is_in_pm:
+            shift_type = '오후'
+            display_str = f"{date_str_display} - {shift_type}"
+            shifts_set.add((dt.date(), shift_type, display_str, person_name))
+
+    # 세트를 정렬된 딕셔너리 리스트로 변환하여 반환
+    sorted_shifts = sorted(list(shifts_set), key=lambda x: (x[0], x[1]))
+    return [
+        {'date_obj': date_obj, 'shift_type': stype, 'display_str': dstr, 'person_name': pname}
+        for date_obj, stype, dstr, pname in sorted_shifts
+    ]
 
 def get_all_employee_names(df):
     all_cols = [col for col in df.columns if col in AM_COLS + PM_COLS]
     return set(df[all_cols].values.ravel()) - {''}
 
+# ✅ 수정된 is_person_assigned_at_time 함수
 def is_person_assigned_at_time(df, person_name, date_obj, shift_type):
     row_data = df[df['날짜_dt'].dt.date == date_obj]
     if row_data.empty:
         return False
     row_dict = row_data.iloc[0].to_dict()
+
+    check_cols = []
     if shift_type == "오전":
+        # '온콜'을 제외한 오전 근무 열만 확인
         check_cols = [col for col in AM_COLS if col in row_dict]
+    elif shift_type == "오전당직(온콜)":
+        # '온콜' 열만 확인
+        if ONCALL_COL in row_dict:
+            check_cols = [ONCALL_COL]
     elif shift_type == "오후":
         check_cols = [col for col in PM_COLS if col in row_dict]
     else:
         return False
+
+    # 해당 열들에 이름이 있는지 확인
     for col in check_cols:
         if row_dict.get(col) == person_name:
             return True
@@ -322,7 +356,7 @@ else:
             if my_selected_date_str:
                 my_selected_date_obj = user_date_options[my_selected_date_str]
                 # 선택된 날짜에 가능한 시간대 (오전/오후) 목록 생성
-                available_shifts_for_date = [s['shift_type'] for s in user_shifts if s['date_obj'] == my_selected_date_obj]
+                available_shifts_for_date = sorted(list(set(s['shift_type'] for s in user_shifts if s['date_obj'] == my_selected_date_obj)))
                 
                 my_selected_shift_type = st.selectbox(
                     "시간대 선택",

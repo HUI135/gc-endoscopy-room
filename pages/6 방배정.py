@@ -239,82 +239,88 @@ def create_df_schedule_md(df_schedule):
             
     return df_schedule_md
 
+# ✂️ 복사 & 붙여넣기용 최종 apply_schedule_swaps 함수
 def apply_schedule_swaps(original_schedule_df, swap_requests_df, special_df):
     df_modified = original_schedule_df.copy()
     applied_count = 0
-    # ✅ 이 함수에서 수집한 변경사항을 저장할 세트
     swapped_assignments = st.session_state.get("swapped_assignments", set())
     batch_change_log = []
 
-    # special_dates 정의
     special_dates = set()
     if not special_df.empty and '날짜' in special_df.columns:
         try:
             special_dates = {datetime.strptime(d, '%Y-%m-%d').strftime('%#m월 %#d일') for d in special_df['날짜'].dropna()}
-        except ValueError: # Windows 호환성
+        except ValueError:
             special_dates = {datetime.strptime(d, '%Y-%m-%d').strftime('%m월 %d일').lstrip("0").replace(" 0", " ") for d in special_df['날짜'].dropna()}
 
     for _, request_row in swap_requests_df.iterrows():
         try:
             change_request_str = str(request_row.get('변경 요청', '')).strip()
-            if '➡️' not in change_request_str:
-                continue
+            if '➡️' not in change_request_str: continue
 
-            requester_name, new_assignee = [p.strip() for p in change_request_str.split('➡️')]
+            person_before, person_after = [p.strip() for p in change_request_str.split('➡️')]
             schedule_info_str = str(request_row.get('변경 요청한 스케줄', '')).strip()
             date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_info_str)
-
-            if not date_match:
-                continue
+            if not date_match: continue
 
             date_part, time_period = date_match.groups()
             date_obj = datetime.strptime(date_part, '%Y-%m-%d').date()
             formatted_date_in_df = f"{date_obj.month}월 {date_obj.day}일"
 
             target_row_indices = df_modified[df_modified['날짜'] == formatted_date_in_df].index
-            if target_row_indices.empty:
-                continue
+            if target_row_indices.empty: continue
             target_row_idx = target_row_indices[0]
 
-            is_special_date = formatted_date_in_df in special_dates
+            target_cols = []
+            if time_period == '오전당직(온콜)':
+                target_cols = ['오전당직(온콜)']
+            elif time_period == '오전':
+                target_cols = [str(i) for i in range(1, 18)]
+            elif time_period == '오후':
+                target_cols = [f'오후{i}' for i in range(1, 10)]
 
-            time_period_cols = [str(i) for i in range(1, 13)] if is_special_date else \
-                                   ([str(i) for i in range(1, 12)] + ['오전당직(온콜)'] if time_period == '오전' else \
-                                    [f'오후{i}' for i in range(1, 6)])
-
-            matched_cols = [col for col in time_period_cols if col in df_modified.columns and str(df_modified.at[target_row_idx, col]).strip() == requester_name]
+            available_target_cols = [col for col in target_cols if col in df_modified.columns]
+            
+            matched_cols = [col for col in available_target_cols if str(df_modified.at[target_row_idx, col]).strip() == person_before]
 
             if not matched_cols:
-                formatted_date_for_error = f"{date_obj.month}월 {date_obj.day}일"
-                st.error(f"❌ 적용 실패: {formatted_date_for_error}의 '{time_period}'에 '{requester_name}'이(가) 배정되어 있지 않습니다.")
+                st.warning(f"🟡 적용 건너뜀: {formatted_date_in_df} '{time_period}'에 '{person_before}' 근무가 없습니다. (선행 요청으로 변경된 것으로 보임)")
                 continue
 
+            # --- 💡💡 핵심 수정: 중복 배정 방지 로직 💡💡 ---
+            # 현재 처리 중인 행의 모든 근무자를 가져옴
+            all_current_personnel = df_modified.loc[target_row_idx].values.tolist()
+            # 만약 '변경 후 인원'이 이미 해당 행에 있다면, 중복이므로 요청을 건너뜀
+            # (단, 바꾸려는 대상(person_before)은 제외하고 검사)
+            other_personnel = [p for p in all_current_personnel if p != person_before]
+            if person_after in other_personnel:
+                st.warning(f"🟡 적용 건너뜀: '{person_after}'님은 이미 {formatted_date_in_df}에 다른 근무가 배정되어 있습니다.")
+                continue
+            # --- 여기까지 ---
+
             for col in matched_cols:
-                df_modified.at[target_row_idx, col] = new_assignee
-                # ✅ 하이라이트를 위해 변경된 최종 근무자 정보를 세트에 추가
-                swapped_assignments.add((formatted_date_in_df, time_period, new_assignee))
+                df_modified.at[target_row_idx, col] = person_after
+                swapped_assignments.add((formatted_date_in_df, time_period, person_after))
 
             batch_change_log.append({
                 '날짜': f"{formatted_date_in_df} ({'월화수목금토일'[date_obj.weekday()]}) - {time_period}",
-                '변경 전 인원': requester_name,
-                '변경 후 인원': new_assignee,
+                '변경 전 인원': person_before,
+                '변경 후 인원': person_after,
             })
             applied_count += 1
 
         except Exception as e:
             st.error(f"요청 처리 중 오류 발생: {type(e).__name__} - {str(e)}")
             continue
-
+    
     if applied_count > 0:
         st.success(f"✅ 총 {applied_count}건의 스케줄 변경 요청이 성공적으로 반영되었습니다.")
         time.sleep(1.5)
     else:
         st.info("새롭게 적용할 스케줄 변경 요청이 없습니다.")
         time.sleep(1.5)
-
-    st.session_state["swapped_assignments_log"] = batch_change_log
     
-    # ✅ 위에서 수집한 변경사항 정보를 앱 전체에서 사용할 수 있도록 세션에 저장
+    st.session_state["swapped_assignments_log"] = batch_change_log
     st.session_state["swapped_assignments"] = swapped_assignments
 
     return create_df_schedule_md(df_modified)
@@ -492,6 +498,52 @@ if not df_swaps_raw.empty:
     if '변경 요청한 스케줄' in df_swaps_display.columns:
         df_swaps_display['변경 요청한 스케줄'] = df_swaps_display['변경 요청한 스케줄'].apply(format_sheet_date_for_display)
     st.dataframe(df_swaps_display, use_container_width=True, hide_index=True)
+
+    # --- 💡 경고 메시지 로직 (업그레이드 버전) ---
+    request_sources = []
+    request_destinations = [] # 도착지 검사를 위한 리스트 추가
+
+    for index, row in df_swaps_raw.iterrows():
+        change_request_str = str(row.get('변경 요청', '')).strip()
+        schedule_info_str = str(row.get('변경 요청한 스케줄', '')).strip()
+        if '➡️' in change_request_str and schedule_info_str:
+            person_before, person_after = [p.strip() for p in change_request_str.split('➡️')]
+            
+            # 1. 출처 충돌 검사 리스트
+            request_sources.append(f"{person_before} - {schedule_info_str}")
+            
+            # 2. 도착지 중복 검사 리스트
+            date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_info_str)
+            if date_match:
+                date_part, time_period = date_match.groups()
+                # (날짜, 시간대, 변경 후 사람)을 기준으로 중복 확인
+                request_destinations.append((date_part, time_period, person_after))
+
+    # [검사 1: 출처 충돌]
+    source_counts = Counter(request_sources)
+    source_conflicts = [item for item, count in source_counts.items() if count > 1]
+    if source_conflicts:
+        st.warning(
+            "⚠️ **요청 출처 충돌**: 동일한 근무에 대한 변경 요청이 2개 이상 있습니다. "
+            "목록의 가장 위에 있는 요청이 먼저 반영되며, 이후 요청은 무시될 수 있습니다."
+        )
+        for conflict_item in source_conflicts:
+            person, schedule = conflict_item.split(' - ', 1)
+            formatted_schedule = format_sheet_date_for_display(schedule)
+            st.info(f"- **'{person}'** 님의 **{formatted_schedule}** 근무 요청이 중복되었습니다.")
+
+    # [검사 2: 도착지 중복]
+    dest_counts = Counter(request_destinations)
+    dest_conflicts = [item for item, count in dest_counts.items() if count > 1]
+    if dest_conflicts:
+        st.warning(
+            "⚠️ **요청 도착지 중복**: 한 사람이 같은 날, 같은 시간대에 여러 근무를 받게 되는 요청이 있습니다. "
+            "이 경우, 먼저 처리되는 요청만 반영됩니다."
+        )
+        for date, period, person in dest_conflicts:
+            formatted_date = format_sheet_date_for_display(f"{date} ({period})")
+            st.info(f"- **'{person}'** 님이 **{formatted_date}** 근무에 중복으로 배정될 가능성이 있습니다.")
+
 else:
     st.info("표시할 교환 요청 데이터가 없습니다.")
 
