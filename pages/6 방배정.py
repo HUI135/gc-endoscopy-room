@@ -71,6 +71,8 @@ def initialize_session_state():
         st.session_state["worksheet_room_request"] = None
     if "batch_apply_messages" not in st.session_state:
         st.session_state["batch_apply_messages"] = []
+    if "assignment_results" not in st.session_state:
+        st.session_state["assignment_results"] = None
 
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
@@ -442,6 +444,8 @@ if st.button("🔄 새로고침 (R)"):
     # '일괄 적용'으로 생성된 미리보기 스케줄도 삭제하여 원본으로 되돌림
     if "df_schedule_md_modified" in st.session_state:
         del st.session_state["df_schedule_md_modified"]
+    if "assignment_results" in st.session_state:
+        del st.session_state["assignment_results"]
 
     st.rerun() # 페이지를 다시 실행하여 데이터 로딩부터 다시 시작
 
@@ -1554,7 +1558,82 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 
 st.divider()
 if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
+
     with st.spinner("방배정 중..."):
+        # --- 요청사항 처리 결과 추적을 위한 초기화 ---
+        applied_messages = []
+        unapplied_messages = []
+        weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+        
+        # --- [수정] 방배정 전 요청사항 유효성 검사 ---
+        st.info("ℹ️ 방배정 요청사항 유효성을 검사합니다...")
+        
+        # 날짜 파싱 성능을 위해 근무일 정보 미리 생성
+        work_days_map = {}
+        target_year = int(month_str.split('년')[0])
+        df_schedule_for_check = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial"))
+
+        for _, schedule_row in df_schedule_for_check.iterrows():
+            date_str = schedule_row['날짜']
+            try:
+                date_obj = datetime.strptime(date_str, '%m월 %d일').replace(year=target_year)
+                formatted_date = date_obj.strftime('%Y-%m-%d')
+                
+                morning_workers = set(p.strip() for p in schedule_row.iloc[2:13].dropna() if p and p.strip())
+                afternoon_workers = set(p.strip() for p in schedule_row.iloc[13:].dropna() if p and p.strip())
+                on_call_worker = str(schedule_row.get('오전당직(온콜)', '')).strip()
+
+                if on_call_worker:
+                    morning_workers.add(on_call_worker)
+                    afternoon_workers.add(on_call_worker)
+                
+                work_days_map[formatted_date] = {
+                    "morning": morning_workers,
+                    "afternoon": afternoon_workers,
+                    "on_call": on_call_worker
+                }
+            except (ValueError, TypeError):
+                continue
+
+        # 유효성 검사를 통과한 요청만 실제 배정에 사용
+        valid_requests_indices = []
+        for index, req in st.session_state["df_room_request"].iterrows():
+            req_date, is_morning = parse_date_info(req['날짜정보'])
+            person = req['이름']
+            category = req['분류']
+            
+            is_valid = True
+
+            # 날짜 포맷팅 ('MM월 DD일(요일) (오전/오후)')
+            date_obj = datetime.strptime(req_date, '%Y-%m-%d')
+            day_of_week = weekday_map[date_obj.weekday()]
+            date_str_display = f"{date_obj.strftime('%m월 %d일')}({day_of_week})"
+            time_str_display = '오전' if is_morning else '오후'
+            
+            # 1. 근무일이 아닌 경우 검사
+            time_period_key = "morning" if is_morning else "afternoon"
+            if req_date not in work_days_map or person not in work_days_map[req_date][time_period_key]:
+                msg = f"⚠️ {person}: {date_str_display} ({time_str_display})이 근무일이 아니므로 '{category}' 요청을 처리할 수 없습니다."
+                unapplied_messages.append(msg)
+                is_valid = False
+
+            # 2. 평일 오전 당직방 관련 요청 검사
+            is_special_day = req_date in [d.strftime('%Y-%m-%d') for d, _, _ in st.session_state.get("special_schedules", [])]
+            if is_valid and not is_special_day and is_morning:
+                room_match = re.match(r'(\d+)번방', category)
+                if room_match:
+                    req_room_num = room_match.group(1)
+                    morning_duty_room = st.session_state["room_settings"].get("830_duty")
+                    if req_room_num == morning_duty_room:
+                        # [수정] 아이콘을 ⛔️로 변경
+                        msg = f"⛔️ {person}: {date_str_display} ({time_str_display})의 '{req_room_num}번방' 요청은 오전 당직방입니다. 수기로 수정해 주십시오."
+                        unapplied_messages.append(msg)
+
+            if is_valid:
+                valid_requests_indices.append(index)
+        
+        # 유효한 요청들만 필터링하여 DataFrame 생성
+        valid_requests_df = st.session_state["df_room_request"].loc[valid_requests_indices].copy()
         time.sleep(1)
 
         try:
@@ -1705,7 +1784,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 personnel = [p for p in row.iloc[2:].dropna() if p]
                 settings = st.session_state["weekend_room_settings"].get(date_str, {})
                 
-                assignment_dict, sorted_rooms = assign_special_date(personnel, date_str, formatted_date, settings, special_df_for_assignment, st.session_state["df_room_request"])
+                assignment_dict, sorted_rooms = assign_special_date(personnel, date_str, formatted_date, settings, special_df_for_assignment, valid_requests_df)
 
                 # (이하 로직은 기존 코드를 그대로 따르되, 하드코딩된 부분만 제거)
                 room_to_first_slot_idx = {}
@@ -1853,8 +1932,8 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 continue
             
             request_assignments = {}
-            if not st.session_state["df_room_request"].empty:
-                for _, req in st.session_state["df_room_request"].iterrows():
+            if not valid_requests_df.empty:
+                for _, req in valid_requests_df.iterrows():
                     req_date, is_morning = parse_date_info(req['날짜정보'])
                     if req_date and req_date == formatted_date:
                         slots_for_category = st.session_state["memo_rules"].get(req['분류'], [])
@@ -1889,10 +1968,110 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                     st.error(f"⚠️ {date_str}: '{person}'님이 오후/온콜에 중복 배정되었습니다 (슬롯: {', '.join(duplicated_slots)}).")
 
             result_data.append(result_row)
-        
         df_room = pd.DataFrame(result_data, columns=columns)
+
+        # Google Sheets에 방배정 시트 저장
+        try:
+            gc = get_gspread_client()
+            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (연결 단계): {e.response.status_code} - {e.response.text}")
+            st.stop()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
+            st.stop()
+            
+        try:
+            worksheet_result = sheet.worksheet(f"{month_str} 방배정")
+        except gspread.exceptions.WorksheetNotFound:
+            try:
+                worksheet_result = sheet.add_worksheet(f"{month_str} 방배정", rows=100, cols=len(df_room.columns))
+            except gspread.exceptions.APIError as e:
+                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+                st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 생성): {e.response.status_code} - {e.response.text}")
+                st.stop()
+            except NameError as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"'{month_str} 방배정' 시트 생성 중 오류: {type(e).__name__} - {e}")
+                st.stop()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"'{month_str} 방배정' 시트 생성 실패: {type(e).__name__} - {e}")
+                st.stop()
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 로드): {e.response.status_code} - {e.response.text}")
+            st.stop()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"'{month_str} 방배정' 시트 로드 중 오류: {type(e).__name__} - {e}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
+            st.stop()
+            
+        update_sheet_with_retry(worksheet_result, [df_room.columns.tolist()] + df_room.fillna('').values.tolist())
+        st.success(f"✅ {month_str} 방배정 테이블이 Google Sheets에 저장되었습니다.")
+
+
+        # --- [수정] 요청사항 최종 반영 여부 확인 및 결과 출력 ---
+        applied_request_keys = set()
+        for key, value in request_cells.items():
+            applied_request_keys.add((key[0], value['이름'], value['분류']))
+
+        for _, req in valid_requests_df.iterrows():
+            req_date, is_morning = parse_date_info(req['날짜정보'])
+            person = req['이름']
+            category = req['분류']
+            
+            req_key = (req_date, person, category)
+            
+            # 날짜 포맷팅
+            date_obj = datetime.strptime(req_date, '%Y-%m-%d')
+            day_of_week = weekday_map[date_obj.weekday()]
+            date_str_display = f"{date_obj.strftime('%m월 %d일')}({day_of_week})"
+            time_str_display = '오전' if is_morning else '오후'
+            
+            if req_key in applied_request_keys:
+                msg = f"✅ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청이 적용되었습니다."
+                applied_messages.append(msg)
+            else:
+                is_special_day = req_date in [d.strftime('%Y-%m-%d') for d, _, _ in st.session_state.get("special_schedules", [])]
+                if is_special_day:
+                     msg = f"⛔️ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청은 토요/휴일 일자입니다. 수기로 수정해주십시오."
+                     unapplied_messages.append(msg)
+
+        # --- Expander로 결과 표시 ---
+        st.write("---")
+        st.subheader("📋 요청사항 처리 결과")
+
+        # 적용 안 된 요청 Expander
+        with st.expander("요청사항 적용 안 됨", expanded=True if unapplied_messages else False):
+            if not unapplied_messages:
+                st.text("적용되지 않은 요청이 없습니다.")
+            else:
+                # [수정] ⛔️가 ⚠️보다 먼저 오도록 정렬 순서 변경
+                sorted_unapplied = sorted(unapplied_messages, key=lambda x: ('⛔️' in x, '⚠️' in x), reverse=True)
+                for message in sorted_unapplied:
+                    st.text(message)
+
+        # 적용된 요청 Expander
+        with st.expander("요청사항 적용됨", expanded=True if applied_messages else False):
+            if not applied_messages:
+                st.text("적용된 요청이 없습니다.")
+            else:
+                for message in sorted(applied_messages):
+                    st.text(message)
+
         st.write(" ")
-        st.markdown("**✅ 통합 배치 결과**")
+        st.markdown("**✅ 통합 배치 결과**") # 기존 헤더와 연결
         st.dataframe(df_room, hide_index=True)
         
         for row_data in result_data:
@@ -2166,53 +2345,3 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             type="primary",
             use_container_width=True
         )
-
-        # Google Sheets에 방배정 시트 저장
-        try:
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (연결 단계): {e.response.status_code} - {e.response.text}")
-            st.stop()
-        except NameError as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
-            st.stop()
-            
-        try:
-            worksheet_result = sheet.worksheet(f"{month_str} 방배정")
-        except gspread.exceptions.WorksheetNotFound:
-            try:
-                worksheet_result = sheet.add_worksheet(f"{month_str} 방배정", rows=100, cols=len(df_room.columns))
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 생성): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except NameError as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"'{month_str} 방배정' 시트 생성 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-            except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"'{month_str} 방배정' 시트 생성 실패: {type(e).__name__} - {e}")
-                st.stop()
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 ('{month_str} 방배정' 시트 로드): {e.response.status_code} - {e.response.text}")
-            st.stop()
-        except NameError as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"'{month_str} 방배정' 시트 로드 중 오류: {type(e).__name__} - {e}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"'{month_str} 방배정' 시트 로드 실패: {type(e).__name__} - {e}")
-            st.stop()
-            
-        update_sheet_with_retry(worksheet_result, [df_room.columns.tolist()] + df_room.fillna('').values.tolist())
-        st.success(f"✅ {month_str} 방배정 테이블이 Google Sheets에 저장되었습니다.")
