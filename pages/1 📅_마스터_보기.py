@@ -511,7 +511,7 @@ if st.button("🔄 새로고침 (R)"):
 # st.html 부터 시작하는 부분을 교체하세요.
 st.html("""
 <style>
-    /* CSS Version: Final & Forceful Dark Mode */
+    /* CSS Version: Original Structure - Forceful PC Dark Mode Fix */
 
     /* --- 1. 기본 스타일 (라이트 모드) --- */
     .calendar-title {
@@ -548,12 +548,13 @@ st.html("""
     }
 
     /* --- 2. 다크 모드 전용 스타일 (PC) --- */
+    /* ❗수정: 모든 규칙에 !important를 추가하여 최우선 순위 부여 */
     @media (prefers-color-scheme: dark) {
         .calendar-title, .day-number, .schedule-container strong {
             color: #fafafa !important;
         }
         .schedule-container {
-            background-color: #1c1c27 !important;
+            background-color: #2a2a38 !important;
             color: #fafafa !important;
         }
         .calendar-header {
@@ -562,7 +563,7 @@ st.html("""
             border: 1px solid #444 !important;
         }
         .calendar-day-cell {
-            background-color: #1c1c27 !important;
+            background-color: #12121a !important;
             border: 1px solid #444 !important;
         }
         .day-number.other-month {
@@ -570,7 +571,8 @@ st.html("""
         }
     }
     
-    /* --- 3. 모바일 화면 대응 --- */
+    /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
+    /* 이 부분은 원래대로 잘 작동했으므로 그대로 유지합니다. */
     @media (max-width: 768px) {
         div[data-testid="stHorizontalBlock"] {
             display: grid !important;
