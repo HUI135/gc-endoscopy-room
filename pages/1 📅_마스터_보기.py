@@ -508,12 +508,11 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-# 1. CSS 스타일 정의 (안정성과 디자인을 모두 잡은 최종 버전)
 st.html("""
 <style>
-    /* CSS Version: Final Hybrid - Grid Layout */
+    /* CSS Version: Final++ Border Method */
 
-    /* --- 1. 기본 캘린더 스타일 (PC에서는 이 스타일이 적용됩니다) --- */
+    /* --- 1. 기본 캘린더 스타일 (PC) --- */
     .calendar-title {
         text-align: center; font-size: 24px; font-weight: bold;
         margin-bottom: 20px; color: black;
@@ -539,35 +538,57 @@ st.html("""
         margin-bottom: 3px; color: white; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
     }
-
-    /* ▼▼▼▼▼ 2. 모바일 화면 대응 최종 코드 (Grid 사용) ▼▼▼▼▼ */
-    /* 화면 너비가 768px 이하일 때만 아래 스타일을 강력하게 적용합니다. */
+    
+    /* --- 2. 모바일 화면 대응 최종 코드 --- */
     @media (max-width: 768px) {
-        /* 부모 컨테이너를 Grid로 만들고, 7개의 동일한 컬럼을 강제합니다. */
+        /* ▼▼▼▼▼ 핵심 변경 사항 ▼▼▼▼▼ */
+        
+        /* Grid 컨테이너에서 gap을 완전히 제거하고, 전체적인 외곽선만 설정합니다. */
         div[data-testid="stHorizontalBlock"] {
             display: grid !important;
             grid-template-columns: repeat(7, 1fr) !important;
-            gap: 0.25rem !important; /* 'gap'을 사용하여 깔끔한 간격을 다시 만듭니다. */
+            gap: 0 !important; /* 간격을 완전히 제거 */
+            border-top: 1px solid #e0e0e0 !important;
+            border-left: 1px solid #e0e0e0 !important;
         }
 
-        /* 자식(컬럼)에 대한 별도 규칙은 Grid 방식에서는 필요 없습니다. */
+        /* 각 셀의 오른쪽과 아래쪽에만 1px 테두리를 추가해 선이 겹치지 않게 합니다. */
+        div[data-testid="stHorizontalBlock"] {
+            display: grid !important;
+            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important; /* 열 너비 넓히기 */
+            column-gap: 0 !important;
+            row-gap: 0 !important;
+            gap: 0 !important;
+            padding: 0 !important;       /* 컨테이너 패딩 제거 */
+            margin: 0 !important;
+            border-top: 1px solid #e0e0e0 !important;
+            border-left: 1px solid #e0e0e0 !important;
+        }
+        .calendar-header {
+            border: none !important;
+            border-left: 1px solid #e0e0e0 !important;
+            border-right: 1px solid #e0e0e0 !important;
+            border-bottom: 1px solid #e0e0e0 !important;
+            border-radius: 0 !important;
+            background-color: #f8f9fa !important;
+        }
+        
+        /* ▲▲▲▲▲ 핵심 변경 사항 ▲▲▲▲▲ */
 
         /* 가독성을 위한 스타일 조정 */
         .calendar-day-cell {
-            min-height: 85px !important;
-            padding: 3px !important;
-        }
-        .day-number {
-            font-size: 11px !important;
+            min-height: 75px !important;
+            padding: 1px !important;
         }
         .event-item {
-            font-size: 10px !important;
-            padding: 1px 2px !important;
-            margin-bottom: 2px !important;
+            font-size: 9px !important;
+            padding: 1px !important;
+            white-space: normal !important;
+            word-break: break-all !important;
+            line-height: 1.1 !important;
         }
-        .calendar-header {
-            font-size: 12px !important;
-            padding: 8px 0 !important;
+        .day-number, .calendar-header {
+            font-size: 11px !important;
         }
     }
 </style>
