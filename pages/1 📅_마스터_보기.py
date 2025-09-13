@@ -511,7 +511,7 @@ if st.button("🔄 새로고침 (R)"):
 # st.html 부터 시작하는 부분을 교체하세요.
 st.html("""
 <style>
-    /* CSS Version: Final Dark Mode Compatible */
+    /* CSS Version: Final & Forceful Dark Mode */
 
     /* --- 1. 기본 스타일 (라이트 모드) --- */
     .calendar-title {
@@ -519,7 +519,7 @@ st.html("""
         margin-bottom: 20px; color: #495057;
     }
     .schedule-container {
-        background-color: #f8f9fa !important; /* <<< 해결책 */
+        background-color: #f8f9fa !important;
         padding: 10px;
         border-radius: 5px;
         margin-bottom: 15px;
@@ -530,8 +530,8 @@ st.html("""
         border: 1px solid #e1e4e8; border-radius: 5px;
         background-color: #e9ecef; color: black;
     }
-    .saturday { color: #4169E1 !important; } /* RoyalBlue */
-    .sunday { color: #DC143C !important; } /* Crimson */
+    .saturday { color: #4169E1 !important; }
+    .sunday { color: #DC143C !important; }
     .calendar-day-cell {
         border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
         min-height: 120px; background-color: #f8f9fa;
@@ -547,26 +547,26 @@ st.html("""
         text-overflow: ellipsis; white-space: nowrap;
     }
 
-    /* --- 2. 다크 모드 전용 스타일 --- */
+    /* --- 2. 다크 모드 전용 스타일 (PC) --- */
     @media (prefers-color-scheme: dark) {
         .calendar-title, .day-number, .schedule-container strong {
-            color: #fafafa; /* 밝은 텍스트 색상 */
+            color: #fafafa !important;
         }
         .schedule-container {
-            background-color: #2a2a38; /* 어두운 배경 */
-            color: #fafafa;
+            background-color: #1c1c27 !important;
+            color: #fafafa !important;
         }
         .calendar-header {
-            background-color: #1c1c27;
-            color: #fafafa;
-            border-color: #444;
+            background-color: #1c1c27 !important;
+            color: #fafafa !important;
+            border: 1px solid #444 !important;
         }
         .calendar-day-cell {
-            background-color: #12121a; /* 매우 어두운 셀 배경 */
-            border-color: #444; /* 어두운 테두리 */
+            background-color: #1c1c27 !important;
+            border: 1px solid #444 !important;
         }
         .day-number.other-month {
-            color: #555;
+            color: #555 !important;
         }
     }
     
@@ -575,8 +575,7 @@ st.html("""
         div[data-testid="stHorizontalBlock"] {
             display: grid !important;
             grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
-            column-gap: 0 !important; row-gap: 0 !important; gap: 0 !important;
-            padding: 0 !important; margin: 0 !important;
+            gap: 0 !important; padding: 0 !important; margin: 0 !important;
             border-top: 1px solid #e0e0e0 !important;
             border-left: 1px solid #e0e0e0 !important;
         }
