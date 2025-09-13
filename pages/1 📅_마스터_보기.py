@@ -512,18 +512,14 @@ if st.button("🔄 새로고침 (R)"):
 # 1. CSS 스타일 정의
 st.markdown("""
 <style>
-/* 월(Month) 표시 타이틀 */
+/* --- 기본 캘린더 스타일 (PC 기준) --- */
 .calendar-title {
     text-align: center;
     font-size: 24px;
     font-weight: bold;
     margin-bottom: 20px;
-    color: black; /* 텍스트 색상 추가 */
+    color: black;
 }
-div[data-testid="stHorizontalBlock"] {
-    gap: 0.5rem;
-}
-/* 요일 헤더 */
 .calendar-header {
     text-align: center;
     font-weight: bold;
@@ -531,36 +527,30 @@ div[data-testid="stHorizontalBlock"] {
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     background-color: #e9ecef;
-    color: black; /* 텍스트 색상 추가 */
+    color: black;
 }
-/* 토요일, 일요일 색상 (기존 스타일 유지) */
-.saturday { color: blue !important; } /* !important 추가하여 우선 적용 */
-.sunday { color: red !important; } /* !important 추가하여 우선 적용 */
-
-/* 날짜 하나하나를 의미하는 셀 */
+.saturday { color: blue !important; }
+.sunday { color: red !important; }
 .calendar-day-cell {
     border: 1px solid #e1e4e8;
     border-radius: 5px;
     padding: 6px;
-    min-height: 120px;
+    min-height: 120px; /* PC에서는 충분한 높이 유지 */
     background-color: white;
     display: flex;
     flex-direction: column;
 }
-/* 날짜 숫자 스타일 */
 .day-number {
     font-weight: bold;
-    font-size: 14px;
+    font-size: 14px; /* PC에서는 기본 글자 크기 */
     margin-bottom: 5px;
-    color: black; /* 텍스트 색상 추가 */
+    color: black;
 }
-/* 다른 달의 날짜는 회색으로 (기존 스타일 유지) */
 .day-number.other-month {
     color: #ccc;
 }
-/* 이벤트 아이템 스타일 */
 .event-item {
-    font-size: 13px;
+    font-size: 13px; /* PC에서는 기본 글자 크기 */
     padding: 1px 5px;
     border-radius: 3px;
     margin-bottom: 3px;
@@ -569,6 +559,41 @@ div[data-testid="stHorizontalBlock"] {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* ▼▼▼▼▼ [수정] 모바일 화면 대응 최종 코드 ▼▼▼▼▼ */
+/* 화면 너비가 768px 이하일 때 (태블릿/모바일) 아래 스타일을 적용합니다. */
+@media (max-width: 768px) {
+    /* st.columns 컨테이너의 자식 요소(개별 컬럼)를 타겟으로 지정 */
+    div[data-testid="stHorizontalBlock"] > div[data-testid^="stVerticalBlock"] {
+        /* 컬럼이 세로로 쌓이지 않고 가로 공간을 나눠 갖도록 강제 */
+        flex: 1 1 0%;
+        min-width: 0; /* 컬럼 너비가 정상적으로 줄어들도록 보장 */
+    }
+
+    /* 모바일에서는 컬럼 간격을 더 좁게 조정 */
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.15rem;
+    }
+
+    /* 모바일에서 캘린더 셀과 글자 크기를 조정하여 가독성 확보 */
+    .calendar-day-cell {
+        min-height: 85px; /* 모바일 최소 높이 조정 */
+        padding: 3px;     /* 셀 내부 여백 감소 */
+    }
+    .day-number {
+        font-size: 11px; /* 날짜 숫자 크기 감소 */
+    }
+    .event-item {
+        font-size: 10px;  /* 이벤트 글자 크기 감소 */
+        padding: 1px 2px; /* 이벤트 내부 여백 감소 */
+        margin-bottom: 2px;
+    }
+    .calendar-header {
+        font-size: 12px; /* 요일 헤더 글자 크기 감소 */
+        padding: 8px 0;
+    }
+}
+
 </style>
 """, unsafe_allow_html=True)
 

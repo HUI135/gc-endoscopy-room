@@ -479,7 +479,7 @@ st.divider()
 
 # --- UI 및 데이터 핸들링 (수정된 부분) ---
 st.subheader("✍️ 방배정 최종 수정")
-st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장**하세요.")
+st.write("- 요청사항을 **일괄 적용/취소**하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
 col1, col2 = st.columns(2)
 # [추가] 세션에 저장된 메시지를 항상 표시하는 로직
 if "page7_messages" in st.session_state and st.session_state["page7_messages"]:
