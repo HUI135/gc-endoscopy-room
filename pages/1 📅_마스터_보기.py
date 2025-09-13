@@ -510,20 +510,21 @@ if st.button("🔄 새로고침 (R)"):
 
 st.html("""
 <style>
-    /* CSS Version: Final++ Border Method */
-
-    /* --- 1. 기본 캘린더 스타일 (PC) --- */
+    /* --- 기본 (라이트모드) 스타일 --- */
     .calendar-title {
         text-align: center; font-size: 24px; font-weight: bold;
         margin-bottom: 20px; color: black;
+    }
+    .schedule-container {
+        background-color: #f0f2f6;
+        padding: 10px; border-radius: 5px; margin-bottom: 15px;
+        color: black; border: 1px solid transparent; /* 테두리 영역 확보 */
     }
     .calendar-header {
         text-align: center; font-weight: bold; padding: 10px 0;
         border: 1px solid #e1e4e8; border-radius: 5px;
         background-color: #e9ecef; color: black;
     }
-    .saturday { color: blue !important; }
-    .sunday { color: red !important; }
     .calendar-day-cell {
         border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
         min-height: 120px; background-color: white;
@@ -532,64 +533,35 @@ st.html("""
     .day-number {
         font-weight: bold; font-size: 14px; margin-bottom: 5px; color: black;
     }
-    .day-number.other-month { color: #ccc; }
+
+    /* --- 다크모드 전용 스타일 (요청사항 반영) --- */
+    [data-theme="dark"] {
+        /* 1. 제목: 하얀 텍스트 */
+        .calendar-title, .day-number {
+            color: white;
+        }
+
+        /* 2. 캘린더 & 토요/휴일: 검정 배경 + 하얀 테두리 */
+        .schedule-container, .calendar-day-cell, .calendar-header {
+            background-color: black;
+            border: 1px solid white;
+            color: white; /* 내부 글자도 흰색으로 */
+        }
+    }
+
+    /* --- 기타 스타일 (수정 불필요) --- */
+    .saturday { color: #4169E1 !important; }
+    .sunday { color: #DC143C !important; }
+    .day-number.other-month { color: #555; }
     .event-item {
         font-size: 13px; padding: 1px 5px; border-radius: 3px;
         margin-bottom: 3px; color: white; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
     }
-    
-    /* --- 2. 모바일 화면 대응 최종 코드 --- */
     @media (max-width: 768px) {
-        /* ▼▼▼▼▼ 핵심 변경 사항 ▼▼▼▼▼ */
-        
-        /* Grid 컨테이너에서 gap을 완전히 제거하고, 전체적인 외곽선만 설정합니다. */
-        div[data-testid="stHorizontalBlock"] {
-            display: grid !important;
-            grid-template-columns: repeat(7, 1fr) !important;
-            gap: 0 !important; /* 간격을 완전히 제거 */
-            border-top: 1px solid #e0e0e0 !important;
-            border-left: 1px solid #e0e0e0 !important;
-        }
-
-        /* 각 셀의 오른쪽과 아래쪽에만 1px 테두리를 추가해 선이 겹치지 않게 합니다. */
-        div[data-testid="stHorizontalBlock"] {
-            display: grid !important;
-            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important; /* 열 너비 넓히기 */
-            column-gap: 0 !important;
-            row-gap: 0 !important;
-            gap: 0 !important;
-            padding: 0 !important;       /* 컨테이너 패딩 제거 */
-            margin: 0 !important;
-            border-top: 1px solid #e0e0e0 !important;
-            border-left: 1px solid #e0e0e0 !important;
-        }
-        .calendar-header {
-            border: none !important;
-            border-left: 1px solid #e0e0e0 !important;
-            border-right: 1px solid #e0e0e0 !important;
-            border-bottom: 1px solid #e0e0e0 !important;
-            border-radius: 0 !important;
-            background-color: #f8f9fa !important;
-        }
-        
-        /* ▲▲▲▲▲ 핵심 변경 사항 ▲▲▲▲▲ */
-
-        /* 가독성을 위한 스타일 조정 */
-        .calendar-day-cell {
-            min-height: 75px !important;
-            padding: 1px !important;
-        }
-        .event-item {
-            font-size: 9px !important;
-            padding: 1px !important;
-            white-space: normal !important;
-            word-break: break-all !important;
-            line-height: 1.1 !important;
-        }
-        .day-number, .calendar-header {
-            font-size: 11px !important;
-        }
+        .calendar-day-cell { min-height: 75px !important; padding: 1px !important; }
+        .event-item { font-size: 9px !important; }
+        .day-number, .calendar-header { font-size: 11px !important; }
     }
 </style>
 """)
@@ -605,58 +577,45 @@ if st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
     st.write("")
 
 # 2. 캘린더 UI 렌더링
-# 제목 표시
 st.markdown(f'<div class="calendar-title">{month_str} 마스터 스케줄</div>', unsafe_allow_html=True)
 
-# 캘린더 격자 생성
 with st.container():
-    # 요일 헤더
     cols = st.columns(7, gap="small")
     days_of_week = ["일", "월", "화", "수", "목", "금", "토"]
     for col, day in zip(cols, days_of_week):
         header_class = "calendar-header"
-        if day == "토":
-            header_class += " saturday"
-        elif day == "일":
-            header_class += " sunday"
+        if day == "토": header_class += " saturday"
+        elif day == "일": header_class += " sunday"
         col.markdown(f'<div class="{header_class}">{day}</div>', unsafe_allow_html=True)
 
-    # 날짜 데이터 준비
-    cal = calendar.Calendar(firstweekday=6) # 일요일 시작
+    cal = calendar.Calendar(firstweekday=6)
     month_days = cal.monthdatescalendar(year, month)
     
-    # 날짜별 이벤트 가공 (빠른 조회를 위해 딕셔너리로 변환)
     events_by_date = {}
-    # ❗️ 기존 코드의 `events` 변수를 그대로 사용합니다.
     for event in events:
         start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
         if 'end' in event and event['start'] != event['end']:
             end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
             for i in range((end_date - start_date).days):
                 current_date = start_date + datetime.timedelta(days=i)
-                if current_date not in events_by_date:
-                    events_by_date[current_date] = []
+                if current_date not in events_by_date: events_by_date[current_date] = []
                 events_by_date[current_date].append(event)
         else:
-            if start_date not in events_by_date:
-                events_by_date[start_date] = []
+            if start_date not in events_by_date: events_by_date[start_date] = []
             events_by_date[start_date].append(event)
 
-    # 날짜 셀 생성
     for week in month_days:
         cols = st.columns(7)
         for i, day_date in enumerate(week):
             is_other_month = "other-month" if day_date.month != month else ""
-            
             with cols[i]:
                 event_html = ""
                 if day_date in events_by_date:
-                    for event in events_by_date[day_date]:
-                        color = event.get('color', '#6c757d')
-                        title = event['title']
+                    for event_item in events_by_date[day_date]:
+                        color = event_item.get('color', '#6c757d')
+                        title = event_item['title']
                         event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
-
-                # 각 날짜 칸(셀)을 HTML로 그림
+                
                 cell_html = f"""
                 <div class="calendar-day-cell">
                     <div class="day-number {is_other_month}">{day_date.day}</div>
@@ -665,183 +624,29 @@ with st.container():
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
 
-# 이번 달 토요/휴일 스케줄 필터링 및 스타일 적용하여 출력
-st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
+st.write("")
 current_month_schedule_df = df_saturday[
     (df_saturday['날짜'].dt.year == year) & 
     (df_saturday['날짜'].dt.month == month)
 ].sort_values(by='날짜')
 
 if not current_month_schedule_df.empty:
-    # 요일 한글 변환 맵
     weekday_map_ko = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
-    
-    # 날짜를 "월 일(요일)" 형식의 리스트로 변환
     schedule_list = [
         date.strftime(f"%-m월 %-d일({weekday_map_ko[date.weekday()]})") 
         for date in current_month_schedule_df['날짜']
     ]
-    
-    # 최종 문자열 생성
     schedule_str = ", ".join(schedule_list)
-    
-    # HTML/CSS를 사용하여 배경색과 스타일 적용
     styled_text = f"""
-    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+    <div class="schedule-container">
         📅 <strong>이번 달 토요/휴일 스케줄:</strong> {schedule_str}
     </div>
     """
     st.markdown(styled_text, unsafe_allow_html=True)
-
 else:
-    # 스케줄이 없을 경우에도 동일한 스타일 적용
     styled_text = """
-    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+    <div class="schedule-container">
         📅 이번 달에는 예정된 토요/휴일 근무가 없습니다.
     </div>
     """
     st.markdown(styled_text, unsafe_allow_html=True)
-
-# # 마스터 스케줄 편집
-# st.divider()
-# st.subheader("📅 마스터 스케줄 편집")
-# st.write("- 월 단위 또는 주 단위로 본인의 마스터 스케줄을 수정할 수 있습니다.")
-
-# # 월 단위 일괄 설정
-# with st.expander("📅 월 단위로 일괄 설정"):
-#     has_weekly_specific = any(w in df_user_master["주차"].values for w in week_labels)
-#     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
-#     default_bulk = {}
-    
-#     if has_weekly_specific:
-#         for day in 요일리스트:
-#             day_values = []
-#             for week in week_labels:
-#                 week_df = df_user_master[df_user_master["주차"] == week]
-#                 day_specific = week_df[week_df["요일"] == day]
-#                 if not day_specific.empty:
-#                     day_values.append(day_specific.iloc[0]["근무여부"])
-#                 elif not every_week_df.empty:
-#                     day_every = every_week_df[every_week_df["요일"] == day]
-#                     day_values.append(day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음")
-#                 else:
-#                     day_values.append("근무없음")
-#             if day_values and all(v == day_values[0] for v in day_values):
-#                 default_bulk[day] = day_values[0]
-#             else:
-#                 most_common = Counter(day_values).most_common(1)[0][0]
-#                 default_bulk[day] = most_common
-#     elif has_weekly:
-#         default_bulk = every_week_df.set_index("요일")["근무여부"].to_dict()
-#     for day in 요일리스트:
-#         if day not in default_bulk:
-#             default_bulk[day] = "근무없음"
-
-#     if has_weekly and all(df_user_master["근무여부"] == "근무없음"):
-#         st.info("마스터 입력이 필요합니다.")
-#     elif has_weekly_specific:
-#         st.warning("현재 주차별 근무 일정이 다릅니다. 월 단위로 초기화하려면 내용을 입력하세요.")
-
-#     col1, col2, col3, col4, col5 = st.columns(5)
-#     월값 = col1.selectbox("월", 근무옵션, index=근무옵션.index(default_bulk.get("월", "근무없음")), key=f"월_bulk_{name}")
-#     화값 = col2.selectbox("화", 근무옵션, index=근무옵션.index(default_bulk.get("화", "근무없음")), key=f"화_bulk_{name}")
-#     수값 = col3.selectbox("수", 근무옵션, index=근무옵션.index(default_bulk.get("수", "근무없음")), key=f"수_bulk_{name}")
-#     목값 = col4.selectbox("목", 근무옵션, index=근무옵션.index(default_bulk.get("목", "근무없음")), key=f"목_bulk_{name}")
-#     금값 = col5.selectbox("금", 근무옵션, index=근무옵션.index(default_bulk.get("금", "근무없음")), key=f"금_bulk_{name}")
-
-#     if st.button("💾 월 단위 저장", key="save_monthly"):
-#         try:
-#             sheet = gc.open_by_url(url)
-#             worksheet1 = sheet.worksheet("마스터")
-#             rows = [{"이름": name, "주차": "매주", "요일": 요일, "근무여부": {"월": 월값, "화": 화값, "수": 수값, "목": 목값, "금": 금값}[요일]} for 요일 in 요일리스트]
-#             updated_df = pd.DataFrame(rows)
-#             updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-#             updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
-#             df_master = df_master[df_master["이름"] != name]
-#             df_result = pd.concat([df_master, updated_df], ignore_index=True)
-#             df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-#             df_result = df_result.sort_values(by=["이름", "주차", "요일"])
-#             if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
-#                 st.session_state["df_master"] = df_result
-#                 st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
-#                 st.success("월 단위 수정사항이 저장되었습니다.")
-#                 time.sleep(1.5)
-#                 # st.cache_data.clear()
-#                 st.rerun()
-#             else:
-#                 st.error("마스터 시트 저장 실패")
-#                 st.stop()
-#         except APIError as e:
-#             st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-#             st.error(f"Google Sheets API 오류 (월 단위 저장): {str(e)}")
-#             st.stop()
-#         except Exception as e:
-#             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-#             st.error(f"월 단위 저장 중 오류 발생: {str(e)}")
-#             st.stop()
-
-# # 주 단위 설정
-# with st.expander("📅 주 단위로 설정"):
-#     st.markdown("**주 단위로 근무 여부가 다른 경우 아래 내용들을 입력해주세요.**")
-#     master_data = {}
-#     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
-    
-#     for week in week_labels:
-#         master_data[week] = {}
-#         week_df = df_user_master[df_user_master["주차"] == week]
-#         for day in 요일리스트:
-#             day_specific = week_df[week_df["요일"] == day]
-#             if not day_specific.empty:
-#                 master_data[week][day] = day_specific.iloc[0]["근무여부"]
-#             elif not every_week_df.empty:
-#                 day_every = every_week_df[every_week_df["요일"] == day]
-#                 master_data[week][day] = day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음"
-#             else:
-#                 master_data[week][day] = "근무없음"
-
-#     for week in week_labels:
-#         st.markdown(f"**🗓 {week}**")
-#         col1, col2, col3, col4, col5 = st.columns(5)
-#         master_data[week]["월"] = col1.selectbox(f"월", 근무옵션, index=근무옵션.index(master_data[week]["월"]), key=f"{week}_월_{name}")
-#         master_data[week]["화"] = col2.selectbox(f"화", 근무옵션, index=근무옵션.index(master_data[week]["화"]), key=f"{week}_화_{name}")
-#         master_data[week]["수"] = col3.selectbox(f"수", 근무옵션, index=근무옵션.index(master_data[week]["수"]), key=f"{week}_수_{name}")
-#         master_data[week]["목"] = col4.selectbox(f"목", 근무옵션, index=근무옵션.index(master_data[week]["목"]), key=f"{week}_목_{name}")
-#         master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금_{name}")
-
-#     if st.button("💾 주 단위 저장", key="save_weekly"):
-#         try:
-#             sheet = gc.open_by_url(url)
-#             worksheet1 = sheet.worksheet("마스터")
-#             rows = []
-#             for 요일 in 요일리스트:
-#                 week_shifts = [master_data[week][요일] for week in week_labels]
-#                 if all(shift == week_shifts[0] for shift in week_shifts):
-#                     rows.append({"이름": name, "주차": "매주", "요일": 요일, "근무여부": week_shifts[0]})
-#                 else:
-#                     for week in week_labels:
-#                         rows.append({"이름": name, "주차": week, "요일": 요일, "근무여부": master_data[week][요일]})
-#             updated_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
-#             updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-#             updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
-#             df_master = df_master[df_master["이름"] != name]
-#             df_result = pd.concat([df_master, updated_df], ignore_index=True)
-#             df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
-#             df_result = df_result.sort_values(by=["이름", "주차", "요일"])
-#             if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
-#                 st.session_state["df_master"] = df_result
-#                 st.session_state["df_user_master"] = df_result[df_result["이름"] == name].copy()
-#                 st.success("주 단위 수정사항이 저장되었습니다.")
-#                 time.sleep(1.5)
-#                 # st.cache_data.clear()
-#                 st.rerun()
-#             else:
-#                 st.error("마스터 시트 저장 실패")
-#                 st.stop()
-#         except APIError as e:
-#             st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-#             st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
-#             st.stop()
-#         except Exception as e:
-#             st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-#             st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
-#             st.stop()
