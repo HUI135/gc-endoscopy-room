@@ -508,94 +508,70 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-# 캘린더 표시
-# 1. CSS 스타일 정의
-st.markdown("""
+# 1. CSS 스타일 정의 (안정성과 디자인을 모두 잡은 최종 버전)
+st.html("""
 <style>
-/* --- 기본 캘린더 스타일 (PC 기준) --- */
-.calendar-title {
-    text-align: center;
-    font-size: 24px;
-    font-weight: bold;
-    margin-bottom: 20px;
-    color: black;
-}
-.calendar-header {
-    text-align: center;
-    font-weight: bold;
-    padding: 10px 0;
-    border: 1px solid #e1e4e8;
-    border-radius: 5px;
-    background-color: #e9ecef;
-    color: black;
-}
-.saturday { color: blue !important; }
-.sunday { color: red !important; }
-.calendar-day-cell {
-    border: 1px solid #e1e4e8;
-    border-radius: 5px;
-    padding: 6px;
-    min-height: 120px; /* PC에서는 충분한 높이 유지 */
-    background-color: white;
-    display: flex;
-    flex-direction: column;
-}
-.day-number {
-    font-weight: bold;
-    font-size: 14px; /* PC에서는 기본 글자 크기 */
-    margin-bottom: 5px;
-    color: black;
-}
-.day-number.other-month {
-    color: #ccc;
-}
-.event-item {
-    font-size: 13px; /* PC에서는 기본 글자 크기 */
-    padding: 1px 5px;
-    border-radius: 3px;
-    margin-bottom: 3px;
-    color: white;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+    /* CSS Version: Final Hybrid - Grid Layout */
 
-/* ▼▼▼▼▼ [수정] 모바일 화면 대응 최종 코드 ▼▼▼▼▼ */
-/* 화면 너비가 768px 이하일 때 (태블릿/모바일) 아래 스타일을 적용합니다. */
-@media (max-width: 768px) {
-    /* st.columns 컨테이너의 자식 요소(개별 컬럼)를 타겟으로 지정 */
-    div[data-testid="stHorizontalBlock"] > div[data-testid^="stVerticalBlock"] {
-        /* 컬럼이 세로로 쌓이지 않고 가로 공간을 나눠 갖도록 강제 */
-        flex: 1 1 0%;
-        min-width: 0; /* 컬럼 너비가 정상적으로 줄어들도록 보장 */
-    }
-
-    /* 모바일에서는 컬럼 간격을 더 좁게 조정 */
-    div[data-testid="stHorizontalBlock"] {
-        gap: 0.15rem;
-    }
-
-    /* 모바일에서 캘린더 셀과 글자 크기를 조정하여 가독성 확보 */
-    .calendar-day-cell {
-        min-height: 85px; /* 모바일 최소 높이 조정 */
-        padding: 3px;     /* 셀 내부 여백 감소 */
-    }
-    .day-number {
-        font-size: 11px; /* 날짜 숫자 크기 감소 */
-    }
-    .event-item {
-        font-size: 10px;  /* 이벤트 글자 크기 감소 */
-        padding: 1px 2px; /* 이벤트 내부 여백 감소 */
-        margin-bottom: 2px;
+    /* --- 1. 기본 캘린더 스타일 (PC에서는 이 스타일이 적용됩니다) --- */
+    .calendar-title {
+        text-align: center; font-size: 24px; font-weight: bold;
+        margin-bottom: 20px; color: black;
     }
     .calendar-header {
-        font-size: 12px; /* 요일 헤더 글자 크기 감소 */
-        padding: 8px 0;
+        text-align: center; font-weight: bold; padding: 10px 0;
+        border: 1px solid #e1e4e8; border-radius: 5px;
+        background-color: #e9ecef; color: black;
     }
-}
+    .saturday { color: blue !important; }
+    .sunday { color: red !important; }
+    .calendar-day-cell {
+        border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
+        min-height: 120px; background-color: white;
+        display: flex; flex-direction: column;
+    }
+    .day-number {
+        font-weight: bold; font-size: 14px; margin-bottom: 5px; color: black;
+    }
+    .day-number.other-month { color: #ccc; }
+    .event-item {
+        font-size: 13px; padding: 1px 5px; border-radius: 3px;
+        margin-bottom: 3px; color: white; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+    }
 
+    /* ▼▼▼▼▼ 2. 모바일 화면 대응 최종 코드 (Grid 사용) ▼▼▼▼▼ */
+    /* 화면 너비가 768px 이하일 때만 아래 스타일을 강력하게 적용합니다. */
+    @media (max-width: 768px) {
+        /* 부모 컨테이너를 Grid로 만들고, 7개의 동일한 컬럼을 강제합니다. */
+        div[data-testid="stHorizontalBlock"] {
+            display: grid !important;
+            grid-template-columns: repeat(7, 1fr) !important;
+            gap: 0.25rem !important; /* 'gap'을 사용하여 깔끔한 간격을 다시 만듭니다. */
+        }
+
+        /* 자식(컬럼)에 대한 별도 규칙은 Grid 방식에서는 필요 없습니다. */
+
+        /* 가독성을 위한 스타일 조정 */
+        .calendar-day-cell {
+            min-height: 85px !important;
+            padding: 3px !important;
+        }
+        .day-number {
+            font-size: 11px !important;
+        }
+        .event-item {
+            font-size: 10px !important;
+            padding: 1px 2px !important;
+            margin-bottom: 2px !important;
+        }
+        .calendar-header {
+            font-size: 12px !important;
+            padding: 8px 0 !important;
+        }
+    }
 </style>
-""", unsafe_allow_html=True)
+""")
 
 if df_user_request.empty:
     with st.container(border=True):
