@@ -516,10 +516,10 @@ st.html("""
     /* --- 1. 기본 스타일 (라이트 모드) --- */
     .calendar-title {
         text-align: center; font-size: 24px; font-weight: bold;
-        margin-bottom: 20px; color: black;
+        margin-bottom: 20px; color: #495057;
     }
     .schedule-container {
-        background-color: #f0f2f6;
+        background-color: #f8f9fa !important; /* <<< 해결책 */
         padding: 10px;
         border-radius: 5px;
         margin-bottom: 15px;
@@ -534,7 +534,7 @@ st.html("""
     .sunday { color: #DC143C !important; } /* Crimson */
     .calendar-day-cell {
         border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
-        min-height: 120px; background-color: white;
+        min-height: 120px; background-color: #f8f9fa;
         display: flex; flex-direction: column;
     }
     .day-number {
