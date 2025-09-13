@@ -508,23 +508,30 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
+# st.html 부터 시작하는 부분을 교체하세요.
 st.html("""
 <style>
-    /* --- 기본 (라이트모드) 스타일 --- */
+    /* CSS Version: Final Dark Mode Compatible */
+
+    /* --- 1. 기본 스타일 (라이트 모드) --- */
     .calendar-title {
         text-align: center; font-size: 24px; font-weight: bold;
         margin-bottom: 20px; color: black;
     }
     .schedule-container {
         background-color: #f0f2f6;
-        padding: 10px; border-radius: 5px; margin-bottom: 15px;
-        color: black; border: 1px solid transparent; /* 테두리 영역 확보 */
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        color: black;
     }
     .calendar-header {
         text-align: center; font-weight: bold; padding: 10px 0;
         border: 1px solid #e1e4e8; border-radius: 5px;
         background-color: #e9ecef; color: black;
     }
+    .saturday { color: #4169E1 !important; } /* RoyalBlue */
+    .sunday { color: #DC143C !important; } /* Crimson */
     .calendar-day-cell {
         border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
         min-height: 120px; background-color: white;
@@ -533,35 +540,75 @@ st.html("""
     .day-number {
         font-weight: bold; font-size: 14px; margin-bottom: 5px; color: black;
     }
-
-    /* --- 다크모드 전용 스타일 (요청사항 반영) --- */
-    [data-theme="dark"] {
-        /* 1. 제목: 하얀 텍스트 */
-        .calendar-title, .day-number {
-            color: white;
-        }
-
-        /* 2. 캘린더 & 토요/휴일: 검정 배경 + 하얀 테두리 */
-        .schedule-container, .calendar-day-cell, .calendar-header {
-            background-color: black;
-            border: 1px solid white;
-            color: white; /* 내부 글자도 흰색으로 */
-        }
-    }
-
-    /* --- 기타 스타일 (수정 불필요) --- */
-    .saturday { color: #4169E1 !important; }
-    .sunday { color: #DC143C !important; }
-    .day-number.other-month { color: #555; }
+    .day-number.other-month { color: #ccc; }
     .event-item {
         font-size: 13px; padding: 1px 5px; border-radius: 3px;
         margin-bottom: 3px; color: white; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
     }
+
+    /* --- 2. 다크 모드 전용 스타일 --- */
+    @media (prefers-color-scheme: dark) {
+        .calendar-title, .day-number, .schedule-container strong {
+            color: #fafafa; /* 밝은 텍스트 색상 */
+        }
+        .schedule-container {
+            background-color: #2a2a38; /* 어두운 배경 */
+            color: #fafafa;
+        }
+        .calendar-header {
+            background-color: #1c1c27;
+            color: #fafafa;
+            border-color: #444;
+        }
+        .calendar-day-cell {
+            background-color: #12121a; /* 매우 어두운 셀 배경 */
+            border-color: #444; /* 어두운 테두리 */
+        }
+        .day-number.other-month {
+            color: #555;
+        }
+    }
+    
+    /* --- 3. 모바일 화면 대응 --- */
     @media (max-width: 768px) {
+        div[data-testid="stHorizontalBlock"] {
+            display: grid !important;
+            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
+            column-gap: 0 !important; row-gap: 0 !important; gap: 0 !important;
+            padding: 0 !important; margin: 0 !important;
+            border-top: 1px solid #e0e0e0 !important;
+            border-left: 1px solid #e0e0e0 !important;
+        }
+        .calendar-header {
+            border: none !important;
+            border-left: 1px solid #e0e0e0 !important;
+            border-right: 1px solid #e0e0e0 !important;
+            border-bottom: 1px solid #e0e0e0 !important;
+            border-radius: 0 !important;
+            background-color: #f8f9fa !important;
+        }
         .calendar-day-cell { min-height: 75px !important; padding: 1px !important; }
-        .event-item { font-size: 9px !important; }
+        .event-item {
+            font-size: 9px !important; padding: 1px !important;
+            white-space: normal !important; word-break: break-all !important;
+            line-height: 1.1 !important;
+        }
         .day-number, .calendar-header { font-size: 11px !important; }
+
+        /* 모바일 + 다크모드 대응 */
+        @media (prefers-color-scheme: dark) {
+            div[data-testid="stHorizontalBlock"] {
+                border-top: 1px solid #444 !important;
+                border-left: 1px solid #444 !important;
+            }
+            .calendar-header {
+                border-left: 1px solid #444 !important;
+                border-right: 1px solid #444 !important;
+                border-bottom: 1px solid #444 !important;
+                background-color: #1c1c27 !important;
+            }
+        }
     }
 </style>
 """)
@@ -577,45 +624,58 @@ if st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
     st.write("")
 
 # 2. 캘린더 UI 렌더링
+# 제목 표시
 st.markdown(f'<div class="calendar-title">{month_str} 마스터 스케줄</div>', unsafe_allow_html=True)
 
+# 캘린더 격자 생성
 with st.container():
+    # 요일 헤더
     cols = st.columns(7, gap="small")
     days_of_week = ["일", "월", "화", "수", "목", "금", "토"]
     for col, day in zip(cols, days_of_week):
         header_class = "calendar-header"
-        if day == "토": header_class += " saturday"
-        elif day == "일": header_class += " sunday"
+        if day == "토":
+            header_class += " saturday"
+        elif day == "일":
+            header_class += " sunday"
         col.markdown(f'<div class="{header_class}">{day}</div>', unsafe_allow_html=True)
 
-    cal = calendar.Calendar(firstweekday=6)
+    # 날짜 데이터 준비
+    cal = calendar.Calendar(firstweekday=6) # 일요일 시작
     month_days = cal.monthdatescalendar(year, month)
     
+    # 날짜별 이벤트 가공 (빠른 조회를 위해 딕셔너리로 변환)
     events_by_date = {}
+    # ❗️ 기존 코드의 `events` 변수를 그대로 사용합니다.
     for event in events:
         start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
         if 'end' in event and event['start'] != event['end']:
             end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
             for i in range((end_date - start_date).days):
                 current_date = start_date + datetime.timedelta(days=i)
-                if current_date not in events_by_date: events_by_date[current_date] = []
+                if current_date not in events_by_date:
+                    events_by_date[current_date] = []
                 events_by_date[current_date].append(event)
         else:
-            if start_date not in events_by_date: events_by_date[start_date] = []
+            if start_date not in events_by_date:
+                events_by_date[start_date] = []
             events_by_date[start_date].append(event)
 
+    # 날짜 셀 생성
     for week in month_days:
         cols = st.columns(7)
         for i, day_date in enumerate(week):
             is_other_month = "other-month" if day_date.month != month else ""
+            
             with cols[i]:
                 event_html = ""
                 if day_date in events_by_date:
-                    for event_item in events_by_date[day_date]:
-                        color = event_item.get('color', '#6c757d')
-                        title = event_item['title']
+                    for event in events_by_date[day_date]:
+                        color = event.get('color', '#6c757d')
+                        title = event['title']
                         event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
-                
+
+                # 각 날짜 칸(셀)을 HTML로 그림
                 cell_html = f"""
                 <div class="calendar-day-cell">
                     <div class="day-number {is_other_month}">{day_date.day}</div>
@@ -624,29 +684,40 @@ with st.container():
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
 
-st.write("")
+# 이번 달 토요/휴일 스케줄 필터링 및 스타일 적용하여 출력
+st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
 current_month_schedule_df = df_saturday[
     (df_saturday['날짜'].dt.year == year) & 
     (df_saturday['날짜'].dt.month == month)
 ].sort_values(by='날짜')
 
 if not current_month_schedule_df.empty:
+    # 요일 한글 변환 맵
     weekday_map_ko = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
+    
+    # 날짜를 "월 일(요일)" 형식의 리스트로 변환
     schedule_list = [
         date.strftime(f"%-m월 %-d일({weekday_map_ko[date.weekday()]})") 
         for date in current_month_schedule_df['날짜']
     ]
+    
+    # 최종 문자열 생성
     schedule_str = ", ".join(schedule_list)
+    
+    # ▼▼▼ [수정된 부분] CSS 클래스를 사용하여 스타일 적용 ▼▼▼
     styled_text = f"""
     <div class="schedule-container">
         📅 <strong>이번 달 토요/휴일 스케줄:</strong> {schedule_str}
     </div>
     """
     st.markdown(styled_text, unsafe_allow_html=True)
+
 else:
+    # 스케줄이 없을 경우에도 동일한 스타일 적용
     styled_text = """
     <div class="schedule-container">
         📅 이번 달에는 예정된 토요/휴일 근무가 없습니다.
     </div>
     """
     st.markdown(styled_text, unsafe_allow_html=True)
+# 여기까지 교체하면 됩니다.
