@@ -547,28 +547,9 @@ st.html("""
         text-overflow: ellipsis; white-space: nowrap;
     }
 
-    /* --- 2. 다크 모드 전용 스타일 (PC) --- */
-    /* ❗수정: 모든 규칙에 !important를 추가하여 최우선 순위 부여 */
-    @media (prefers-color-scheme: dark) {
-        .calendar-title, .day-number, .schedule-container strong {
-            color: #fafafa !important;
-        }
-        .schedule-container {
-            background-color: #2a2a38 !important;
-            color: #fafafa !important;
-        }
-        .calendar-header {
-            background-color: #1c1c27 !important;
-            color: #fafafa !important;
-            border: 1px solid #444 !important;
-        }
-        .calendar-day-cell {
-            background-color: #12121a !important;
-            border: 1px solid #444 !important;
-        }
-        .day-number.other-month {
-            color: #555 !important;
-        }
+    .calendar-day-cell:has(.day-number.saturday) .event-item,
+    .calendar-day-cell:has(.day-number.sunday) .event-item {
+        border: 1px solid black !important;
     }
     
     /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
@@ -596,20 +577,6 @@ st.html("""
             line-height: 1.1 !important;
         }
         .day-number, .calendar-header { font-size: 11px !important; }
-
-        /* 모바일 + 다크모드 대응 */
-        @media (prefers-color-scheme: dark) {
-            div[data-testid="stHorizontalBlock"] {
-                border-top: 1px solid #444 !important;
-                border-left: 1px solid #444 !important;
-            }
-            .calendar-header {
-                border-left: 1px solid #444 !important;
-                border-right: 1px solid #444 !important;
-                border-bottom: 1px solid #444 !important;
-                background-color: #1c1c27 !important;
-            }
-        }
     }
 </style>
 """)
