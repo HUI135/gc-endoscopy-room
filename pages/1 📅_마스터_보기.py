@@ -523,6 +523,7 @@ st.html("""
         padding: 10px;
         border-radius: 5px;
         margin-bottom: 15px;
+        border: 1px solid #e1e4e8;
         color: black;
     }
     .calendar-header {
@@ -547,11 +548,6 @@ st.html("""
         text-overflow: ellipsis; white-space: nowrap;
     }
 
-    .calendar-day-cell:has(.day-number.saturday) .event-item,
-    .calendar-day-cell:has(.day-number.sunday) .event-item {
-        border: 1px solid black !important;
-    }
-    
     /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
     /* 이 부분은 원래대로 잘 작동했으므로 그대로 유지합니다. */
     @media (max-width: 768px) {
