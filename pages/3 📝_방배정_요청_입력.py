@@ -124,9 +124,9 @@ def generate_saturday_events(df_saturday_schedule, current_user_name, year, mont
                 events.append({"title": "당직", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors.get("당직"), "source": "saturday"})
     return events
 
-def generate_master_events(df_user_master, year, month, week_labels):
+def generate_master_events(df_user_master, year, month, week_labels, closing_dates_set):
     master_data = {}
-    요일리스트 = ["월", "화", "수", "목", "금"] # 평일만 처리하도록 수정
+    요일리스트 = ["월", "화", "수", "목", "금"]
     
     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
     
@@ -144,15 +144,20 @@ def generate_master_events(df_user_master, year, month, week_labels):
                 master_data[week][day] = "근무없음"
 
     events = []
-    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"} # 평일 맵으로 수정
+    weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"}
     _, last_day = calendar.monthrange(year, month)
     status_colors = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
     first_sunday = next((day for day in range(1, 8) if datetime.date(year, month, day).weekday() == 6), None)
 
     for day in range(1, last_day + 1):
         date_obj = datetime.date(year, month, day)
+        
+        # ▼▼▼ [수정됨] 휴관일인 경우 마스터 일정을 표시하지 않고 건너뜁니다. ▼▼▼
+        if date_obj in closing_dates_set:
+            continue
+        
         weekday = date_obj.weekday()
-        if weekday in weekday_map: # 평일만 이벤트 생성
+        if weekday in weekday_map:
             day_name = weekday_map[weekday]
             if first_sunday is None: week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
             else: week_num = (day - first_sunday) // 7 + 1 if day >= first_sunday else 0
@@ -221,7 +226,28 @@ def load_saturday_schedule(sheet, year):
     except Exception as e:
         st.error(f"토요/휴일 스케줄 로드 중 오류 발생: {str(e)}")
         return pd.DataFrame(columns=["날짜", "근무", "당직"])
-    
+
+def load_closing_days(sheet, year):
+    """지정된 연도의 휴관일 데이터를 로드하는 함수"""
+    try:
+        worksheet_name = f"{year}년 휴관일"
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["날짜"])
+        
+        df = pd.DataFrame(data)
+        df = df[df['날짜'] != '']
+        df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
+        df.dropna(subset=['날짜'], inplace=True)
+        return df
+    except WorksheetNotFound:
+        st.info(f"'{worksheet_name}' 시트를 찾을 수 없습니다. 휴관일이 표시되지 않습니다.")
+        return pd.DataFrame(columns=["날짜"])
+    except Exception as e:
+        st.error(f"휴관일 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame(columns=["날짜"])
+
 def generate_room_request_events(df_user_room_request, today):
     label_map = {
         "1번방": "1번방", "2번방": "2번방", "3번방": "3번방", "4번방": "4번방", "5번방": "5번방",
@@ -248,7 +274,6 @@ def generate_room_request_events(df_user_room_request, today):
                 continue
     return events
 
-# 데이터 초기화 로직
 def initialize_and_sync_data(gc, url, name, month_start, month_end):
     """페이지에 필요한 모든 데이터를 로드하고, 동기화하며, 세션 상태에 저장합니다."""
     try:
@@ -259,7 +284,8 @@ def initialize_and_sync_data(gc, url, name, month_start, month_end):
         df_master = load_master_data_page3(sheet)
         df_request = load_request_data_page3(sheet, f"{month_str} 요청")
         df_room_request = load_room_request_data_page3(sheet, f"{month_str} 방배정 요청")
-        df_saturday_schedule = load_saturday_schedule(sheet, year) # <-- 이 줄을 추가하세요.
+        df_saturday_schedule = load_saturday_schedule(sheet, year)
+        df_closing_days = load_closing_days(sheet, year) # <-- [추가] 휴관일 데이터 로드
 
         # 2. 신규 유저 마스터 데이터 동기화
         if not df_master.empty and name not in df_master["이름"].values:
@@ -296,7 +322,8 @@ def initialize_and_sync_data(gc, url, name, month_start, month_end):
         st.session_state["df_master"] = df_master
         st.session_state["df_request"] = df_request
         st.session_state["df_room_request"] = df_room_request
-        st.session_state["df_saturday_schedule"] = df_saturday_schedule # <-- 이 줄을 추가하세요.
+        st.session_state["df_saturday_schedule"] = df_saturday_schedule
+        st.session_state["df_closing_days"] = df_closing_days # <-- [추가] 휴관일 데이터 세션에 저장
 
     except (gspread.exceptions.APIError, Exception) as e:
         st.error(f"데이터 초기화 및 동기화 중 오류가 발생했습니다: {e}")
@@ -374,15 +401,31 @@ else:
     st.session_state["df_user_room_request"] = pd.DataFrame()
 
 # UI 렌더링 시작
-df_saturday = st.session_state.get("df_saturday_schedule", pd.DataFrame()) # 세션에서 토요일 데이터 가져오기
+df_saturday = st.session_state.get("df_saturday_schedule", pd.DataFrame())
+df_closing_days = st.session_state.get("df_closing_days", pd.DataFrame()) # <-- [추가] 세션에서 휴관일 데이터 가져오기
 
-master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels)
+# 빠른 조회를 위해 휴관일 날짜 세트 생성
+closing_dates_set = set(df_closing_days['날짜'].dt.date) if not df_closing_days.empty else set()
+
+# generate_master_events에 closing_dates_set 전달
+master_events = generate_master_events(st.session_state["df_user_master"], year, month, week_labels, closing_dates_set)
 request_events = generate_request_events(st.session_state["df_user_request"], next_month_date)
 room_request_events = generate_room_request_events(st.session_state["df_user_room_request"], next_month_date)
-saturday_events = generate_saturday_events(df_saturday, name, year, month) # 토요일 이벤트 생성
+saturday_events = generate_saturday_events(df_saturday, name, year, month)
+
+# [추가] 휴관일 이벤트 생성
+closing_day_events = []
+if not df_closing_days.empty:
+    for date_obj in df_closing_days['날짜']:
+        closing_day_events.append({
+            "title": "휴관일", 
+            "start": date_obj.strftime("%Y-%m-%d"), 
+            "color": "#DC143C", # 붉은색 계열
+            "source": "closing_day"
+        })
 
 # 모든 이벤트를 하나로 합치기
-all_events = master_events + room_request_events + saturday_events
+all_events = master_events + room_request_events + saturday_events + closing_day_events
 
 st.header(f"📅 {name} 님의 {month_str} 방배정 요청", divider='rainbow')
 
@@ -676,6 +719,7 @@ if st.session_state.clear_inputs:
 요청분류 = ["1번방", "2번방", "3번방", "4번방", "5번방", "6번방", "7번방", "8번방", "9번방", "10번방", "11번방", "12번방",
            "8:30", "9:00", "9:30", "10:00", "당직 아닌 이른방", "이른방 제외", "늦은방 제외", "오후 당직 제외"]
 
+# '추가' 및 '삭제' 섹션
 st.markdown("**🟢 방배정 요청사항 입력**")
 add_col1, add_col2, add_col3, add_col4 = st.columns([2, 3, 1.5, 1])
 
@@ -688,7 +732,10 @@ weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토"}
 
 # 1. 모든 평일(월-금)을 옵션에 추가
 for day in pd.date_range(month_start, month_end):
-    if day.weekday() < 5: # 0:월 ~ 4:금
+    if day.weekday() < 5:
+        # ▼▼▼ [수정됨] 휴관일인 평일은 선택지에서 제외 ▼▼▼
+        if day.date() in closing_dates_set:
+            continue
         weekday_name = weekday_map[day.weekday()]
         display_date = f"{day.month}월 {day.day}일({weekday_name})"
         save_date = day.strftime("%Y-%m-%d")
@@ -703,6 +750,9 @@ if not df_saturday.empty:
     ]
     for _, row in user_saturdays.iterrows():
         day = row['날짜']
+        # ▼▼▼ [수정됨] 휴관일인 토요일은 선택지에서 제외 ▼▼▼
+        if day.date() in closing_dates_set:
+            continue
         weekday_name = weekday_map[day.weekday()]
         display_date = f"{day.month}월 {day.day}일({weekday_name})"
         save_date = day.strftime("%Y-%m-%d")

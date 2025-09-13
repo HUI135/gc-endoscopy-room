@@ -136,10 +136,19 @@ def add_request_to_sheet(request_data, month_str):
                 worksheet = spreadsheet.add_worksheet(title=REQUEST_SHEET_NAME, rows=100, cols=len(headers))
                 worksheet.append_row(headers)
                 # st.info(f"'{REQUEST_SHEET_NAME}' 시트를 새로 생성하고 헤더를 추가했습니다.")
+                
             except gspread.exceptions.APIError as e:
                 st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
                 st.error(f"Google Sheets API 오류 (시트 생성): {str(e)}")
                 st.stop()
+
+        existing_requests = worksheet.get_all_records()
+        new_request_signature = (request_data.get('변경 요청'), request_data.get('변경 요청한 스케줄'))
+        for req in existing_requests:
+            existing_signature = (req.get('변경 요청'), req.get('변경 요청한 스케줄'))
+            if new_request_signature == existing_signature:
+                return "DUPLICATE"
+                            
         row_to_add = [
             request_data.get('RequestID'),
             request_data.get('요청일시'),
@@ -317,16 +326,23 @@ else:
 
         : 내가 맡은 근무를 다른 사람에게 넘겨줄 때 사용합니다.
         - **[변경을 원하는 나의 스케줄 선택]**: 내가 바꾸고 싶은 근무를 선택하세요.
-        - **[교환할 상대방 선택]**: 그 날짜와 시간대에 **근무가 비어있는 사람**만 목록에 나타납니다.
+        - **[교환할 상대방 선택]**:
+            - 그 날짜와 시간대에 **근무가 비어있는 사람**만 목록에 나타납니다.
+            - 오전당직(온콜)이 있는 날 '오전' 혹은 '오후'를 선택하면 **모든 근무자 명단**이 나타납니다:
+                - 이후 교환 상대를 '그 날의 근무자'로 선택 시: 당직만 상대방으로 변경합니다.
+                - 이후 교환 상대를 '그 날의 미근무자'로 선택 시: 나의 모든 근무(오전+오후+당직)를 상대방으로 변경합니다.
 
         **🔵 상대방의 스케줄을 나와 바꾸기**
 
-        : 내가 다른 사람의 근무를 대신 맡아줄 때 사용합니다.
+        : 내가 다른 사람의 근무를 대신 맡을 때 사용합니다.
         - **[상대방 선택]**: 상대방을 선택하세요.
-        - **[상대방의 근무 선택]**: 선택한 상대방의 근무 중에서 **내가 이미 근무하고 있지 않은 날짜와 시간대**만 목록에 나타납니다.
+        - **[상대방의 근무 선택]**: 
+            - 선택한 상대방의 근무 중에서 **내가 이미 근무하고 있지 않은 날짜와 시간대**만 목록에 나타납니다.
+            - 상대방의 **'오전당직(온콜)'** 근무를 선택할 때, 나의 근무에 따라 결과가 달라집니다.
+                - 그날 나의 근무가 있으면: 당직만 나로 변경합니다.
+                - 그날 나의 근무가 없으면: 상대방의 모든 근무(오전+오후+당직)를 나로 변경합니다.
         """)
 
-    # (기존 "🟢 나의 스케줄~" 섹션 전체를 아래 코드로 교체)
     st.write(" ")
     st.markdown("<h6 style='font-weight:bold;'>🟢 나의 스케줄을 상대방과 바꾸기</h6>", unsafe_allow_html=True)
     user_shifts = get_person_shifts(df_schedule, user_name)
@@ -334,174 +350,173 @@ else:
     if not user_shifts:
         st.warning(f"'{user_name}'님의 배정된 스케줄이 없습니다.")
     else:
-        # 1. 날짜 선택 UI
         cols_my_to_them = st.columns([2, 2, 2, 1])
         
-        # 사용자의 근무 날짜 목록 (중복 제거)
-        user_shift_dates = sorted(list(set((s['date_obj'], s['display_str'].split(' - ')[0]) for s in user_shifts)), key=lambda x: x[0])
-        user_date_options = {display: date_obj for date_obj, display in user_shift_dates}
-
+        user_shift_dates = sorted(list(set(s['date_obj'] for s in user_shifts)))
+        user_date_options = {d.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[d.weekday()]})": d for d in user_shift_dates}
+        
         with cols_my_to_them[0]:
-            my_selected_date_str = st.selectbox(
-                "나의 근무일 선택",
-                user_date_options.keys(),
-                index=None,
-                placeholder="날짜를 선택하세요",
-                key="my_to_them_my_date_select"
-            )
+            my_selected_date_str = st.selectbox("나의 근무일 선택", user_date_options.keys(), index=None, placeholder="날짜를 선택하세요", key="my_date")
 
-        # 2. 시간대 선택 UI
         with cols_my_to_them[1]:
             my_selected_shift_type = None
             if my_selected_date_str:
                 my_selected_date_obj = user_date_options[my_selected_date_str]
-                # 선택된 날짜에 가능한 시간대 (오전/오후) 목록 생성
-                available_shifts_for_date = sorted(list(set(s['shift_type'] for s in user_shifts if s['date_obj'] == my_selected_date_obj)))
-                
-                my_selected_shift_type = st.selectbox(
-                    "시간대 선택",
-                    options=available_shifts_for_date,
-                    index=None,
-                    placeholder="시간대",
-                    key="my_to_them_my_shift_select"
-                )
+                shifts_on_date = sorted(list({s['shift_type'] for s in user_shifts if s['date_obj'] == my_selected_date_obj} - {'오전당직(온콜)'}))
+                my_selected_shift_type = st.selectbox("시간대 선택", shifts_on_date, index=None, placeholder="시간대를 선택하세요", key="my_shift_type")
             else:
-                st.selectbox("시간대 선택", [], disabled=True, placeholder="시간대", key="my_to_them_my_shift_select_disabled")
+                st.selectbox("시간대 선택", [], disabled=True, placeholder="날짜를 먼저 선택하세요", key="my_shift_type_disabled")
 
-        # 3. 교환 상대방 선택 UI
         with cols_my_to_them[2]:
-            colleagues = sorted(list(get_all_employee_names(df_schedule) - {user_name}))
             compatible_colleagues = []
-            selectbox_placeholder = "날짜와 시간대를 선택하세요"
+            selectbox_placeholder = "시간대를 선택하세요"
             is_disabled = True
             
             if my_selected_date_str and my_selected_shift_type:
                 is_disabled = False
                 my_date = user_date_options[my_selected_date_str]
+                all_colleagues = get_all_employee_names(df_schedule) - {user_name}
+                my_shifts_on_date = {s['shift_type'] for s in user_shifts if s['date_obj'] == my_date}
                 
-                compatible_colleagues = [
-                    c for c in colleagues if not is_person_assigned_at_time(df_schedule, c, my_date, my_selected_shift_type)
-                ]
+                if '오전당직(온콜)' in my_shifts_on_date:
+                    row_data = df_schedule[df_schedule['날짜_dt'].dt.date == my_date].iloc[0]
+                    am_workers = {row_data[col] for col in AM_COLS if col in row_data and row_data[col]} - {user_name, ''}
+                    non_am_workers = {c for c in all_colleagues if not is_person_assigned_at_time(df_schedule, c, my_date, '오전')}
+                    compatible_colleagues = sorted(list(am_workers | non_am_workers))
+                else:
+                    compatible_colleagues = sorted([c for c in all_colleagues if not is_person_assigned_at_time(df_schedule, c, my_date, my_selected_shift_type)])
                 
+                selectbox_placeholder = "상대방을 선택하세요"
                 if not compatible_colleagues:
-                    selectbox_placeholder = "교환 가능한 동료 없음"
+                    selectbox_placeholder = "교대 가능한 동료 없음"
                     is_disabled = True
             
-            selected_colleague_name = st.selectbox(
-                "교환할 상대방 선택",
-                options=compatible_colleagues,
-                index=None,
-                placeholder=selectbox_placeholder,
-                disabled=is_disabled,
-                key="my_to_them_colleague_select"
-            )
+            selected_colleague_name = st.selectbox("교환할 상대방 선택", compatible_colleagues, index=None, placeholder=selectbox_placeholder, disabled=is_disabled, key="my_colleague")
 
-        # 4. 요청 추가 버튼
         with cols_my_to_them[3]:
             st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-            request_disabled_my = not my_selected_date_str or not my_selected_shift_type or not selected_colleague_name
-            if st.button("➕ 요청 추가", key="add_my_to_them_request_button", use_container_width=True, disabled=request_disabled_my):
-                # 선택된 정보로 최종 요청 데이터 생성
+            is_request_disabled = not all([my_selected_date_str, my_selected_shift_type, selected_colleague_name])
+
+            if st.button("➕ 요청 추가", key="add_my_to_them_request_button", use_container_width=True, disabled=is_request_disabled):
                 my_date = user_date_options[my_selected_date_str]
+                final_shift_type = my_selected_shift_type
                 
                 new_request = {
                     "RequestID": str(uuid.uuid4()),
-                    "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
+                    "요청일시": datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S'),
                     "요청자": user_name,
                     "요청자 사번": employee_id,
                     "변경 요청": f"{user_name} ➡️ {selected_colleague_name}",
-                    "변경 요청한 스케줄": f"{my_date.strftime('%Y-%m-%d')} ({my_selected_shift_type})",
+                    "변경 요청한 스케줄": f"{my_date.strftime('%Y-%m-%d')} ({final_shift_type})",
                 }
                 with st.spinner("요청을 기록하는 중입니다..."):
-                    if add_request_to_sheet(new_request, month_str):
+                    status = add_request_to_sheet(new_request, month_str)
+                    if status == "SUCCESS":
                         st.success("요청이 성공적으로 기록되었습니다.")
                         time.sleep(1.5)
                         st.rerun()
+                    elif status == "DUPLICATE":
+                        st.error("이미 존재하는 변경 요청입니다.")
+                        time.sleep(1.5)
+                        st.rerun()
+                        
+        # --- 동적 경고 메시지 표시 ---
+        if my_selected_date_str and my_selected_shift_type:
+            my_date = user_date_options[my_selected_date_str]
+            my_shifts_on_date = {s['shift_type'] for s in user_shifts if s['date_obj'] == my_date}
+            
+            # 💡 [핵심 수정] 내가 오전당직(온콜)인 날짜를 선택했다면 경고/안내 표시
+            if '오전당직(온콜)' in my_shifts_on_date:
+                row_data = df_schedule[df_schedule['날짜_dt'].dt.date == my_date].iloc[0]
+                am_workers_list = sorted(list({row_data[col] for col in AM_COLS if col in row_data and row_data[col]} - {user_name, ''}))
+                all_colleagues = get_all_employee_names(df_schedule) - {user_name}
+                non_am_workers_list = sorted(list({c for c in all_colleagues if not is_person_assigned_at_time(df_schedule, c, my_date, '오전')} - set(am_workers_list)))
 
-        # --- 상대방의 스케줄을 나와 바꾸기 ---
-        st.write(" ")
+                st.warning(f"해당 날짜는 {user_name}님의 오전당직이 있는 날입니다. 근무자를 선택하시는 경우 당직이 변경되며, 미근무자를 선택하게 되면 오전,오후,오전당직이 모두 변경됩니다.")
+                st.info(f"근무자: {', '.join(am_workers_list) if am_workers_list else '없음'}\n\n미근무자: {', '.join(non_am_workers_list) if non_am_workers_list else '없음'}")
 
+    st.write(" ")
     st.markdown("<h6 style='font-weight:bold;'>🔵 상대방의 스케줄을 나와 바꾸기</h6>", unsafe_allow_html=True)
     cols_them_to_my = st.columns([2, 2, 2, 1])
 
-    # 1. 상대방 선택 UI
     with cols_them_to_my[0]:
         colleagues = sorted(list(get_all_employee_names(df_schedule) - {user_name}))
-        selected_colleague_name_them = st.selectbox(
-            "상대방 선택",
-            colleagues,
-            index=None,
-            placeholder="상대방을 선택하세요",
-            key="them_to_my_colleague_select"
-        )
-        
-    # 2. 상대방 근무일 선택 UI
-    with cols_them_to_my[1]:
-        colleague_date_options = {}
-        if selected_colleague_name_them:
-            colleague_shifts = get_person_shifts(df_schedule, selected_colleague_name_them)
-            user_occupied_slots = {(s['date_obj'], s['shift_type']) for s in user_shifts}
-            
-            # 내가 근무가 비어있는, 교환 가능한 상대방의 근무만 필터링
-            compatible_shifts = [s for s in colleague_shifts if (s['date_obj'], s['shift_type']) not in user_occupied_slots]
-            
-            if compatible_shifts:
-                # 교환 가능한 근무 날짜 목록 (중복 제거)
-                colleague_shift_dates = sorted(list(set((s['date_obj'], s['display_str'].split(' - ')[0]) for s in compatible_shifts)), key=lambda x: x[0])
-                colleague_date_options = {display: {'date_obj': date_obj, 'shifts': compatible_shifts} for date_obj, display in colleague_shift_dates}
-                
-                selected_colleague_date_str = st.selectbox(
-                    f"'{selected_colleague_name_them}'의 근무일 선택",
-                    colleague_date_options.keys(),
-                    index=None,
-                    placeholder="날짜를 선택하세요",
-                    key="them_to_my_date_select"
-                )
-            else:
-                st.selectbox(f"'{selected_colleague_name_them}'의 근무일 선택", [], disabled=True, placeholder="교환 가능한 날짜 없음", key="them_to_my_date_select_disabled")
-                selected_colleague_date_str = None
-        else:
-            st.selectbox("상대방의 근무일 선택", [], disabled=True, placeholder="먼저 상대방을 선택하세요", key="them_to_my_date_select_disabled")
-            selected_colleague_date_str = None
+        selected_colleague_name_them = st.selectbox("상대방 선택", colleagues, index=None, placeholder="상대방을 선택하세요", key="them_colleague")
 
-    # 3. 시간대 선택 UI
+    with cols_them_to_my[1]:
+        colleague_shifts = get_person_shifts(df_schedule, selected_colleague_name_them) if selected_colleague_name_them else []
+        colleague_shift_dates = sorted(list(set(s['date_obj'] for s in colleague_shifts)))
+        colleague_date_options = {d.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[d.weekday()]})": d for d in colleague_shift_dates}
+        selected_colleague_date_str = st.selectbox("상대방 근무일 선택", colleague_date_options.keys(), index=None, placeholder="상대방을 선택하세요", key="them_date", disabled=not selected_colleague_name_them)
+
     with cols_them_to_my[2]:
         selected_colleague_shift_type = None
-        if selected_colleague_date_str:
-            selected_date_info = colleague_date_options[selected_colleague_date_str]
-            selected_date_obj = selected_date_info['date_obj']
-            # 선택된 날짜에 교환 가능한 시간대 목록
-            available_shifts_for_date = [s['shift_type'] for s in selected_date_info['shifts'] if s['date_obj'] == selected_date_obj]
-            
-            selected_colleague_shift_type = st.selectbox(
-                "시간대 선택",
-                options=available_shifts_for_date,
-                index=None,
-                placeholder="시간대",
-                key="them_to_my_shift_select"
-            )
-        else:
-            st.selectbox("시간대 선택", [], disabled=True, placeholder="시간대", key="them_to_my_shift_select_disabled")
+        selected_colleague_shift_type_display = None
+        available_shifts_for_display = []
 
-    # 4. 요청 추가 버튼
+        if selected_colleague_date_str:
+            selected_date_obj = colleague_date_options[selected_colleague_date_str]
+            
+            # 1. 동료의 해당 날짜 모든 근무 형태를 확인
+            colleague_shifts_on_date = {s['shift_type'] for s in colleague_shifts if s['date_obj'] == selected_date_obj}
+            
+            # 💡 [핵심 수정] 나의 스케줄과 상관없이, 동료의 근무 형태만으로 선택지를 생성
+            display_options = set()
+            if '오전당직(온콜)' in colleague_shifts_on_date:
+                # 동료가 당직이면, 무조건 '오전', '오후'를 선택지로 제공
+                display_options.add('오전')
+                display_options.add('오후')
+            else:
+                # 동료가 일반 근무이면, 해당 근무만 선택지로 제공
+                if '오전' in colleague_shifts_on_date:
+                    display_options.add('오전')
+                if '오후' in colleague_shifts_on_date:
+                    display_options.add('오후')
+
+            available_shifts_for_display = sorted(list(display_options))
+            selected_colleague_shift_type_display = st.selectbox("시간대 선택", available_shifts_for_display, index=None, placeholder="시간대를 선택하세요", key="them_shift_type", disabled=not available_shifts_for_display)
+            
+            selected_colleague_shift_type = selected_colleague_shift_type_display
+        else:
+            st.selectbox("시간대 선택", [], disabled=True, placeholder="날짜를 먼저 선택하세요", key="them_shift_type_disabled")
+
+    # 동적 경고 메시지 표시
+    if selected_colleague_date_str and selected_colleague_shift_type_display:
+        selected_date_obj = colleague_date_options[selected_colleague_date_str]
+        colleague_shifts_on_date = {s['shift_type'] for s in colleague_shifts if s['date_obj'] == selected_date_obj}
+
+        # 💡 [핵심 수정] 동료가 당직이면, '오전' 또는 '오후' 무엇을 선택하든 경고 표시
+        if '오전당직(온콜)' in colleague_shifts_on_date:
+            my_shifts_on_date = {s['shift_type'] for s in user_shifts if s['date_obj'] == selected_date_obj}
+            if '오전' in my_shifts_on_date or '오전당직(온콜)' in my_shifts_on_date:
+                st.warning(f"해당 날짜는 {selected_colleague_name_them}님의 오전당직 날짜이며, {user_name}님도 근무가 있는 날입니다. 오전당직이 {user_name}님으로 변경됩니다.")
+            else:
+                st.warning(f"해당 날짜는 {selected_colleague_name_them}님의 오전당직 날짜입니다. 오전,오후,오전당직이 모두 {user_name}님으로 변경됩니다.")
+
     with cols_them_to_my[3]:
         st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
-        request_disabled_them = not selected_colleague_name_them or not selected_colleague_date_str or not selected_colleague_shift_type
+        request_disabled_them = not all([selected_colleague_name_them, selected_colleague_date_str, selected_colleague_shift_type])
+        
         if st.button("➕ 요청 추가", key="add_them_to_my_request_button", use_container_width=True, disabled=request_disabled_them):
-            # 최종 요청 데이터 생성
-            colleague_date_obj = colleague_date_options[selected_colleague_date_str]['date_obj']
+            colleague_date_obj = colleague_date_options[selected_colleague_date_str]
+            final_shift_type = selected_colleague_shift_type
             
             new_request = {
                 "RequestID": str(uuid.uuid4()),
-                "요청일시": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
+                "요청일시": datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S'),
                 "요청자": user_name,
                 "요청자 사번": employee_id,
                 "변경 요청": f"{selected_colleague_name_them} ➡️ {user_name}",
-                "변경 요청한 스케줄": f"{colleague_date_obj.strftime('%Y-%m-%d')} ({selected_colleague_shift_type})",
+                "변경 요청한 스케줄": f"{colleague_date_obj.strftime('%Y-%m-%d')} ({final_shift_type})",
             }
             with st.spinner("요청을 기록하는 중입니다..."):
-                if add_request_to_sheet(new_request, month_str):
+                status = add_request_to_sheet(new_request, month_str)
+                if status == "SUCCESS":
                     st.success("요청이 성공적으로 기록되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+                elif status == "DUPLICATE":
+                    st.error("이미 존재하는 변경 요청입니다.")
                     time.sleep(1.5)
                     st.rerun()
 

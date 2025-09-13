@@ -78,11 +78,14 @@ except Exception as e:
     st.error(f"초기 설정 중 오류 발생: {str(e)}")
     st.stop()
 
-# 캘린더 이벤트 생성 함수 (마스터, 토요일, 요청사항 모두 처리)
-def create_calendar_events(df_master, df_request, df_saturday_schedule, current_user_name):
+# 캘린더 이벤트 생성 함수 (마스터, 토요일, 요청사항, 휴관일 모두 처리)
+def create_calendar_events(df_master, df_request, df_saturday_schedule, df_closing_days, current_user_name):
     events = []
     
-    # --- 1. 마스터 데이터(평일)에서 이벤트 생성 ---
+    # 빠른 조회를 위해 휴관일 날짜를 세트(set)으로 변환
+    closing_dates_set = set(df_closing_days['날짜'].dt.date) if not df_closing_days.empty else set()
+
+    # --- 1. 마스터 데이터(평일)에서 이벤트 생성 (휴관일 제외) ---
     status_colors_master = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
     if not df_master.empty:
         master_data = {}
@@ -108,10 +111,13 @@ def create_calendar_events(df_master, df_request, df_saturday_schedule, current_
 
         for day_num in range(1, last_day_of_month + 1):
             date_obj = datetime.date(year, month, day_num)
-            weekday = date_obj.weekday()
             
-            if weekday in weekday_map: # 평일(월~금)만 해당
-                day_name = weekday_map[weekday]
+            # 만약 해당 날짜가 휴관일이면, 마스터 일정 이벤트를 생성하지 않음
+            if date_obj in closing_dates_set:
+                continue
+
+            if date_obj.weekday() in weekday_map: # 평일(월~금)만 해당
+                day_name = weekday_map[date_obj.weekday()]
                 if first_sunday is None: week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
                 else: week_num = (day_num - first_sunday) // 7 + 1 if day_num >= first_sunday else 0
                 if week_num >= len(week_labels): continue
@@ -120,7 +126,7 @@ def create_calendar_events(df_master, df_request, df_saturday_schedule, current_
                 if status and status != "근무없음":
                     events.append({"title": f"{status}", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors_master.get(status, "#E0E0E0")})
 
-    # --- 2. 토요/휴일 스케줄 데이터에서 이벤트 생성 (새로 추가된 로직) ---
+    # --- 2. 토요/휴일 스케줄 데이터에서 이벤트 생성 ---
     status_colors_saturday = {"토요근무": "#6A5ACD", "당직": "#FF6347"}
     if not df_saturday_schedule.empty:
         saturdays_in_month = df_saturday_schedule[(df_saturday_schedule['날짜'].dt.year == year) & (df_saturday_schedule['날짜'].dt.month == month)]
@@ -131,7 +137,7 @@ def create_calendar_events(df_master, df_request, df_saturday_schedule, current_
             if isinstance(row.get('당직', ''), str) and current_user_name == row.get('당직', '').strip():
                 events.append({"title": "당직", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors_saturday.get("당직")})
 
-    # --- 3. 요청사항 이벤트 생성 (기존 로직) ---
+    # --- 3. 요청사항 이벤트 생성 ---
     status_colors_request = {"휴가": "#A1C1D3", "학회": "#B4ABE4", "보충 어려움(오전)": "#FFD3B5", "보충 어려움(오후)": "#FFD3B5", "보충 불가(오전)": "#FFB6C1", "보충 불가(오후)": "#FFB6C1", "꼭 근무(오전)": "#C3E6CB", "꼭 근무(오후)": "#C3E6CB"}
     label_map = {"휴가": "휴가🎉", "학회": "학회📚", "보충 어려움(오전)": "보충 어려움(오전)", "보충 어려움(오후)": "보충 어려움(오후)", "보충 불가(오전)": "보충 불가(오전)", "보충 불가(오후)": "보충 불가(오후)", "꼭 근무(오전)": "꼭근무(오전)", "꼭 근무(오후)": "꼭근무(오후)"}
     if not df_request.empty:
@@ -149,6 +155,16 @@ def create_calendar_events(df_master, df_request, df_saturday_schedule, current_
                         dt = datetime.datetime.strptime(날짜, "%Y-%m-%d").date()
                         events.append({"title": f"{label_map.get(분류, 분류)}", "start": dt.strftime("%Y-%m-%d"), "color": status_colors_request.get(분류, "#E0E0E0")})
                     except: continue
+
+    # --- 4. 휴관일 이벤트 생성 ---
+    if not df_closing_days.empty:
+        for date_obj in df_closing_days['날짜']:
+            events.append({
+                "title": "휴관일", 
+                "start": date_obj.strftime("%Y-%m-%d"), 
+                "color": "#DC143C"  # 붉은색 계열 (Crimson)
+            })
+
     return events
 
 # --- 초기 데이터 로딩 및 세션 상태 초기화 ---
@@ -211,27 +227,30 @@ def add_request_callback():
             날짜목록 = []
 
             if 선택주차 and 선택요일:
-                c = calendar.Calendar(firstweekday=6)
+                c = calendar.Calendar(firstweekday=6) # 주는 일요일부터 시작
                 month_calendar = c.monthdatescalendar(year, month)
 
                 요일_map = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
                 선택된_요일_인덱스 = [요일_map[요일] for 요일 in 선택요일]
+
+                # ▼▼▼ [수정된 부분] '첫째주' 등을 생성하는 로직을 삭제하고 week_labels를 직접 사용합니다. ▼▼▼
                 for i, week in enumerate(month_calendar):
-                    주차_이름 = ""
-                    if i == 0: 주차_이름 = "첫째주"
-                    elif i == 1: 주차_이름 = "둘째주"
-                    elif i == 2: 주차_이름 = "셋째주"
-                    elif i == 3: 주차_이름 = "넷째주"
-                    elif i == 4: 주차_이름 = "다섯째주"
-                    
-                    if "매주" in 선택주차 or 주차_이름 in 선택주차:
-                        for date in week:
-                            if date.month == month and date.weekday() in 선택된_요일_인덱스:
-                                날짜목록.append(date.strftime("%Y-%m-%d"))
+                    # 해당 월의 주차 개수를 초과하는 경우를 방지
+                    if i < len(week_labels):
+                        # UI에서 사용하는 주차 이름 ('1주', '2주' 등)을 직접 가져옴
+                        current_week_label = week_labels[i]
+
+                        # 사용자가 선택한 주차에 현재 주차가 포함되어 있는지 확인
+                        if "매주" in 선택주차 or current_week_label in 선택주차:
+                            for date in week:
+                                # 해당 월의 날짜이면서, 선택한 요일이 맞는지 확인
+                                if date.month == month and date.weekday() in 선택된_요일_인덱스:
+                                    날짜목록.append(date.strftime("%Y-%m-%d"))
 
             날짜정보 = ", ".join(sorted(list(set(날짜목록))))
             if not 날짜목록 and 선택주차 and 선택요일:
                 add_placeholder.warning(f"⚠️ {month_str}에는 해당 주차/요일의 날짜가 없습니다. 다른 조합을 선택해주세요.")
+                time.sleep(1.5)
                 return
             
     if not 날짜정보 and 분류 != "요청 없음":
@@ -290,7 +309,7 @@ def add_request_callback():
     st.session_state.week_select = []
     st.session_state.day_select = []
     st.session_state.category_select = "휴가"
-
+    
 # 요청사항 삭제 콜백 함수
 def delete_requests_callback():
     selected_items = st.session_state.get("delete_select", [])
@@ -372,7 +391,32 @@ def load_saturday_schedule(_gc, url, year):
     except Exception as e:
         st.error(f"토요/휴일 스케줄 로드 중 오류 발생: {str(e)}")
         return pd.DataFrame(columns=["날짜", "근무", "당직"])
-    
+
+
+@st.cache_data(show_spinner=False)
+def load_closing_days(_gc, url, year):
+    """지정된 연도의 휴관일 데이터를 로드하는 함수"""
+    try:
+        sheet = _gc.open_by_url(url)
+        worksheet_name = f"{year}년 휴관일"
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["날짜"])
+        
+        df = pd.DataFrame(data)
+        df = df[df['날짜'] != '']
+        df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
+        df.dropna(subset=['날짜'], inplace=True)
+        return df
+    except WorksheetNotFound:
+        st.info(f"'{worksheet_name}' 시트를 찾을 수 없습니다. 휴관일이 표시되지 않습니다.")
+        return pd.DataFrame(columns=["날짜"])
+    except Exception as e:
+        st.error(f"휴관일 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame(columns=["날짜"])
+
+
 # --- UI 렌더링 시작 ---
 # 첫 페이지 로드 시에만 데이터 로드
 if "initial_load_done_page2" not in st.session_state:
@@ -414,8 +458,12 @@ st.write("- 휴가 / 보충 불가 / 꼭 근무 관련 요청사항이 있을 �
 # 토요 스케줄 데이터 로드 (추가)
 df_saturday = load_saturday_schedule(gc, url, year)
 
-# events_combined 생성 부분 수정 (토요일 데이터와 사용자 이름 추가)
-events_combined = create_calendar_events(df_user_master, df_user_request, df_saturday, name)
+# ▼▼▼ [수정됨] 휴관일 데이터를 불러오고, 캘린더와 날짜 선택 목록에 모두 적용 ▼▼▼
+df_closing_days = load_closing_days(gc, url, year)
+closing_dates_set = set(df_closing_days['날짜'].dt.date) if not df_closing_days.empty else set()
+
+# events_combined 생성 부분 수정 (휴관일 데이터와 사용자 이름 추가)
+events_combined = create_calendar_events(df_user_master, df_user_request, df_saturday, df_closing_days, name)
 
 if not events_combined:
     st.info("☑️ 당월에 입력하신 요청사항 또는 마스터 스케줄이 없습니다.")
@@ -624,12 +672,15 @@ with col3:
 
             # 2. '토요/휴일 스케줄'에 등록된 날짜를 가져옵니다.
             schedule_dates = df_saturday[
-                (df_saturday['날짜'].dt.year == year) & 
+                (df_saturday['날짜'].dt.year == year) &
                 (df_saturday['날짜'].dt.month == month)
             ]['날짜'].dt.date.tolist()
 
-            # 3. 두 리스트를 합치고, 중복을 제거한 후 정렬하여 최종 선택지를 만듭니다.
-            selectable_dates = sorted(list(set(weekdays_in_month + schedule_dates)))
+            # 3. 두 리스트를 합치고, 중복을 제거합니다.
+            base_selectable_dates = sorted(list(set(weekdays_in_month + schedule_dates)))
+            
+            # ▼▼▼ [수정됨] 최종 선택지에서 휴관일을 제외합니다. ▼▼▼
+            selectable_dates = [d for d in base_selectable_dates if d not in closing_dates_set]
             
             # 날짜 포맷팅 함수 정의
             weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}
@@ -641,12 +692,28 @@ with col3:
                           selectable_dates, 
                           format_func=format_date, 
                           key="date_multiselect")
+
+        # ▼▼▼ [추가된 코드] 기간 선택 방식에 대한 UI를 추가합니다. ▼▼▼
         elif 방식 == "기간 선택":
-            st.date_input("요청 기간", value=(month_start, month_start + datetime.timedelta(days=1)), min_value=month_start, max_value=month_end, key="date_range")
+            st.date_input(
+                "요청 기간",
+                key="date_range",
+                value=(), # 초기 선택값을 비워둡니다.
+                min_value=month_start,
+                max_value=month_end
+            )
+
+        # ▼▼▼ [추가된 코드] 주/요일 선택 방식에 대한 UI를 추가합니다. ▼▼▼
         elif 방식 == "주/요일 선택":
-            st.multiselect("주차 선택", ["첫째주", "둘째주", "셋째주", "넷째주", "다섯째주", "매주"], key="week_select")
-            st.multiselect("요일 선택", ["월", "화", "수", "목", "금", "토", "일"], key="day_select")
+            week_options = ["매주"] + week_labels
+            day_options = ["월", "화", "수", "목", "금", "토", "일"]
             
+            sub_col1, sub_col2 = st.columns(2)
+            with sub_col1:
+                st.multiselect("주차 선택", week_options, key="week_select")
+            with sub_col2:
+                st.multiselect("요일 선택", day_options, key="day_select")
+
 with col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
     st.button("📅 추가", use_container_width=True, on_click=add_request_callback)

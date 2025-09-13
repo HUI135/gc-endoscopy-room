@@ -188,10 +188,9 @@ def load_saturday_schedule(_gc, url, year):
         st.error(f"토요/휴일 스케줄 로드 중 오류 발생: {str(e)}")
         return pd.DataFrame(columns=["날짜", "근무", "당직"])
 
-# 기존의 generate_calendar_events 함수를 삭제하고 아래 함수들로 대체하세요.
-
-def generate_master_events(df_user_master, year, month, week_labels):
-    """마스터 스케줄(평일)에서 이벤트를 생성하는 함수"""
+def generate_master_events(df_user_master, year, month, week_labels, closing_dates_set):
+    """마스터 스케줄(평일)에서 이벤트를 생성하는 함수 (휴관일 제외)"""
+    # ... (함수 앞부분의 master_data 생성 로직은 기존과 동일) ...
     master_data = {}
     요일리스트 = ["월", "화", "수", "목", "금"]
     every_week_df = df_user_master[df_user_master["주차"] == "매주"]
@@ -207,13 +206,21 @@ def generate_master_events(df_user_master, year, month, week_labels):
                 master_data[week][day] = day_every.iloc[0]["근무여부"] if not day_every.empty else "근무없음"
             else:
                 master_data[week][day] = "근무없음"
+    
     events = []
     weekday_map = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금"}
     _, last_day = calendar.monthrange(year, month)
     status_colors = {"오전": "#48A6A7", "오후": "#FCB454", "오전 & 오후": "#F38C79"}
     first_sunday = next((day for day in range(1, 8) if datetime.date(year, month, day).weekday() == 6), None)
+    
     for day_num in range(1, last_day + 1):
         date_obj = datetime.date(year, month, day_num)
+        
+        # ▼▼▼ [수정된 부분] 휴관일인 경우 마스터 일정을 표시하지 않고 건너뜁니다. ▼▼▼
+        if date_obj in closing_dates_set:
+            continue
+        # ▲▲▲ [수정된 부분] ▲▲▲
+
         if date_obj.weekday() in weekday_map:
             day_name = weekday_map[date_obj.weekday()]
             if first_sunday is None: week_num = (date_obj.day + datetime.date(year, month, 1).weekday()) // 7
@@ -225,6 +232,17 @@ def generate_master_events(df_user_master, year, month, week_labels):
                 events.append({"title": f"{status}", "start": date_obj.strftime("%Y-%m-%d"), "color": status_colors.get(status, "#E0E0E0")})
     return events
 
+def generate_closing_day_events(df_closing_days):
+    """휴관일 DataFrame에서 이벤트를 생성하는 함수"""
+    events = []
+    if not df_closing_days.empty:
+        for date_obj in df_closing_days['날짜']:
+            events.append({
+                "title": "휴관일", 
+                "start": date_obj.strftime("%Y-%m-%d"), 
+                "color": "#DC143C"  # 붉은색 계열 (Crimson)
+            })
+    return events
 def generate_saturday_events(df_saturday_schedule, current_user_name, year, month):
     """토요/휴일 스케줄에서 이벤트를 생성하는 함수"""
     events = []
@@ -359,7 +377,30 @@ def generate_calendar_events(df_user_master, df_saturday_schedule, current_user_
                         "color": status_colors.get("당직")
                     })
     return events
-    
+
+@st.cache_data(show_spinner=False)
+def load_closing_days(_gc, url, year):
+    """지정된 연도의 휴관일 데이터를 로드하는 함수"""
+    try:
+        sheet = _gc.open_by_url(url)
+        worksheet_name = f"{year}년 휴관일"
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["날짜"])
+        
+        df = pd.DataFrame(data)
+        df = df[df['날짜'] != '']
+        df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
+        df.dropna(subset=['날짜'], inplace=True)
+        return df
+    except WorksheetNotFound:
+        st.info(f"'{worksheet_name}' 시트를 찾을 수 없습니다. 휴관일이 표시되지 않습니다.")
+        return pd.DataFrame(columns=["날짜"])
+    except Exception as e:
+        st.error(f"휴관일 로드 중 오류 발생: {str(e)}")
+        return pd.DataFrame(columns=["날짜"])
+
 # 기본 변수 설정
 url = st.secrets["google_sheet"]["url"]
 gc = get_gspread_client()
@@ -403,6 +444,7 @@ has_weekly = "매주" in df_user_master["주차"].values if not df_user_master.e
 
 # --- 모든 종류의 데이터 로드 ---
 df_saturday = load_saturday_schedule(gc, url, year)
+df_closing_days = load_closing_days(gc, url, year) # <-- [추가] 휴관일 데이터 로드
 df_request = st.session_state.get("df_request", pd.DataFrame())
 df_room_request = st.session_state.get("df_room_request", pd.DataFrame())
 
@@ -410,14 +452,20 @@ df_room_request = st.session_state.get("df_room_request", pd.DataFrame())
 df_user_request = df_request[df_request["이름"] == name].copy() if not df_request.empty else pd.DataFrame()
 df_user_room_request = df_room_request[df_room_request["이름"] == name].copy() if not df_room_request.empty else pd.DataFrame()
 
+# [추가] 빠른 조회를 위해 휴관일 날짜 세트 생성
+closing_dates_set = set(df_closing_days['날짜'].dt.date) if not df_closing_days.empty else set()
+
 # --- 각 종류별 이벤트 생성 ---
-master_events = generate_master_events(df_user_master, year, month, week_labels)
+# [수정] generate_master_events에 closing_dates_set 전달
+master_events = generate_master_events(df_user_master, year, month, week_labels, closing_dates_set)
 saturday_events = generate_saturday_events(df_saturday, name, year, month)
 request_events = generate_request_events(df_user_request)
 room_request_events = generate_room_request_events(df_user_room_request)
+closing_day_events = generate_closing_day_events(df_closing_days) # <-- [추가] 휴관일 이벤트 생성
 
 # --- 모든 이벤트를 하나로 합치기 ---
-events = master_events + saturday_events + request_events + room_request_events
+# [수정] closing_day_events를 합산 목록에 추가
+events = master_events + saturday_events + request_events + room_request_events + closing_day_events
 
 calendar_options = {
     "initialView": "dayGridMonth",
