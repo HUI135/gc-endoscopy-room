@@ -73,6 +73,9 @@ def initialize_session_state():
         st.session_state["batch_apply_messages"] = []
     if "assignment_results" not in st.session_state:
         st.session_state["assignment_results"] = None
+    if "show_assignment_results" not in st.session_state:
+        st.session_state["show_assignment_results"] = False
+
 
 # Google Sheets 클라이언트 초기화
 def get_gspread_client():
@@ -432,22 +435,27 @@ st.header("🚪 방배정", divider='rainbow')
 # 새로고침 버튼
 st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 if st.button("🔄 새로고침 (R)"):
-    # 세션 상태의 data_loaded를 False로 바꿔 데이터 재로드를 유도
     st.session_state["data_loaded"] = False
-    st.cache_data.clear() # 캐시도 함께 클리어
+    st.cache_data.clear()
 
+    # 모든 로그 및 메시지 초기화
     if "final_change_log" in st.session_state:
         st.session_state["final_change_log"] = []
     if "swapped_assignments_log" in st.session_state:
         st.session_state["swapped_assignments_log"] = []
-        
-    # '일괄 적용'으로 생성된 미리보기 스케줄도 삭제하여 원본으로 되돌림
+    if "batch_apply_messages" in st.session_state:
+        st.session_state["batch_apply_messages"] = []
+    
+    # 수정된 스케줄 및 결과 초기화
     if "df_schedule_md_modified" in st.session_state:
         del st.session_state["df_schedule_md_modified"]
+        
+    # >>>>>>>>> [핵심 수정] 이 두 줄을 추가/수정하세요 <<<<<<<<<
     if "assignment_results" in st.session_state:
         del st.session_state["assignment_results"]
-
-    st.rerun() # 페이지를 다시 실행하여 데이터 로딩부터 다시 시작
+    st.session_state.show_assignment_results = False # 결과 보기 스위치 끄기
+    
+    st.rerun()
 
 # 데이터 로드 (페이지 첫 로드 시에만 실행)
 if not st.session_state.get("data_loaded", False):
@@ -518,6 +526,12 @@ st.subheader("📋 스케줄 변경 요청 목록")
 if "df_schedule" not in st.session_state or st.session_state["df_schedule"].empty:
     st.warning("⚠️ 스케줄 데이터가 로드되지 않았습니다. 새로고침 버튼을 눌러 데이터를 다시 로드해주세요.")
     st.stop()
+
+# --- 표시할 데이터프레임 결정 ---
+# data_editor에 들어갈 데이터를 먼저 결정합니다. 이것이 현재 화면의 기준이 됩니다.
+df_to_display = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial", pd.DataFrame()))
+
+# --- '스케줄 변경 요청 목록' 섹션 ---
 df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
 if not df_swaps_raw.empty:
     cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '변경 요청': '변경 요청', '변경 요청한 스케줄': '변경 요청한 스케줄'}
@@ -527,51 +541,71 @@ if not df_swaps_raw.empty:
         df_swaps_display['변경 요청한 스케줄'] = df_swaps_display['변경 요청한 스케줄'].apply(format_sheet_date_for_display)
     st.dataframe(df_swaps_display, use_container_width=True, hide_index=True)
 
-    # --- 💡 경고 메시지 로직 (업그레이드 버전) ---
-    request_sources = []
-    request_destinations = [] # 도착지 검사를 위한 리스트 추가
+    # >>>>>>>>> [핵심 수정] '일괄 적용' 전 상태일 때만 아래의 충돌 검사를 실행 <<<<<<<<<
+    if "df_schedule_md_modified" not in st.session_state:
+        # --- 충돌 경고 로직 ---
+        request_sources = []
+        request_destinations = []
 
-    for index, row in df_swaps_raw.iterrows():
-        change_request_str = str(row.get('변경 요청', '')).strip()
-        schedule_info_str = str(row.get('변경 요청한 스케줄', '')).strip()
-        if '➡️' in change_request_str and schedule_info_str:
-            person_before, person_after = [p.strip() for p in change_request_str.split('➡️')]
+        schedule_df_to_check = df_to_display
+        target_year = int(month_str.split('년')[0])
+
+        for index, row in df_swaps_raw.iterrows():
+            change_request_str = str(row.get('변경 요청', '')).strip()
+            schedule_info_str = str(row.get('변경 요청한 스케줄', '')).strip()
             
-            # 1. 출처 충돌 검사 리스트
-            request_sources.append(f"{person_before} - {schedule_info_str}")
-            
-            # 2. 도착지 중복 검사 리스트
-            date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_info_str)
-            if date_match:
-                date_part, time_period = date_match.groups()
-                # (날짜, 시간대, 변경 후 사람)을 기준으로 중복 확인
-                request_destinations.append((date_part, time_period, person_after))
+            if '➡️' in change_request_str and schedule_info_str:
+                person_before, person_after = [p.strip() for p in change_request_str.split('➡️')]
+                
+                is_on_call_request = False
+                date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_info_str)
+                if date_match:
+                    date_part, time_period = date_match.groups()
+                    if time_period == '오전':
+                        try:
+                            date_obj = datetime.strptime(date_part, '%Y-%m-%d').date()
+                            formatted_date_in_df = f"{date_obj.month}월 {date_obj.day}일"
+                            
+                            target_row = schedule_df_to_check[schedule_df_to_check['날짜'] == formatted_date_in_df]
+                            
+                            if not target_row.empty:
+                                on_call_person_of_the_day = str(target_row.iloc[0].get('오전당직(온콜)', '')).strip()
+                                if person_before == on_call_person_of_the_day:
+                                    is_on_call_request = True
+                        except Exception:
+                            pass 
+                
+                if not is_on_call_request:
+                    request_sources.append(f"{person_before} - {schedule_info_str}")
+                
+                if date_match:
+                    date_part, time_period = date_match.groups()
+                    request_destinations.append((date_part, time_period, person_after))
 
-    # [검사 1: 출처 충돌]
-    source_counts = Counter(request_sources)
-    source_conflicts = [item for item, count in source_counts.items() if count > 1]
-    if source_conflicts:
-        st.warning(
-            "⚠️ **요청 출처 충돌**: 동일한 근무에 대한 변경 요청이 2개 이상 있습니다. "
-            "목록의 가장 위에 있는 요청이 먼저 반영되며, 이후 요청은 무시될 수 있습니다."
-        )
-        for conflict_item in source_conflicts:
-            person, schedule = conflict_item.split(' - ', 1)
-            formatted_schedule = format_sheet_date_for_display(schedule)
-            st.info(f"- **'{person}'** 님의 **{formatted_schedule}** 근무 요청이 중복되었습니다.")
+        # [검사 1: 출처 충돌]
+        source_counts = Counter(request_sources)
+        source_conflicts = [item for item, count in source_counts.items() if count > 1]
+        if source_conflicts:
+            st.warning(
+                "⚠️ **요청 출처 충돌**: 동일한 근무에 대한 변경 요청이 2개 이상 있습니다. "
+                "목록의 가장 위에 있는 요청이 먼저 반영되며, 이후 요청은 무시될 수 있습니다."
+            )
+            for conflict_item in source_conflicts:
+                person, schedule = conflict_item.split(' - ', 1)
+                formatted_schedule = format_sheet_date_for_display(schedule)
+                st.info(f"- **'{person}'** 님의 **{formatted_schedule}** 근무 요청이 중복되었습니다.")
 
-    # [검사 2: 도착지 중복]
-    dest_counts = Counter(request_destinations)
-    dest_conflicts = [item for item, count in dest_counts.items() if count > 1]
-    if dest_conflicts:
-        st.warning(
-            "⚠️ **요청 도착지 중복**: 한 사람이 같은 날, 같은 시간대에 여러 근무를 받게 되는 요청이 있습니다. "
-            "이 경우, 먼저 처리되는 요청만 반영됩니다."
-        )
-        for date, period, person in dest_conflicts:
-            formatted_date = format_sheet_date_for_display(f"{date} ({period})")
-            st.info(f"- **'{person}'** 님이 **{formatted_date}** 근무에 중복으로 배정될 가능성이 있습니다.")
-
+        # [검사 2: 도착지 중복]
+        dest_counts = Counter(request_destinations)
+        dest_conflicts = [item for item, count in dest_counts.items() if count > 1]
+        if dest_conflicts:
+            st.warning(
+                "⚠️ **요청 도착지 중복**: 한 사람이 같은 날, 같은 시간대에 여러 근무를 받게 되는 요청이 있습니다. "
+                "이 경우, 먼저 처리되는 요청만 반영됩니다."
+            )
+            for date, period, person in dest_conflicts:
+                formatted_date = format_sheet_date_for_display(f"{date} ({period})")
+                st.info(f"- **'{person}'** 님이 **{formatted_date}** 근무에 중복으로 배정될 가능성이 있습니다.")
 else:
     st.info("표시할 교환 요청 데이터가 없습니다.")
 
@@ -1558,7 +1592,10 @@ def random_assign(personnel, slots, request_assignments, time_groups, total_stat
 
 st.divider()
 if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
+    st.session_state['show_assignment_results'] = True
+    st.rerun()
 
+if st.session_state.get('show_assignment_results', False):
     with st.spinner("방배정 중..."):
         # --- 요청사항 처리 결과 추적을 위한 초기화 ---
         applied_messages = []
@@ -1625,9 +1662,9 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                     req_room_num = room_match.group(1)
                     morning_duty_room = st.session_state["room_settings"].get("830_duty")
                     if req_room_num == morning_duty_room:
-                        # [수정] 아이콘을 ⛔️로 변경
                         msg = f"⛔️ {person}: {date_str_display} ({time_str_display})의 '{req_room_num}번방' 요청은 오전 당직방입니다. 수기로 수정해 주십시오."
                         unapplied_messages.append(msg)
+                        is_valid = False
 
             if is_valid:
                 valid_requests_indices.append(index)
@@ -2043,10 +2080,17 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 msg = f"✅ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청이 적용되었습니다."
                 applied_messages.append(msg)
             else:
+                # 이 요청이 적용되지 않은 이유를 여기서 분기 처리합니다.
                 is_special_day = req_date in [d.strftime('%Y-%m-%d') for d, _, _ in st.session_state.get("special_schedules", [])]
+                
                 if is_special_day:
-                     msg = f"⛔️ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청은 토요/휴일 일자입니다. 수기로 수정해주십시오."
-                     unapplied_messages.append(msg)
+                    # 1. 토요/휴일이라서 시스템이 자동으로 처리하지 않은 경우
+                    msg = f"⛔️ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청은 토요/휴일 일자입니다. 수기로 수정해주십시오."
+                    unapplied_messages.append(msg)
+                else:
+                    # 2. 그 외의 경우 (주로 평일의 배정 균형 문제)
+                    msg = f"ℹ️ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청이 배정 균형을 위해 반영되지 않았습니다."
+                    unapplied_messages.append(msg)
 
         # --- Expander로 결과 표시 ---
         st.write("---")
@@ -2070,7 +2114,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 for message in sorted(applied_messages):
                     st.text(message)
 
-        st.write(" ")
+        st.divider()
         st.markdown("**✅ 통합 배치 결과**") # 기존 헤더와 연결
         st.dataframe(df_room, hide_index=True)
         

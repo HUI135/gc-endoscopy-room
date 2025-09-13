@@ -294,7 +294,7 @@ def generate_room_request_events(df_user_room_request):
             try:
                 date_part = 날짜.split(" (")[0]
                 dt = datetime.datetime.strptime(date_part, "%Y-%m-%d").date()
-                events.append({"title": f"방요청:{분류}", "start": dt.strftime("%Y-%m-%d"), "color": "#7C8EC7"})
+                events.append({"title": f"{분류}", "start": dt.strftime("%Y-%m-%d"), "color": "#7C8EC7"})
             except: continue
     return events
 

@@ -46,7 +46,9 @@ if 'download_file' not in st.session_state:
     st.session_state.download_file = None
 if 'download_filename' not in st.session_state:
     st.session_state.download_filename = None
-
+if 'page7_messages' not in st.session_state:
+    st.session_state['page7_messages'] = []
+    
 # --- Google Sheets 연동 함수 ---
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -170,14 +172,13 @@ def load_special_schedules(month_str):
         st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
         return pd.DataFrame()
 
-# ❗️기존 apply_assignment_swaps 함수를 지우고 이 코드로 전체를 교체하세요.
-
 def apply_assignment_swaps(df_assignment, df_requests, df_special):
     df_modified = df_assignment.copy()
     df_special_modified = df_special.copy() if df_special is not None else pd.DataFrame()
     changed_log = []
     applied_count = 0
-    error_found = False
+    # [수정] 메시지를 담을 리스트 생성
+    messages = []
 
     for _, req in df_requests.iterrows():
         try:
@@ -194,30 +195,24 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
             date_obj = datetime.strptime(date_str, '%Y-%m-%d')
             target_date_str = f"{date_obj.month}월 {date_obj.day}일"
             
-            # 날짜를 기준으로 방배정표에서 해당 행 찾기
             row_indices = df_modified.index[df_modified['날짜'] == target_date_str].tolist()
             if not row_indices:
-                st.warning(f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다.")
-                time.sleep(1.5)
+                # [수정] 메시지 리스트에 추가
+                messages.append(('warning', f"⚠️ 요청 처리 불가: 방배정표에서 날짜 '{target_date_str}'를 찾을 수 없습니다."))
                 continue
             target_row_idx = row_indices[0]
 
-            # ✅ 수정된 로직: 평일과 휴일 구분 없이 동일한 방식으로 확인
             target_col_found = None
-            # '날짜', '요일'을 제외한 모든 방(컬럼)을 순회
             for col in df_modified.columns[2:]: 
                 person_in_cell = str(df_modified.at[target_row_idx, col]).strip()
-                # 1. 해당 칸에 있는 사람이 바꾸려는 사람과 같고,
-                # 2. 해당 칸의 이름(컬럼명)이 요청한 방(슬롯) 이름과 같으면
                 if person_in_cell == old_person and col == target_slot:
-                    target_col_found = col # 변경할 컬럼을 찾았으므로 저장
-                    break # 반복 중단
+                    target_col_found = col
+                    break
             
             if target_col_found:
                 df_modified.at[target_row_idx, target_col_found] = new_person
                 applied_count += 1
                 
-                # 토요/휴일 당직자 변경 로직 (기존 유지)
                 is_special_date = False
                 if df_special is not None and not df_special.empty and '날짜_dt' in df_special.columns:
                     is_special_date = not df_special[df_special['날짜_dt'].dt.date == date_obj.date()].empty
@@ -228,33 +223,31 @@ def apply_assignment_swaps(df_assignment, df_requests, df_special):
                         current_duty_person = str(duty_row['당직'].iloc[0]).strip()
                         if current_duty_person == old_person:
                             df_special_modified.loc[duty_row.index, '당직'] = new_person
-                            st.info(f"ℹ️ {target_date_str}의 토요/휴일 당직자가 '{new_person}' (으)로 함께 변경됩니다.")
+                            # [수정] 메시지 리스트에 추가
+                            messages.append(('info', f"ℹ️ {target_date_str}의 토요/휴일 당직자가 '{new_person}' (으)로 함께 변경됩니다."))
 
                 changed_log.append({
                     '날짜': f"{target_date_str} ({'월화수목금토일'[date_obj.weekday()]})",
                     '방배정': target_slot,
                     '변경 전 인원': old_person,
                     '변경 후 인원': new_person,
-                    '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
             else:
-                st.error(f"❌ 적용 실패: {target_date_str}의 '{target_slot}'에 '{old_person}'이(가) 배정되어 있지 않습니다.")
-                time.sleep(1.5)
-                error_found = True
+                # [수정] 메시지 리스트에 추가
+                messages.append(('error', f"❌ 적용 실패: {target_date_str}의 '{target_slot}'에 '{old_person}'이(가) 배정되어 있지 않습니다."))
                 
         except Exception as e:
-            st.error(f"⚠️ 요청 처리 중 시스템 오류 발생: {e}")
-            time.sleep(1.5)
-            error_found = True
+            # [수정] 메시지 리스트에 추가
+            messages.append(('error', f"⚠️ 요청 처리 중 시스템 오류 발생: {e}"))
 
     if applied_count > 0:
-        st.success(f"🎉 총 {applied_count}건의 변경 요청이 반영되었습니다.")
-        time.sleep(1.5)
-    elif not df_requests.empty and not error_found:
-        st.info("ℹ️ 새롭게 반영할 유효한 변경 요청이 없습니다.")
-        time.sleep(1.5)
+        # [수정] 메시지 리스트에 추가 (가장 위로)
+        messages.insert(0, ('success', f"🎉 총 {applied_count}건의 변경 요청이 반영되었습니다."))
+    elif not df_requests.empty and not messages:
+        messages.append(('info', "ℹ️ 새롭게 반영할 유효한 변경 요청이 없습니다."))
 
-    return df_modified, changed_log, df_special_modified
+    # [수정] df_modified, 로그, 그리고 '메시지 리스트'를 함께 반환
+    return df_modified, changed_log, df_special_modified, messages
     
 # --- 시간대 순서 정의 ---
 time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
@@ -382,8 +375,16 @@ st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 
 if st.button("🔄 새로고침 (R)"):
     st.cache_data.clear()
     st.session_state.change_data_loaded = False
+    
+    # 페이지 메시지를 초기화합니다.
+    if 'page7_messages' in st.session_state:
+        st.session_state['page7_messages'] = []
+        
+    # [핵심 수정] '결과 보기' 상태를 초기화하여 수정 화면으로 돌아가도록 합니다.
+    if 'show_final_results' in st.session_state:
+        st.session_state['show_final_results'] = False
+        
     st.rerun()
-
 # 초기 데이터 로드
 if not st.session_state.change_data_loaded:
     load_and_initialize_data()
@@ -391,8 +392,12 @@ if not st.session_state.change_data_loaded:
 st.divider()
 
 st.subheader("📋 방배정 변경 요청 목록")
+# --- st.subheader("📋 방배정 변경 요청 목록") 섹션 내부 ---
+
 if not st.session_state.df_change_requests.empty:
     df_display = st.session_state.df_change_requests.copy()
+    
+    # 날짜 포맷을 보기 좋게 변경하는 함수
     def convert_date_format(x):
         x = str(x).strip()
         match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', x)
@@ -400,17 +405,74 @@ if not st.session_state.df_change_requests.empty:
             date_str, slot = match.groups()
             try:
                 date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-                return f"{date_obj.strftime('%-m월 %-d일')} ({'월화수목금토일'[date_obj.weekday()]}) - {slot}"
+                weekday_str = '월화수목금토일'[date_obj.weekday()]
+                return f"{date_obj.month}월 {date_obj.day}일 ({weekday_str}) - {slot}"
             except ValueError:
-                st.warning(f"⚠️ 잘못된 날짜 형식: '{date_str}'")
                 return x
         return x
+
     df_display['변경 요청한 방배정'] = df_display['변경 요청한 방배정'].apply(convert_date_format)
     if 'RequestID' in df_display.columns:
         df_display = df_display.drop(columns=['RequestID'])
     if '요청자 사번' in df_display.columns:
         df_display = df_display.drop(columns=['요청자 사번'])
+    
     st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+    # --- 💡 [추가] 충돌 감지 경고 메시지 로직 ---
+    request_sources = []
+    request_destinations = []
+
+    for index, row in st.session_state.df_change_requests.iterrows():
+        change_request_str = str(row.get('변경 요청', '')).strip()
+        slot_info_str = str(row.get('변경 요청한 방배정', '')).strip()
+        
+        if '➡️' in change_request_str and slot_info_str:
+            person_before, person_after = [p.strip() for p in change_request_str.split('➡️')]
+            
+            # 1. 출처 충돌 검사 리스트 추가
+            # 동일한 슬롯에 대한 요청이 여러 개 있는지 확인
+            request_sources.append(slot_info_str)
+            
+            # 2. 도착지 중복 검사 리스트 추가
+            date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', slot_info_str)
+            if date_match:
+                date_part, slot_name = date_match.groups()
+                # 시간대만 추출 (예: "8:30(1)_당직" -> "8:30")
+                time_part_match = re.match(r'(\d{1,2}:\d{2})', slot_name)
+                if time_part_match:
+                    time_part = time_part_match.group(1)
+                    # (날짜, 시간대, 변경 후 사람)을 기준으로 중복 확인
+                    request_destinations.append((date_part, time_part, person_after))
+
+    # [검사 1: 출처 충돌]
+    source_counts = Counter(request_sources)
+    source_conflicts = [item for item, count in source_counts.items() if count > 1]
+    if source_conflicts:
+        st.warning(
+            "⚠️ **요청 출처 충돌**: 동일한 방(시간대)에 대한 변경 요청이 2개 이상 있습니다. "
+            "목록의 가장 위에 있는 요청이 먼저 반영되며, 이후 요청은 무시될 수 있습니다."
+        )
+        for conflict_item in source_conflicts:
+            formatted_slot = convert_date_format(conflict_item)
+            st.info(f"- **{formatted_slot}** 에 대한 요청이 중복되었습니다.")
+
+    # [검사 2: 도착지 중복]
+    dest_counts = Counter(request_destinations)
+    dest_conflicts = [item for item, count in dest_counts.items() if count > 1]
+    if dest_conflicts:
+        st.warning(
+            "⚠️ **요청 도착지 중복**: 한 사람이 같은 날, 같은 시간대에 여러 방에 배정될 가능성이 있는 요청이 있습니다. "
+            "이 경우, 먼저 처리되는 요청만 반영됩니다."
+        )
+        for date, period, person in dest_conflicts:
+            # 날짜 포맷팅을 위해 임시 문자열 생성
+            temp_slot_info = f"{date} ({period})"
+            formatted_date = convert_date_format(temp_slot_info)
+            # 시간대만 표시하도록 재조정 (예: "10월 23일 (목) - 8:30")
+            display_text = formatted_date.split(' - ')[0] + f" - {period} 시간대"
+            st.info(f"- **'{person}'** 님이 **{display_text}** 에 중복으로 배정될 가능성이 있습니다.")
+
 else:
     st.info("접수된 변경 요청이 없습니다.")
 st.divider()
@@ -419,19 +481,38 @@ st.divider()
 st.subheader("✍️ 방배정 최종 수정")
 st.write("- 요청사항을 일괄 적용하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장**하세요.")
 col1, col2 = st.columns(2)
+# [추가] 세션에 저장된 메시지를 항상 표시하는 로직
+if "page7_messages" in st.session_state and st.session_state["page7_messages"]:
+    for msg_type, msg_text in st.session_state["page7_messages"]:
+        if msg_type == 'success':
+            st.success(msg_text)
+        elif msg_type == 'warning':
+            st.warning(msg_text)
+        elif msg_type == 'error':
+            st.error(msg_text)
+        elif msg_type == 'info':
+            st.info(msg_text)
+
 with col1:
     if st.button("🔄 요청사항 일괄 적용"):
+        # 메시지 리스트를 먼저 비워줍니다.
+        st.session_state['page7_messages'] = []
         if not st.session_state.df_change_requests.empty:
             current_df = st.session_state.df_final_assignment
             requests_df = st.session_state.df_change_requests
             special_df = st.session_state.df_special_schedules
             st.session_state.df_before_apply = current_df.copy()
-            modified_df, new_changes, modified_special_df = apply_assignment_swaps(current_df, requests_df, special_df)
+            
+            # [수정] 4개의 반환값을 모두 받음
+            modified_df, new_changes, modified_special_df, messages = apply_assignment_swaps(current_df, requests_df, special_df)
+            
+            # [수정] 반환된 메시지를 세션에 저장
+            st.session_state['page7_messages'] = messages
+            
             st.session_state.df_final_assignment = modified_df
             st.session_state.df_special_schedules = modified_special_df
             if not isinstance(st.session_state.changed_cells_log, list):
                 st.session_state.changed_cells_log = []
-            # 기존 로그에 새 로그 추가 (중복 제거)
             existing_keys = {(log['날짜'], log['방배정']) for log in st.session_state.changed_cells_log}
             for change in new_changes:
                 if (change['날짜'], change['방배정']) not in existing_keys:
@@ -440,14 +521,16 @@ with col1:
             st.session_state.has_changes_to_revert = True
             st.rerun()
         else:
-            st.info("ℹ️ 처리할 변경 요청이 없습니다.")
+            # [수정] 직접 메시지를 표시하는 대신 세션에 저장
+            st.session_state['page7_messages'] = [('info', "ℹ️ 처리할 변경 요청이 없습니다.")]
+            st.rerun()
 with col2:
     if st.button("⏪ 적용 취소", disabled=not st.session_state.has_changes_to_revert):
         st.session_state.df_final_assignment = st.session_state.df_before_apply.copy()
         st.session_state.changed_cells_log = []
         st.session_state.has_changes_to_revert = False
-        st.info("변경사항이 취소되고 원본 스케줄로 돌아갑니다.")
-        time.sleep(1.5)
+        # [수정] 직접 메시지를 표시하는 대신 세션에 저장
+        st.session_state['page7_messages'] = [('info', "변경사항이 취소되고 원본 스케줄로 돌아갑니다.")]
         st.rerun()
 
 # DataFrame 편집
@@ -459,68 +542,63 @@ edited_df = st.data_editor(
     hide_index=True
 )
 
-# 수동 편집 시 변경사항 감지 및 로그 업데이트
-if not edited_df.equals(st.session_state.df_final_assignment):
-    st.session_state.df_before_apply = st.session_state.df_final_assignment.copy()
-    diff_mask = (edited_df != st.session_state.df_final_assignment) & (edited_df.notna() | st.session_state.df_final_assignment.notna())
-    current_log = st.session_state.changed_cells_log if isinstance(st.session_state.changed_cells_log, list) else []
-    
-    # 새로운 변경사항 기록
-    newly_changed_logs = []
-    existing_keys = {(log['날짜'], log['방배정']) for log in current_log}
+# [핵심 수정] '실시간 차이 비교' 방식으로 변경사항 미리보기 로직을 재구성합니다.
+
+# 1. '일괄 적용' 버튼으로 인해 생성된 로그를 가져옵니다. (이것은 그대로 유지됩니다)
+batch_log = st.session_state.get("changed_cells_log", [])
+
+# 2. 수동으로 편집된 내용을 '실시간'으로 계산합니다. (세션에 로그를 누적하지 않습니다)
+manual_change_log = []
+# 기준이 되는 데이터는 세션에 저장된 df_final_assignment 입니다.
+base_df = st.session_state.df_final_assignment 
+
+if not edited_df.equals(base_df):
+    diff_mask = (edited_df != base_df) & (edited_df.notna() | base_df.notna())
     
     for col in diff_mask.columns:
         if diff_mask[col].any():
             for idx in diff_mask.index[diff_mask[col]]:
                 date_val = edited_df.at[idx, '날짜']
                 day_val = edited_df.at[idx, '요일']
-                formatted_date = f"{date_val} ({day_val})"
                 
                 new_val = str(edited_df.at[idx, col]).strip() if pd.notna(edited_df.at[idx, col]) else ""
-                old_val = str(st.session_state.df_final_assignment.at[idx, col]).strip() if pd.notna(st.session_state.df_final_assignment.at[idx, col]) else ""
-                
-                log_key = (formatted_date, col)
-                if log_key not in existing_keys and new_val != old_val:
-                    newly_changed_logs.append({
-                        '날짜': formatted_date,
+                old_val = str(base_df.at[idx, col]).strip() if pd.notna(base_df.at[idx, col]) else ""
+
+                if new_val != old_val:
+                    manual_change_log.append({
+                        '날짜': f"{date_val} ({day_val})",
                         '방배정': col,
                         '변경 전 인원': old_val,
-                        '변경 후 인원': new_val,
-                        # '변경 유형': '수동 편집',
-                        # '변경 일시': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        '변경 후 인원': new_val
                     })
-                    existing_keys.add(log_key)
-    
-    st.session_state.changed_cells_log = current_log + newly_changed_logs
-    st.session_state.df_final_assignment = edited_df.copy()
-    st.session_state.has_changes_to_revert = True
+
+# 3. '일괄 적용' 로그와 '수동 변경' 로그를 합쳐서 최종 미리보기 목록을 만듭니다.
+final_log_to_display = batch_log + manual_change_log
 
 st.divider()
-st.caption("📝 현재까지 기록된 변경사항 로그")
-if st.session_state.changed_cells_log:
-    valid_logs = [log for log in st.session_state.changed_cells_log if len(log) >= 4]
-    if valid_logs:
-        log_df = pd.DataFrame(valid_logs)
-        log_df = log_df[['날짜', '방배정', '변경 전 인원', '변경 후 인원', '변경 일시']].fillna('')
-        st.dataframe(log_df.sort_values(by=['변경 일시', '날짜', '방배정']).reset_index(drop=True), use_container_width=True, hide_index=True)
-    else:
-        st.info("기록된 변경사항이 없습니다.")
+st.caption("📝 변경사항 미리보기")
+if final_log_to_display:
+    log_df = pd.DataFrame(final_log_to_display)
+    display_cols = ['날짜', '방배정', '변경 전 인원', '변경 후 인원']
+    log_df = log_df[display_cols]
+    st.dataframe(log_df, use_container_width=True, hide_index=True)
 else:
     st.info("기록된 변경사항이 없습니다.")
 
-# 변경사항 유무를 판단하는 플래그
-has_unsaved_changes = (st.session_state.changed_cells_log is not None and len(st.session_state.changed_cells_log) > 0)
+# [핵심 수정] 변경사항 유무를 이제 final_log_to_display 기준으로 판단합니다.
+has_unsaved_changes = bool(final_log_to_display)
 
 col_final1, col_final2 = st.columns(2)
 with col_final1:
+    # [핵심 수정] '저장' 버튼의 로직도 함께 변경해야 합니다.
     if st.button("✍️ 변경사항 저장", type="primary", use_container_width=True, disabled=not has_unsaved_changes):
-        final_df_to_save = st.session_state.df_final_assignment
+        # 저장할 데이터는 이제 edited_df 입니다.
+        final_df_to_save = edited_df 
         try:
             with st.spinner("Google Sheets에 저장 중..."):
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
 
-                # --- '방배정 최종' 시트 저장 ---
                 try:
                     worksheet_final = sheet.worksheet(f"{month_str} 방배정 최종")
                 except gspread.exceptions.WorksheetNotFound:
@@ -530,8 +608,10 @@ with col_final1:
                 final_data_list = [final_df_to_save.columns.tolist()] + final_df_to_save.fillna('').values.tolist()
                 update_sheet_with_retry(worksheet_final, final_data_list)
 
-            # 로그 처리 및 페이지 상태 업데이트
-            st.session_state.saved_changes_log.extend(st.session_state.changed_cells_log)
+            # 저장 후 상태를 업데이트합니다.
+            # 1. 이제 edited_df가 새로운 기준이 됩니다.
+            st.session_state.df_final_assignment = edited_df.copy()
+            # 2. 수동 변경 로그는 휘발성이므로 비울 필요 없고, '일괄 적용' 로그만 비웁니다.
             st.session_state.changed_cells_log = []
             st.session_state.has_changes_to_revert = False
             
