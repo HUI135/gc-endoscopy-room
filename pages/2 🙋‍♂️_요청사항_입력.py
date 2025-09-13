@@ -475,93 +475,74 @@ else:
 
 # 기존 st_calendar가 있던 자리에 아래 코드를 붙여넣으세요.
 
-# 1. CSS 스타일 정의
-st.markdown("""
+# st.html 부터 시작하는 부분을 교체하세요.
+st.html("""
 <style>
-/* --- 기본 캘린더 스타일 (PC 기준) --- */
-.calendar-title {
-    text-align: center;
-    font-size: 24px;
-    font-weight: bold;
-    margin-bottom: 20px;
-    color: black;
-}
-.calendar-header {
-    text-align: center;
-    font-weight: bold;
-    padding: 10px 0;
-    border: 1px solid #e1e4e8;
-    border-radius: 5px;
-    background-color: #e9ecef;
-    color: black;
-}
-.saturday { color: blue !important; }
-.sunday { color: red !important; }
-.calendar-day-cell {
-    border: 1px solid #e1e4e8;
-    border-radius: 5px;
-    padding: 6px;
-    min-height: 120px; /* PC에서는 충분한 높이 유지 */
-    background-color: white;
-    display: flex;
-    flex-direction: column;
-}
-.day-number {
-    font-weight: bold;
-    font-size: 14px; /* PC에서는 기본 글자 크기 */
-    margin-bottom: 5px;
-    color: black;
-}
-.day-number.other-month {
-    color: #ccc;
-}
-.event-item {
-    font-size: 13px; /* PC에서는 기본 글자 크기 */
-    padding: 1px 5px;
-    border-radius: 3px;
-    margin-bottom: 3px;
-    color: white;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
+    /* CSS Version: Original Structure - Forceful PC Dark Mode Fix */
 
-/* ▼▼▼▼▼ [수정] 모바일 화면 대응 최종 코드 ▼▼▼▼▼ */
-/* 화면 너비가 768px 이하일 때 (태블릿/모바일) 아래 스타일을 적용합니다. */
-@media (max-width: 768px) {
-    /* st.columns 컨테이너의 자식 요소(개별 컬럼)를 타겟으로 지정 */
-    div[data-testid="stHorizontalBlock"] > div[data-testid^="stVerticalBlock"] {
-        /* 컬럼이 세로로 쌓이지 않고 가로 공간을 나눠 갖도록 강제 */
-        flex: 1 1 0%;
-        min-width: 0; /* 컬럼 너비가 정상적으로 줄어들도록 보장 */
+    /* --- 1. 기본 스타일 (라이트 모드) --- */
+    .calendar-title {
+        text-align: center; font-size: 24px; font-weight: bold;
+        margin-bottom: 20px; color: #495057;
     }
-
-    /* 모바일에서는 컬럼 간격을 더 좁게 조정 */
-    div[data-testid="stHorizontalBlock"] {
-        gap: 0.15rem;
-    }
-
-    /* 모바일에서 캘린더 셀과 글자 크기를 조정하여 가독성 확보 */
-    .calendar-day-cell {
-        min-height: 85px; /* 모바일 최소 높이 조정 */
-        padding: 3px;     /* 셀 내부 여백 감소 */
-    }
-    .day-number {
-        font-size: 11px; /* 날짜 숫자 크기 감소 */
-    }
-    .event-item {
-        font-size: 10px;  /* 이벤트 글자 크기 감소 */
-        padding: 1px 2px; /* 이벤트 내부 여백 감소 */
-        margin-bottom: 2px;
+    .schedule-container {
+        background-color: #f8f9fa !important;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        border: 1px solid #e1e4e8;
+        color: black;
     }
     .calendar-header {
-        font-size: 12px; /* 요일 헤더 글자 크기 감소 */
-        padding: 8px 0;
+        text-align: center; font-weight: bold; padding: 10px 0;
+        border: 1px solid #e1e4e8; border-radius: 5px;
+        background-color: #e9ecef; color: black;
     }
-}
+    .saturday { color: #4169E1 !important; }
+    .sunday { color: #DC143C !important; }
+    .calendar-day-cell {
+        border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
+        min-height: 120px; background-color: #f8f9fa;
+        display: flex; flex-direction: column;
+    }
+    .day-number {
+        font-weight: bold; font-size: 14px; margin-bottom: 5px; color: black;
+    }
+    .day-number.other-month { color: #ccc; }
+    .event-item {
+        font-size: 13px; padding: 1px 5px; border-radius: 3px;
+        margin-bottom: 3px; color: white; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+    }
 
+    /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
+    /* 이 부분은 원래대로 잘 작동했으므로 그대로 유지합니다. */
+    @media (max-width: 768px) {
+        div[data-testid="stHorizontalBlock"] {
+            display: grid !important;
+            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
+            gap: 0 !important; padding: 0 !important; margin: 0 !important;
+            border-top: 1px solid #e0e0e0 !important;
+            border-left: 1px solid #e0e0e0 !important;
+        }
+        .calendar-header {
+            border: none !important;
+            border-left: 1px solid #e0e0e0 !important;
+            border-right: 1px solid #e0e0e0 !important;
+            border-bottom: 1px solid #e0e0e0 !important;
+            border-radius: 0 !important;
+            background-color: #f8f9fa !important;
+        }
+        .calendar-day-cell { min-height: 75px !important; padding: 1px !important; }
+        .event-item {
+            font-size: 9px !important; padding: 1px !important;
+            white-space: normal !important; word-break: break-all !important;
+            line-height: 1.1 !important;
+        }
+        .day-number, .calendar-header { font-size: 11px !important; }
+    }
 </style>
-""", unsafe_allow_html=True)
+""")
 
 if df_user_request.empty:
     with st.container(border=True):
