@@ -1968,21 +1968,45 @@ if st.session_state.get('show_assignment_results', False):
                 result_data.append(result_row)
                 continue
             
+            # ✨ --- 여기가 수정된 요청사항 처리 로직입니다 --- ✨
             request_assignments = {}
-            if not valid_requests_df.empty:
-                for _, req in valid_requests_df.iterrows():
-                    req_date, is_morning = parse_date_info(req['날짜정보'])
-                    if req_date and req_date == formatted_date:
-                        slots_for_category = st.session_state["memo_rules"].get(req['분류'], [])
-                        if slots_for_category:
-                            valid_slots = [s for s in slots_for_category if (is_morning and not s.startswith('13:30')) or (not is_morning and s.startswith('13:30'))]
-                            if valid_slots:
-                                selected_slot = random.choice(valid_slots)
-                                request_assignments[selected_slot] = req['이름']
-                                request_cells[(formatted_date, selected_slot)] = {'이름': req['이름'], '분류': req['분류']}
-
-            assignment, _ = random_assign(list(set(morning_personnel+afternoon_personnel)), assignable_slots, request_assignments, st.session_state["time_groups"], total_stats, morning_personnel, afternoon_personnel, afternoon_duty_counts)
+            # 그날에 해당하는 유효한 요청만 필터링
+            requests_for_day = valid_requests_df[valid_requests_df['날짜정보'].str.startswith(formatted_date)]
             
+            if not requests_for_day.empty:
+                # 1단계: '특정 방' 요청 먼저 처리 (충돌 가능성 높음)
+                room_reqs = requests_for_day[requests_for_day['분류'].str.contains('번방')].sort_index()
+                for _, req in room_reqs.iterrows():
+                    person, category = req['이름'], req['분류']
+                    # 이 사람/시간대에 대한 요청이 이미 처리되었는지 확인
+                    if any(p == person for p in request_assignments.values()): continue
+
+                    slots_for_category = st.session_state["memo_rules"].get(category, [])
+                    if slots_for_category:
+                        # '1번방' 요청은 슬롯이 하나뿐이므로, 그 슬롯이 비어있으면 배정
+                        target_slot = slots_for_category[0]
+                        if target_slot not in request_assignments:
+                            request_assignments[target_slot] = person
+                            request_cells[(formatted_date, target_slot)] = {'이름': person, '분류': category}
+
+                # 2단계: '특정 시간대' 및 기타 요청 처리
+                other_reqs = requests_for_day[~requests_for_day['분류'].str.contains('번방')].sort_index()
+                for _, req in other_reqs.iterrows():
+                    person, category, date_info = req['이름'], req['분류'], req['날짜정보']
+                    is_morning = '(오전)' in date_info
+                    if any(p == person for p in request_assignments.values()): continue
+
+                    # 요청을 만족하는 '아직 비어있는' 슬롯 찾기
+                    possible_slots = [s for s in st.session_state["memo_rules"].get(category, []) if s not in request_assignments]
+                    if possible_slots:
+                        selected_slot = random.choice(possible_slots)
+                        request_assignments[selected_slot] = person
+                        request_cells[(formatted_date, selected_slot)] = {'이름': person, '분류': category}
+
+            # `random_assign` 호출은 기존과 동일합니다.
+            assignment, _ = random_assign(list(set(morning_personnel)|set(afternoon_personnel)), assignable_slots, request_assignments, st.session_state["time_groups"], total_stats, list(morning_personnel), list(afternoon_personnel), afternoon_duty_counts)
+
+            # ... (이후 결과 처리) ... 
             for slot in all_slots:
                 person = row['오전당직(온콜)'] if slot == morning_duty_slot or slot == '온콜' else (assignment[assignable_slots.index(slot)] if slot in assignable_slots and assignment else None)
                 result_row.append(person if has_person else None)
