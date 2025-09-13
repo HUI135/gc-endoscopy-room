@@ -612,9 +612,8 @@ if not current_month_schedule_df.empty:
     # 최종 문자열 생성
     schedule_str = ", ".join(schedule_list)
     
-    # HTML/CSS를 사용하여 배경색과 스타일 적용
     styled_text = f"""
-    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+    <div class="schedule-container">
         📅 <strong>이번 달 토요/휴일 스케줄:</strong> {schedule_str}
     </div>
     """
@@ -623,7 +622,7 @@ if not current_month_schedule_df.empty:
 else:
     # 스케줄이 없을 경우에도 동일한 스타일 적용
     styled_text = """
-    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+    <div class="schedule-container">
         📅 이번 달에는 예정된 토요/휴일 근무가 없습니다.
     </div>
     """

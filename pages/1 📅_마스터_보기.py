@@ -668,7 +668,6 @@ if not current_month_schedule_df.empty:
     # 최종 문자열 생성
     schedule_str = ", ".join(schedule_list)
     
-    # ▼▼▼ [수정된 부분] CSS 클래스를 사용하여 스타일 적용 ▼▼▼
     styled_text = f"""
     <div class="schedule-container">
         📅 <strong>이번 달 토요/휴일 스케줄:</strong> {schedule_str}
@@ -684,4 +683,3 @@ else:
     </div>
     """
     st.markdown(styled_text, unsafe_allow_html=True)
-# 여기까지 교체하면 됩니다.
