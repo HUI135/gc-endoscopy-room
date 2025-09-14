@@ -475,23 +475,18 @@ else:
 
 # 기존 st_calendar가 있던 자리에 아래 코드를 붙여넣으세요.
 
-# st.html 부터 시작하는 부분을 교체하세요.
+# st.html 부터 시작하는 부분을 아래 코드로 통째로 교체하세요.
 st.html("""
 <style>
-    /* CSS Version: Original Structure - Forceful PC Dark Mode Fix */
-
     /* --- 1. 기본 스타일 (라이트 모드) --- */
     .calendar-title {
         text-align: center; font-size: 24px; font-weight: bold;
         margin-bottom: 20px; color: #495057;
     }
     .schedule-container {
-        background-color: #f8f9fa !important;
-        padding: 10px;
-        border-radius: 5px;
-        margin-bottom: 15px;
-        border: 1px solid #e1e4e8;
-        color: black;
+        background-color: #f8f9fa !important; padding: 10px;
+        border-radius: 5px; margin-bottom: 15px;
+        border: 1px solid #e1e4e8; color: black;
     }
     .calendar-header {
         text-align: center; font-weight: bold; padding: 10px 0;
@@ -516,19 +511,39 @@ st.html("""
     }
 
     /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
-    /* 이 부분은 원래대로 잘 작동했으므로 그대로 유지합니다. */
     @media (max-width: 768px) {
+        /* ▼▼▼ 핵심 수정 부분 ▼▼▼ */
+
+        /* 캘린더를 감싸는 컨테이너에 가로 스크롤을 적용 */
+        .custom-calendar-grid {
+            overflow-x: auto; /* 내용이 넘칠 경우 가로 스크롤바 생성 */
+            padding-bottom: 10px; /* 스크롤바 공간 확보 */
+        }
+        
+        /* 캘린더 안의 컬럼(stHorizontalBlock)에만 그리드와 최소 너비를 강제 */
         .custom-calendar-grid div[data-testid="stHorizontalBlock"] {
             display: grid !important;
-            grid-template-columns: repeat(7, 1fr) !important; 
+            /* 7열 그리드와 최소 너비 80px를 다시 적용 */
+            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
+            min-width: 560px; /* 7 * 80px, 스크롤이 확실히 생기도록 최소 너비 지정 */
             gap: 0 !important; padding: 0 !important; margin: 0 !important;
             border-top: 1px solid #e0e0e0 !important;
             border-left: 1px solid #e0e0e0 !important;
         }
+
+        /* 기본 컬럼(stColumn)은 세로로 쌓이도록 100% 너비를 가짐 (요청사항 입력 부분에 적용됨) */
         div[data-testid="stColumn"] {
             width: 100% !important;
             min-width: 0 !important; /* 최소 너비 제한 해제 */
         }
+        
+        /* 하지만, 캘린더 안의 컬럼들은 이 규칙을 따르지 않도록 재정의(override) */
+        .custom-calendar-grid div[data-testid="stColumn"] {
+            width: auto !important; /* 너비를 자동으로 설정하여 그리드 시스템을 따르게 함 */
+            min-width: 80px !important; /* 셀의 최소 너비는 유지 */
+        }
+
+        /* 나머지 모바일 스타일 (이전과 동일) */
         .calendar-header {
             border: none !important;
             border-left: 1px solid #e0e0e0 !important;
@@ -615,6 +630,8 @@ with st.container():
                 </div>
                 """
                 st.markdown(cell_html, unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # 이번 달 토요/휴일 스케줄 필터링 및 출력
 st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
