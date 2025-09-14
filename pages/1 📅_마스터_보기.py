@@ -558,7 +558,7 @@ st.html("""
     .html-calendar .saturday { color: #4169E1 !important; }
     .html-calendar .sunday { color: #DC143C !important; }
     .event-item {
-        font-size: 13px; padding: 1px 5px; border-radius: 3px;
+        font-size: 13px; padding: 4px 5px; border-radius: 3px;
         margin-bottom: 3px; color: white; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
     }
@@ -582,7 +582,7 @@ st.html("""
         .day-cell-content-wrapper { min-height: 90px; }
         .day-number, .html-calendar th { font-size: 11px !important; }
         .event-item {
-            font-size: 11px !important; padding: 1px !important;
+            font-size: 11px !important; padding: 4px !important;
             white-space: normal !important; word-break: break-all !important;
             line-height: 1.1 !important;
         }
