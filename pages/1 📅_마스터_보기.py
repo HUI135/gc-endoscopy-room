@@ -532,7 +532,7 @@ st.html("""
         table-layout: fixed;
     }
     .html-calendar th, .html-calendar td {
-        border: 1px solid rgba(128, 128, 120);
+        border: 1px solid rgba(128, 128, 120, 0.6);
         vertical-align: top;
         padding: 0;
         transition: background-color 0.2s ease-in-out;
@@ -543,7 +543,7 @@ st.html("""
         padding: 10px 0;
         background-color: var(--secondary-background-color);
         color: var(--text-color);
-        border-bottom: 2px solid rgba(128, 128, 120);
+        border-bottom: 2px solid rgba(128, 128, 120, 0.6);
     }
     .day-cell-content-wrapper {
         min-height: 120px;
