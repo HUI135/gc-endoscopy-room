@@ -505,7 +505,10 @@ st.html("""
             border-top: 1px solid #e0e0e0 !important;
             border-left: 1px solid #e0e0e0 !important;
         }
-
+        div[data-testid="stColumn"] {
+            width: 100% !important;
+            min-width: 0 !important; /* 최소 너비 제한 해제 */
+        }
         .calendar-header {
             border: none !important;
             border-left: 1px solid #e0e0e0 !important;
