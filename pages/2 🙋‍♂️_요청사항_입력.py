@@ -475,79 +475,64 @@ else:
 
 # 기존 st_calendar가 있던 자리에 아래 코드를 붙여넣으세요.
 
-# st.html 부터 시작하는 부분을 아래 코드로 통째로 교체하세요.
+# st.html 부터 시작하는 부분을 아래 코드로 전부 교체하세요.
 st.html("""
 <style>
-    /* --- 1. 기본 스타일 (라이트 모드) --- */
-    .calendar-title {
-        text-align: center; font-size: 24px; font-weight: bold;
-        margin-bottom: 20px; color: #495057;
+    /* --- 1. 공통 스타일 --- */
+    .calendar-title { text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #495057; }
+    .schedule-container { background-color: #f8f9fa !important; padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #e1e4e8; color: black; }
+
+    /* --- 2. HTML 캘린더 스타일 --- */
+    .html-calendar {
+        width: 100%;
+        border-collapse: collapse; /* 테두리 한 줄로 합치기 */
+        table-layout: fixed; /* 컬럼 너비를 고정 */
     }
-    .schedule-container {
-        background-color: #f8f9fa !important; padding: 10px;
-        border-radius: 5px; margin-bottom: 15px;
-        border: 1px solid #e1e4e8; color: black;
+    .html-calendar th, .html-calendar td {
+        border: 1px solid #e1e4e8;
+        vertical-align: top;
+        padding: 6px;
     }
-    .calendar-header {
-        text-align: center; font-weight: bold; padding: 10px 0;
-        border: 1px solid #e1e4e8; border-radius: 5px;
-        background-color: #e9ecef; color: black;
+    .html-calendar th {
+        font-weight: bold;
+        text-align: center;
+        padding: 10px 0;
+        background-color: #e9ecef;
     }
-    .saturday { color: #4169E1 !important; }
-    .sunday { color: #DC143C !important; }
-    .calendar-day-cell {
-        border: 1px solid #e1e4e8; border-radius: 5px; padding: 6px;
-        min-height: 120px; background-color: #f8f9fa;
-        display: flex; flex-direction: column;
-    }
-    .day-number {
-        font-weight: bold; font-size: 14px; margin-bottom: 5px; color: black;
-    }
-    .day-number.other-month { color: #ccc; }
+    .html-calendar .day-cell { min-height: 120px; }
+    .html-calendar .day-number { font-weight: bold; font-size: 14px; margin-bottom: 5px; }
+    .html-calendar .other-month .day-number { color: #ccc; }
+    .html-calendar .saturday { color: #4169E1 !important; }
+    .html-calendar .sunday { color: #DC143C !important; }
+
     .event-item {
         font-size: 13px; padding: 1px 5px; border-radius: 3px;
         margin-bottom: 3px; color: white; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
     }
 
-    /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
+    /* --- 3. 모바일 화면 대응 --- */
     @media (max-width: 768px) {
-        /* ▼▼▼ 핵심 수정 부분 ▼▼▼ */
-
-
-        /* 캘린더 안의 컬럼(stHorizontalBlock)에만 그리드와 최소 너비를 강제 */
-        .custom-calendar-grid div[data-testid="stHorizontalBlock"] {
-            display: grid !important;
-            /* 7열 그리드와 최소 너비 80px를 다시 적용 */
-            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
-            min-width: 560px; /* 7 * 80px, 스크롤이 확실히 생기도록 최소 너비 지정 */
-            gap: 0 !important; padding: 0 !important; margin: 0 !important;
-            border-top: 1px solid #e0e0e0 !important;
-            border-left: 1px solid #e0e0e0 !important;
+        /* ▼▼▼ 핵심 코드 ▼▼▼ */
+        
+        /* 1. 테이블을 감싸는 컨테이너에 가로 스크롤 생성 */
+        .calendar-table-container {
+            overflow-x: auto;
         }
 
-        /* 하지만, 캘린더 안의 컬럼들은 이 규칙을 따르지 않도록 재정의(override) */
-        .custom-calendar-grid div[data-testid="stColumn"] {
-            width: auto !important; /* 너비를 자동으로 설정하여 그리드 시스템을 따르게 함 */
-            min-width: 80px !important; /* 셀의 최소 너비는 유지 */
+        /* 2. 모바일에서 테이블의 최소 너비를 강제로 지정해 스크롤바 생성 유도 */
+        .html-calendar {
+            min-width: 600px;
         }
 
-        /* 나머지 모바일 스타일 (이전과 동일) */
-        .calendar-header {
-            border: none !important;
-            border-left: 1px solid #e0e0e0 !important;
-            border-right: 1px solid #e0e0e0 !important;
-            border-bottom: 1px solid #e0e0e0 !important;
-            border-radius: 0 !important;
-            background-color: #f8f9fa !important;
-        }
-        .calendar-day-cell { min-height: 75px !important; padding: 1px !important; }
+        /* 3. 모바일용 셀, 글자 크기 등 스타일 조정 */
+        .html-calendar .day-cell { min-height: 75px; }
+        .day-number, .html-calendar th { font-size: 11px !important; }
         .event-item {
             font-size: 9px !important; padding: 1px !important;
             white-space: normal !important; word-break: break-all !important;
             line-height: 1.1 !important;
         }
-        .day-number, .calendar-header { font-size: 11px !important; }
     }
 </style>
 """)
@@ -559,68 +544,79 @@ st.write(" ")
 
 # 2. 캘린더 UI 렌더링 (테두리 제거)
 
+# ==============================================================================
+# ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 이 블록으로 교체 시작 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+# ==============================================================================
+
+# 2. 캘린더 UI 렌더링 (HTML Table 방식)
+
 # 제목만 중앙 정렬하여 표시
 st.markdown(f'<div class="calendar-title">{month_str} 요청사항</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="custom-calendar-grid">', unsafe_allow_html=True)
+# 날짜별 이벤트 가공 (이 부분은 이전과 동일)
+events_by_date = {}
+for event in events_combined:
+    start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
+    if 'end' in event and event['start'] != event['end']:
+        end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
+        for i in range((end_date - start_date).days):
+            current_date = start_date + datetime.timedelta(days=i)
+            if current_date not in events_by_date:
+                events_by_date[current_date] = []
+            events_by_date[current_date].append(event)
+    else:
+        if start_date not in events_by_date:
+            events_by_date[start_date] = []
+        events_by_date[start_date].append(event)
 
-# st.container()로 캘린더 격자 부분만 묶습니다.
-with st.container():
-    # 요일 헤더
-    cols = st.columns(7, gap="small")
-    days_of_week = ["일", "월", "화", "수", "목", "금", "토"] 
-    for col, day in zip(cols, days_of_week):
-        header_class = "calendar-header"
-        if day == "토":
-            header_class += " saturday"
-        elif day == "일":
-            header_class += " sunday"
+# HTML 테이블 문자열 생성 시작
+cal = calendar.Calendar(firstweekday=6)
+month_days = cal.monthdatescalendar(year, month)
+days_of_week = ["일", "월", "화", "수", "목", "금", "토"] 
+
+html_string = "<div class='calendar-table-container'>" # 모바일 스크롤을 위한 컨테이너
+html_string += "<table class='html-calendar'>"
+
+# THEAD: 요일 헤더
+html_string += "<thead><tr>"
+for day in days_of_week:
+    day_class = ""
+    if day == "토": day_class = "saturday"
+    elif day == "일": day_class = "sunday"
+    html_string += f"<th class='{day_class}'>{day}</th>"
+html_string += "</tr></thead>"
+
+# TBODY: 날짜 셀
+html_string += "<tbody>"
+for week in month_days:
+    html_string += "<tr>"
+    for day_date in week:
+        # 이벤트 HTML 생성
+        event_html = ""
+        if day_date in events_by_date:
+            for event in events_by_date[day_date]:
+                color = event.get('color', '#6c757d')
+                title = event['title']
+                event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
         
-        col.markdown(f'<div class="{header_class}">{day}</div>', unsafe_allow_html=True)
+        # 셀 클래스 지정
+        cell_class = "day-cell"
+        if day_date.month != month:
+            cell_class += " other-month"
+        if day_date.weekday() == 6: # Sunday
+            cell_class += " sunday"
+        if day_date.weekday() == 5: # Saturday
+            cell_class += " saturday"
 
-    # 날짜 데이터 준비
-    cal = calendar.Calendar(firstweekday=6)
-    month_days = cal.monthdatescalendar(year, month)
-    
-    # 날짜별 이벤트 가공 (이 부분은 이전과 동일)
-    events_by_date = {}
-    for event in events_combined:
-        start_date = datetime.datetime.strptime(event['start'], "%Y-%m-%d").date()
-        if 'end' in event and event['start'] != event['end']:
-            end_date = datetime.datetime.strptime(event['end'], "%Y-%m-%d").date()
-            for i in range((end_date - start_date).days):
-                current_date = start_date + datetime.timedelta(days=i)
-                if current_date not in events_by_date:
-                    events_by_date[current_date] = []
-                events_by_date[current_date].append(event)
-        else:
-            if start_date not in events_by_date:
-                events_by_date[start_date] = []
-            events_by_date[start_date].append(event)
+        html_string += f"<td class='{cell_class}'>"
+        html_string += f"<div class='day-number'>{day_date.day}</div>"
+        html_string += f"<div class='events-container'>{event_html}</div>"
+        html_string += "</td>"
+    html_string += "</tr>"
+html_string += "</tbody></table></div>"
 
-    # 날짜 셀 생성
-    for week in month_days:
-        cols = st.columns(7)
-        for i, day_date in enumerate(week):
-            is_other_month = "other-month" if day_date.month != month else ""
-            
-            with cols[i]:
-                event_html = ""
-                if day_date in events_by_date:
-                    for event in events_by_date[day_date]:
-                        color = event.get('color', '#6c757d')
-                        title = event['title']
-                        event_html += f"<div class='event-item' style='background-color:{color};' title='{title}'>{title}</div>"
-
-                cell_html = f"""
-                <div class="calendar-day-cell">
-                    <div class="day-number {is_other_month}">{day_date.day}</div>
-                    {event_html}
-                </div>
-                """
-                st.markdown(cell_html, unsafe_allow_html=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
+# 최종적으로 한번에 HTML 렌더링
+st.markdown(html_string, unsafe_allow_html=True)
 
 # 이번 달 토요/휴일 스케줄 필터링 및 출력
 st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
