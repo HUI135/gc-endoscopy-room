@@ -514,12 +514,7 @@ st.html("""
     @media (max-width: 768px) {
         /* ▼▼▼ 핵심 수정 부분 ▼▼▼ */
 
-        /* 캘린더를 감싸는 컨테이너에 가로 스크롤을 적용 */
-        .custom-calendar-grid {
-            overflow-x: auto; /* 내용이 넘칠 경우 가로 스크롤바 생성 */
-            padding-bottom: 10px; /* 스크롤바 공간 확보 */
-        }
-        
+
         /* 캘린더 안의 컬럼(stHorizontalBlock)에만 그리드와 최소 너비를 강제 */
         .custom-calendar-grid div[data-testid="stHorizontalBlock"] {
             display: grid !important;
