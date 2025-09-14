@@ -330,7 +330,7 @@ else:
             - 그 날짜와 시간대에 **근무가 비어있는 사람**만 목록에 나타납니다.
             - 오전당직(온콜)이 있는 날 '오전' 혹은 '오후'를 선택하면 **모든 근무자 명단**이 나타납니다:
                 - 이후 교환 상대를 '그 날의 근무자'로 선택 시: 당직만 상대방으로 변경합니다.
-                - 이후 교환 상대를 '그 날의 미근무자'로 선택 시: 나의 모든 근무(오전+오후+당직)를 상대방으로 변경합니다.
+                - 이후 교환 상대를 '그 날의 미근무자'로 선택 시: 나의 근무를 상대방으로 변경합니다.
 
         **🔵 상대방의 스케줄을 나와 바꾸기**
 
@@ -340,7 +340,7 @@ else:
             - 선택한 상대방의 근무 중에서 **내가 이미 근무하고 있지 않은 날짜와 시간대**만 목록에 나타납니다.
             - 상대방의 **'오전당직(온콜)'** 근무를 선택할 때, 나의 근무에 따라 결과가 달라집니다.
                 - 그날 나의 근무가 있으면: 당직만 나로 변경합니다.
-                - 그날 나의 근무가 없으면: 상대방의 모든 근무(오전+오후+당직)를 나로 변경합니다.
+                - 그날 나의 근무가 없으면: 상대방의 근무를 나로 변경합니다.
         """)
 
     st.write(" ")
@@ -432,7 +432,7 @@ else:
                 all_colleagues = get_all_employee_names(df_schedule) - {user_name}
                 non_am_workers_list = sorted(list({c for c in all_colleagues if not is_person_assigned_at_time(df_schedule, c, my_date, '오전')} - set(am_workers_list)))
 
-                st.warning(f"해당 날짜는 {user_name}님의 오전당직이 있는 날입니다. 근무자를 선택하시는 경우 당직이 변경되며, 미근무자를 선택하게 되면 오전,오후,오전당직이 모두 변경됩니다.")
+                st.warning(f"해당 날짜는 {user_name}님의 오전당직이 있는 날입니다. 그 날의 근무자를 선택하시는 경우 당직이 변경되며, 미근무자를 선택하게 되면 근무가 모두 변경됩니다.")
                 st.info(f"근무자: {', '.join(am_workers_list) if am_workers_list else '없음'}\n\n미근무자: {', '.join(non_am_workers_list) if non_am_workers_list else '없음'}")
 
     st.write(" ")
@@ -491,7 +491,7 @@ else:
             if '오전' in my_shifts_on_date or '오전당직(온콜)' in my_shifts_on_date:
                 st.warning(f"해당 날짜는 {selected_colleague_name_them}님의 오전당직 날짜이며, {user_name}님도 근무가 있는 날입니다. 오전당직이 {user_name}님으로 변경됩니다.")
             else:
-                st.warning(f"해당 날짜는 {selected_colleague_name_them}님의 오전당직 날짜입니다. 오전,오후,오전당직이 모두 {user_name}님으로 변경됩니다.")
+                st.warning(f"해당 날짜는 {selected_colleague_name_them}님의 오전당직 날짜입니다. 근무가 모두 {user_name}님으로 변경됩니다.")
 
     with cols_them_to_my[3]:
         st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
