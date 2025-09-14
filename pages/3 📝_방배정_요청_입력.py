@@ -500,7 +500,7 @@ st.html("""
     @media (max-width: 768px) {
         .custom-calendar-grid div[data-testid="stHorizontalBlock"] {
             display: grid !important;
-        grid-template-columns: repeat(7, 1fr) !important; 
+            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
             gap: 0 !important; padding: 0 !important; margin: 0 !important;
             border-top: 1px solid #e0e0e0 !important;
             border-left: 1px solid #e0e0e0 !important;
