@@ -531,12 +531,6 @@ st.html("""
             border-left: 1px solid #e0e0e0 !important;
         }
 
-        /* 기본 컬럼(stColumn)은 세로로 쌓이도록 100% 너비를 가짐 (요청사항 입력 부분에 적용됨) */
-        div[data-testid="stColumn"] {
-            width: 100% !important;
-            min-width: 0 !important; /* 최소 너비 제한 해제 */
-        }
-        
         /* 하지만, 캘린더 안의 컬럼들은 이 규칙을 따르지 않도록 재정의(override) */
         .custom-calendar-grid div[data-testid="stColumn"] {
             width: auto !important; /* 너비를 자동으로 설정하여 그리드 시스템을 따르게 함 */
