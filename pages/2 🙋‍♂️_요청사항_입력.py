@@ -481,7 +481,7 @@ st.html("""
     .schedule-container {
         background-color: var(--secondary-background-color);
         color: var(--text-color);
-        border: 1px solid rgba(128, 128, 128, 0.2);
+        border: 1px solid rgba(128, 128, 128, 0.4);
         padding: 10px;
         border-radius: 10px; /* 스케줄 컨테이너도 동일하게 둥글게 */
         margin-bottom: 15px;
@@ -489,19 +489,13 @@ st.html("""
 
     /* --- 2. HTML 캘린더 스타일 --- */
 
-    /* ▼▼▼ [수정] 캘린더 전체를 감싸는 컨테이너에 둥근 테두리 적용 ▼▼▼ */
-    .calendar-table-container {
-        border-radius: 10px; /* 원하는 만큼 둥글기 조절 (px 단위) */
-        overflow: hidden;    /* 내부 테이블의 각진 모서리가 삐져나오지 않도록 숨김 처리 */
-    }
-
     .html-calendar {
         width: 100%;
         border-collapse: collapse;
         table-layout: fixed;
     }
     .html-calendar th, .html-calendar td {
-        border: 2px solid rgba(128, 128, 128, 0.2);
+        border: 1px solid rgba(128, 128, 128);
         vertical-align: top;
         padding: 0;
     }
@@ -511,7 +505,7 @@ st.html("""
         padding: 10px 0;
         background-color: var(--secondary-background-color);
         color: var(--text-color);
-        border-bottom: 4px solid rgba(128, 128, 128, 0.3);
+        border-bottom: 2px solid rgba(128, 128, 128);
     }
     
     .day-cell-content-wrapper {
@@ -525,7 +519,7 @@ st.html("""
     .html-calendar .sunday { color: #DC143C !important; }
 
     .event-item {
-        font-size: 13px; padding: 1px 5px; border-radius: 3px;
+        font-size: 13px; padding: 4px 5px; border-radius: 3px;
         margin-bottom: 3px; color: white; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap;
     }
@@ -541,7 +535,7 @@ st.html("""
         
         .day-number, .html-calendar th { font-size: 11px !important; }
         .event-item {
-            font-size: 11px !important; padding: 1px !important;
+            font-size: 11px !important; padding: 4px !important;
             white-space: normal !important; word-break: break-all !important;
             line-height: 1.1 !important;
         }
@@ -553,8 +547,6 @@ if df_user_request.empty:
     with st.container(border=True):
         st.write(f"🔔 {month_str}에 등록하신 '요청사항'이 없습니다.")
 st.write(" ")
-
-# 2. 캘린더 UI 렌더링 (테두리 제거)
 
 # 2. 캘린더 UI 렌더링 (HTML Table 방식 - 최종 수정)
 
@@ -615,10 +607,6 @@ for week in month_days:
 html_string += "</tbody></table></div>"
 
 st.markdown(html_string, unsafe_allow_html=True)
-
-# ============================================================================
-# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 이 블록으로 교체 종료 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-# ============================================================================
 
 # 이번 달 토요/휴일 스케줄 필터링 및 출력
 st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가

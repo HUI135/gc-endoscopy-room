@@ -13,7 +13,7 @@ from datetime import date
 
 # set_page_config는 가장 먼저 호출
 st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
-st.info("09/15 업데이트 내역: 캘린더에 휴관일 표시 추가", icon="📢")
+st.info("09/15 업데이트 내역: 모바일 UI 개선, 캘린더에 휴관일 표시 추가", icon="📢")
 st.success("검토")
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
