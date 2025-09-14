@@ -498,9 +498,9 @@ st.html("""
     /* --- 3. 모바일 화면 대응 (레이아웃 변경) --- */
     /* 이 부분은 원래대로 잘 작동했으므로 그대로 유지합니다. */
     @media (max-width: 768px) {
-        div[data-testid="stHorizontalBlock"] {
+        .custom-calendar-grid div[data-testid="stHorizontalBlock"] {
             display: grid !important;
-            grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
+        grid-template-columns: repeat(7, 1fr) !important; 
             gap: 0 !important; padding: 0 !important; margin: 0 !important;
             border-top: 1px solid #e0e0e0 !important;
             border-left: 1px solid #e0e0e0 !important;
@@ -536,6 +536,8 @@ if st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
 # 2. 캘린더 UI 렌더링
 # 제목 표시
 st.markdown(f'<div class="calendar-title">{month_str} 방배정 요청</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="custom-calendar-grid">', unsafe_allow_html=True)
 
 # 캘린더 격자 생성
 with st.container():
