@@ -524,7 +524,7 @@ st.html("""
             overflow-x: auto; /* 테이블이 넘칠 경우 가로 스크롤 생성 */
         }
         .html-calendar {
-            min-width: 600px; /* 테이블의 최소 너비를 지정해 스크롤 유도 */
+            min-width: 500px; /* 테이블의 최소 너비를 지정해 스크롤 유도 */
         }
         .day-cell-content-wrapper { min-height: 90px; }
         .day-number, .html-calendar th { font-size: 11px !important; }

@@ -527,7 +527,7 @@ st.html("""
     /* --- 3. 모바일 화면 대응 --- */
     @media (max-width: 768px) {
         .calendar-table-container { overflow-x: auto; }
-        .html-calendar { min-width: 600px; }
+        .html-calendar { min-width: 500px; }
         
         .day-cell-content-wrapper {
             min-height: 90px;
