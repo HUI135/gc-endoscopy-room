@@ -164,7 +164,7 @@ def add_request_to_sheet(request_data, month_str):
             st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
             st.stop()
         st.cache_data.clear()
-        return True
+        return "SUCCESS" 
     except gspread.exceptions.APIError as e:
         st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
         st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
@@ -345,6 +345,7 @@ else:
 
     st.write(" ")
     st.markdown("<h6 style='font-weight:bold;'>🟢 나의 스케줄을 상대방과 바꾸기</h6>", unsafe_allow_html=True)
+
     user_shifts = get_person_shifts(df_schedule, user_name)
 
     if not user_shifts:
@@ -393,24 +394,30 @@ else:
             
             selected_colleague_name = st.selectbox("교환할 상대방 선택", compatible_colleagues, index=None, placeholder=selectbox_placeholder, disabled=is_disabled, key="my_colleague")
 
+        message_placeholder_1 = st.empty()
+
         with cols_my_to_them[3]:
             st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
             is_request_disabled = not all([my_selected_date_str, my_selected_shift_type, selected_colleague_name])
 
             if st.button("➕ 요청 추가", key="add_my_to_them_request_button", use_container_width=True, disabled=is_request_disabled):
-                my_date = user_date_options[my_selected_date_str]
-                final_shift_type = my_selected_shift_type
-                
-                new_request = {
-                    "RequestID": str(uuid.uuid4()),
-                    "요청일시": datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S'),
-                    "요청자": user_name,
-                    "요청자 사번": employee_id,
-                    "변경 요청": f"{user_name} ➡️ {selected_colleague_name}",
-                    "변경 요청한 스케줄": f"{my_date.strftime('%Y-%m-%d')} ({final_shift_type})",
-                }
-                with st.spinner("요청을 기록하는 중입니다..."):
-                    status = add_request_to_sheet(new_request, month_str)
+                with message_placeholder_1: # placeholder 사용
+                    my_date = user_date_options[my_selected_date_str]
+                    final_shift_type = my_selected_shift_type
+                    
+                    new_request = {
+                        "RequestID": str(uuid.uuid4()),
+                        "요청일시": datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S'),
+                        "요청자": user_name,
+                        "요청자 사번": employee_id,
+                        "변경 요청": f"{user_name} ➡️ {selected_colleague_name}",
+                        "변경 요청한 스케줄": f"{my_date.strftime('%Y-%m-%d')} ({final_shift_type})",
+                    }
+                    
+                    with st.spinner("요청을 기록하는 중입니다..."):
+                        status = add_request_to_sheet(new_request, month_str)
+                    
+                    # 이제 status == "SUCCESS" 조건이 올바르게 동작합니다.
                     if status == "SUCCESS":
                         st.success("요청이 성공적으로 기록되었습니다.")
                         time.sleep(1.5)
@@ -437,6 +444,7 @@ else:
 
     st.write(" ")
     st.markdown("<h6 style='font-weight:bold;'>🔵 상대방의 스케줄을 나와 바꾸기</h6>", unsafe_allow_html=True)
+
     cols_them_to_my = st.columns([2, 2, 2, 1])
 
     with cols_them_to_my[0]:
@@ -493,24 +501,29 @@ else:
             else:
                 st.warning(f"해당 날짜는 {selected_colleague_name_them}님의 오전당직 날짜입니다. 근무가 모두 {user_name}님으로 변경됩니다.")
 
+    message_placeholder_2 = st.empty()
+
     with cols_them_to_my[3]:
         st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
         request_disabled_them = not all([selected_colleague_name_them, selected_colleague_date_str, selected_colleague_shift_type])
         
         if st.button("➕ 요청 추가", key="add_them_to_my_request_button", use_container_width=True, disabled=request_disabled_them):
-            colleague_date_obj = colleague_date_options[selected_colleague_date_str]
-            final_shift_type = selected_colleague_shift_type
-            
-            new_request = {
-                "RequestID": str(uuid.uuid4()),
-                "요청일시": datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S'),
-                "요청자": user_name,
-                "요청자 사번": employee_id,
-                "변경 요청": f"{selected_colleague_name_them} ➡️ {user_name}",
-                "변경 요청한 스케줄": f"{colleague_date_obj.strftime('%Y-%m-%d')} ({final_shift_type})",
-            }
-            with st.spinner("요청을 기록하는 중입니다..."):
-                status = add_request_to_sheet(new_request, month_str)
+            with message_placeholder_2: # 두 번째 placeholder 사용
+                colleague_date_obj = colleague_date_options[selected_colleague_date_str]
+                final_shift_type = selected_colleague_shift_type
+                
+                new_request = {
+                    "RequestID": str(uuid.uuid4()),
+                    "요청일시": datetime.now(kst).strftime('%Y-%m-%d %H:%M:%S'),
+                    "요청자": user_name,
+                    "요청자 사번": employee_id,
+                    "변경 요청": f"{selected_colleague_name_them} ➡️ {user_name}",
+                    "변경 요청한 스케줄": f"{colleague_date_obj.strftime('%Y-%m-%d')} ({final_shift_type})",
+                }
+
+                with st.spinner("요청을 기록하는 중입니다..."):
+                    status = add_request_to_sheet(new_request, month_str)
+
                 if status == "SUCCESS":
                     st.success("요청이 성공적으로 기록되었습니다.")
                     time.sleep(1.5)
@@ -560,20 +573,31 @@ else:
 
         for req in my_requests:
             req_id = req.get('RequestID')
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                display_schedule = format_schedule_for_display(req.get('변경 요청한 스케줄', ''))
-                card_html = HTML_CARD_TEMPLATE.format(
-                    request_type=req.get('변경 요청', ''),
-                    assignment_detail=display_schedule,
-                    timestamp=req.get('요청일시', '')
-                )
-                st.markdown(card_html, unsafe_allow_html=True)
-            with col2:
-                st.markdown("<div style='height: 35px;'></div>", unsafe_allow_html=True)
-                if st.button("🗑️ 삭제", key=f"del_{req_id}", use_container_width=True):
-                    with st.spinner("요청을 삭제하는 중입니다..."):
-                        if delete_request_from_sheet(req_id, month_str):
-                            st.success("요청이 성공적으로 삭제되었습니다.")
-                            time.sleep(1.5)  # 2초 대기
-                            st.rerun()
+            
+            with st.container():
+                # 1. 컨테이너 안에서 컬럼을 나눕니다.
+                col1, col2 = st.columns([5, 1])
+                with col1:
+                    display_schedule = format_schedule_for_display(req.get('변경 요청한 스케줄', ''))
+                    card_html = HTML_CARD_TEMPLATE.format(
+                        request_type=req.get('변경 요청', ''),
+                        assignment_detail=display_schedule,
+                        timestamp=req.get('요청일시', '')
+                    )
+                    st.markdown(card_html, unsafe_allow_html=True)
+                
+                with col2:
+                    st.markdown("<div style='height: 35px;'></div>", unsafe_allow_html=True)
+                    delete_clicked = st.button("🗑️ 삭제", key=f"del_{req_id}", use_container_width=True)
+
+                # 2. 메시지 공간도 컨테이너 안에, 하지만 컬럼(col1, col2) 블록이 끝난 후에 만듭니다.
+                message_placeholder = st.empty()
+
+                # 3. 버튼 클릭 시 로직은 그대로 유지됩니다.
+                if delete_clicked:
+                    with message_placeholder:
+                        with st.spinner("요청을 삭제하는 중입니다..."):
+                            if delete_request_from_sheet(req_id, month_str):
+                                st.success("요청이 성공적으로 삭제되었습니다.")
+                                time.sleep(1.5)
+                                st.rerun()
