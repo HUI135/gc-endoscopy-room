@@ -19,6 +19,7 @@ from openpyxl.comments import Comment
 from datetime import timedelta
 from collections import Counter
 import menu
+import re
 
 st.set_page_config(page_title="스케줄 배정", page_icon="🗓️", layout="wide")
 
@@ -44,6 +45,20 @@ def initialize_schedule_session_state():
     for key, value in keys_to_init.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+def get_sort_key(log_string):
+    # '10월 1일'과 같은 패턴을 찾습니다.
+    match = re.search(r'(\d{1,2}월 \d{1,2}일)', log_string)
+    if match:
+        date_str = match.group(1)
+        try:
+            # month_dt 변수에서 연도를 가져와 완전한 날짜 객체로 만듭니다.
+            return datetime.datetime.strptime(f"{month_dt.year}년 {date_str}", "%Y년 %m월 %d일")
+        except ValueError:
+            # 날짜 변환에 실패하면 정렬 순서에 영향을 주지 않도록 맨 뒤로 보냅니다.
+            return datetime.datetime.max
+    # 로그에서 날짜를 찾지 못하면 맨 뒤로 보냅니다.
+    return datetime.datetime.max
 
 # 로그인 체크 및 자동 리디렉션
 if not st.session_state.get("login_success", False):
@@ -1497,9 +1512,9 @@ if st.session_state.assigned:
                     st.session_state.adjustment_logs.append(f"• {log_date_info} {worker} - {memo or '인원 부족'}으로 추가 보충")
             
             # 로그 정렬
-            st.session_state.request_logs.sort()
-            st.session_state.swap_logs.sort()
-            st.session_state.adjustment_logs.sort()
+            st.session_state.request_logs.sort(key=get_sort_key)
+            st.session_state.swap_logs.sort(key=get_sort_key)
+            st.session_state.adjustment_logs.sort(key=get_sort_key)
 
             # === 📤 3단계: 최종 결과 생성 및 저장 ===
             df_cumulative_next = df_cumulative.copy().set_index('이름')
@@ -1509,6 +1524,8 @@ if st.session_state.assigned:
             for worker, count in current_cumulative.get('오후', {}).items():
                 if worker in df_cumulative_next.index: df_cumulative_next.loc[worker, '오후누적'] += count
                 else: df_cumulative_next.loc[worker] = [0, count, 0, 0]
+
+            df_cumulative_next.reset_index(inplace=True)
 
             if special_schedules:
                 for date_str, workers, oncall in special_schedules:
