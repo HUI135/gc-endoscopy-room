@@ -1510,16 +1510,6 @@ if st.session_state.assigned:
                 if worker in df_cumulative_next.index: df_cumulative_next.loc[worker, '오후누적'] += count
                 else: df_cumulative_next.loc[worker] = [0, count, 0, 0]
 
-            # 토요/휴일 누적 업데이트 추가
-            for _, workers, oncall in special_schedules:
-                for worker in workers:
-                    if worker in df_cumulative_next.index: df_cumulative_next.loc[worker, '오전누적'] += 1
-                    else: df_cumulative_next.loc[worker] = [1, 0, 0, 0]
-                if oncall and oncall != "당직 없음":
-                    if oncall in df_cumulative_next.index: df_cumulative_next.loc[oncall, '오전당직 (온콜)'] += 1
-                    else: df_cumulative_next.loc[oncall] = [0, 0, 1, 0]
-            df_cumulative_next.reset_index(inplace=True)
-
             if special_schedules:
                 for date_str, workers, oncall in special_schedules:
                     if not df_final.empty: df_final = df_final[df_final['날짜'] != date_str].copy()
