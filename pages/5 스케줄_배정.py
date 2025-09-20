@@ -23,6 +23,8 @@ import re
 
 st.set_page_config(page_title="스케줄 배정", page_icon="🗓️", layout="wide")
 
+st.error("test 시트로 저장되며 실제 스케줄로 저장되지 않습니다.")
+
 import os
 st.session_state.current_page = os.path.basename(__file__)
 
@@ -450,6 +452,229 @@ if st.button("🔄 새로고침 (R)"):
         st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
         st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
         st.stop()
+
+# 기존 split_column_to_multiple 함수 아래에 추가하세요.
+
+def append_transposed_cumulative(worksheet, df_cumulative, style_args):
+    """
+    주어진 워크시트 하단에 행/열 전환된 누적 데이터프레임을 추가하고 서식을 적용합니다.
+    """
+    if df_cumulative.empty:
+        return
+
+    # 데이터 시작 위치 계산 (기존 데이터 아래 3칸)
+    start_row = worksheet.max_row + 3
+
+    # 데이터 행/열 전환 (첫 번째 열을 인덱스로 설정 후 Transpose)
+    df_transposed = df_cumulative.set_index(df_cumulative.columns[0]).T
+    df_transposed.reset_index(inplace=True)
+    df_transposed.rename(columns={'index': '항목'}, inplace=True)
+
+    # 헤더(원본의 이름들) 쓰기
+    header_row = df_transposed.columns.tolist()
+    for c_idx, value in enumerate(header_row, 1):
+        cell = worksheet.cell(row=start_row, column=c_idx, value=value)
+        cell.font = style_args['font']
+        cell.fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid') # 회색 배경
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = style_args['border']
+
+    # 데이터 쓰기
+    for r_idx, row_data in enumerate(df_transposed.itertuples(index=False), start_row + 1):
+        for c_idx, value in enumerate(row_data, 1):
+            cell = worksheet.cell(row=r_idx, column=c_idx, value=value)
+            # 첫번째 열(항목)은 굵게
+            cell.font = style_args['bold_font'] if c_idx == 1 else style_args['font']
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = style_args['border']
+
+    # 열 너비 조정
+    worksheet.column_dimensions[openpyxl.utils.get_column_letter(1)].width = 11
+    for i in range(2, len(header_row) + 1):
+        worksheet.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 9
+
+# 1. 요약 테이블 데이터프레임을 생성하는 함수
+def build_summary_table(df_final_unique, df_cumulative, df_cumulative_next, all_names, next_month_str):
+    """요청된 형식에 따라 요약 테이블용 데이터프레임을 빌드합니다."""
+    
+    # 추가 보충/제외 카운트 계산
+    adjustments = df_final_unique[df_final_unique['상태'].isin(['추가보충', '추가제외'])]
+    if not adjustments.empty:
+        adjustment_counts = adjustments.groupby(['근무자', '시간대', '상태']).size().unstack(fill_value=0)
+        
+        def get_adjustment(worker, time_slot):
+            count = 0
+            if worker in adjustment_counts.index:
+                row = adjustment_counts.loc[worker]
+                if time_slot in row.index:
+                    series = row.loc[time_slot]
+                    count = series.get('추가보충', 0) - series.get('추가제외', 0)
+            return count if count != 0 else ""
+    else:
+        def get_adjustment(worker, time_slot):
+            return ""
+
+    # 필요한 모든 이름에 대해 데이터프레임 구조 생성
+    summary_data = {name: [""] * 10 for name in all_names}
+    df_summary = pd.DataFrame(summary_data)
+
+    # 행 레이블 설정
+    row_labels = [
+        "오전보충", "임시보충", "오전합계", "오전누적", 
+        "오후보충", "온콜검사", "오후합계", "오후누적", 
+        "오전당직 (온콜)", "오후당직"
+    ]
+    df_summary.index = row_labels
+
+    # 데이터 채우기
+    df_cum_indexed = df_cumulative.set_index('이름')
+    df_cum_next_indexed = df_cumulative_next.set_index(df_cumulative_next.columns[0])
+
+    for name in all_names:
+        df_summary.at["오전보충", name] = get_adjustment(name, '오전')
+        df_summary.at["오전합계", name] = df_cum_indexed.loc[name, '오전누적'] if name in df_cum_indexed.index else 0
+        df_summary.at["오전누적", name] = df_cum_next_indexed.loc[name, '오전누적'] if name in df_cum_next_indexed.index else 0
+        df_summary.at["오후보충", name] = get_adjustment(name, '오후')
+        df_summary.at["오후합계", name] = df_cum_indexed.loc[name, '오후누적'] if name in df_cum_indexed.index else 0
+        df_summary.at["오후누적", name] = df_cum_next_indexed.loc[name, '오후누적'] if name in df_cum_next_indexed.index else 0
+        df_summary.at["오전당직 (온콜)", name] = df_cum_next_indexed.loc[name, '오전당직 (온콜)'] if name in df_cum_next_indexed.index else 0
+        df_summary.at["오후당직", name] = df_cum_next_indexed.loc[name, '오후당직'] if name in df_cum_next_indexed.index else 0
+
+    df_summary.reset_index(inplace=True)
+    df_summary.rename(columns={'index': next_month_str.replace('년','').replace(' ','')}, inplace=True)
+    return df_summary
+
+# ⭐ [추가] 특정 범위에 바깥쪽 테두리를 적용하는 헬퍼 함수
+def apply_outer_border(worksheet, start_row, end_row, start_col, end_col):
+    """주어진 범위의 셀들에 바깥쪽 테두리를 적용합니다."""
+    
+    medium_side = Side(style='medium') # 'thick'보다 얇은 'medium' 스타일 사용
+
+    # 범위 내 모든 셀을 순회하며 테두리 설정
+    for r in range(start_row, end_row + 1):
+        for c in range(start_col, end_col + 1):
+            cell = worksheet.cell(row=r, column=c)
+            
+            # 기존 테두리 정보를 유지하면서 바깥쪽만 변경
+            top = cell.border.top
+            left = cell.border.left
+            bottom = cell.border.bottom
+            right = cell.border.right
+
+            if r == start_row: top = medium_side
+            if r == end_row: bottom = medium_side
+            if c == start_col: left = medium_side
+            if c == end_col: right = medium_side
+            
+            cell.border = Border(top=top, left=left, bottom=bottom, right=right)
+
+# ⭐ [수정] 새로운 테두리 및 서식 로직이 적용된 함수 (기존 함수를 이것으로 교체)
+def append_summary_table_to_excel(worksheet, summary_df, style_args):
+    """빌드된 요약 테이블 데이터프레임을 엑셀 시트 하단에 추가하고 서식을 적용합니다."""
+    if summary_df.empty:
+        return
+
+    # 색상 정의 (blue 포함)
+    fills = {
+        'header': PatternFill(start_color='E7E6E6', end_color='E7E6E6', fill_type='solid'),
+        'yellow': PatternFill(start_color='FFF296', end_color='FFF296', fill_type='solid'),
+        'pink': PatternFill(start_color='FFC8CD', end_color='FFC8CD', fill_type='solid'),
+        'green': PatternFill(start_color='C6E0B4', end_color='C6E0B4', fill_type='solid'),
+        'blue': PatternFill(start_color='B8CCE4', end_color='B8CCE4', fill_type='solid'),
+        'orange': PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+    }
+    
+    # 데이터 시작 위치 계산
+    start_row = worksheet.max_row + 3
+    thin_border = style_args['border'] # 기본 얇은 테두리
+
+    # --- 1단계: 기본 데이터, 서식, 얇은 테두리 적용 ---
+    # 헤더 쓰기
+    for c_idx, value in enumerate(summary_df.columns.tolist(), 1):
+        cell = worksheet.cell(row=start_row, column=c_idx, value=value)
+        cell.fill = fills['header']
+        cell.font = style_args['bold_font']
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    # 데이터 행 쓰기
+    for r_idx, row_data in enumerate(summary_df.itertuples(index=False), start_row + 1):
+        label = row_data[0]
+        for c_idx, value in enumerate(row_data, 1):
+            cell = worksheet.cell(row=r_idx, column=c_idx, value=value)
+            cell.font = style_args['bold_font'] if c_idx == 1 else style_args['font']
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+            # 조건부 배경색 적용
+            fill_color = None
+            if label in ["오전누적", "오후누적"]: fill_color = fills['pink']
+            elif label in ["오전합계", "오후합계"]: fill_color = fills['blue']
+            elif label == "오전당직 (온콜)": fill_color = fills['green']
+            elif label == "오후당직": fill_color = fills['orange']
+            
+            # 노란색은 1열에만 적용
+            if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]:
+                fill_color = fills['yellow']
+            
+            if fill_color:
+                cell.fill = fill_color
+
+    # --- 2단계: 각 구역에 바깥쪽 중간 굵기 테두리 적용 ---
+    start_col = 1
+    end_col = len(summary_df.columns)
+    labels = summary_df.iloc[:, 0].tolist()
+
+    # 헤더 행
+    apply_outer_border(worksheet, start_row, start_row, start_col, end_col)
+    
+    # 첫 번째 열
+    apply_outer_border(worksheet, start_row, start_row + len(labels), start_col, start_col)
+
+    # '오전' 구역
+    block1_start = start_row + 1 + labels.index("오전보충")
+    block1_end = start_row + 1 + labels.index("오전누적")
+    apply_outer_border(worksheet, block1_start, block1_end, start_col, end_col)
+
+    # '오후' 구역
+    block2_start = start_row + 1 + labels.index("오후보충")
+    block2_end = start_row + 1 + labels.index("오후누적")
+    apply_outer_border(worksheet, block2_start, block2_end, start_col, end_col)
+    
+    # '당직' 구역
+    block3_start = start_row + 1 + labels.index("오전당직 (온콜)")
+    block3_end = start_row + 1 + labels.index("오후당직")
+    apply_outer_border(worksheet, block3_start, block3_end, start_col, end_col)
+
+    # --- 📑 [추가] 3단계: 범례(Legend) 추가 ---
+    legend_start_row = worksheet.max_row + 3 # 요약 테이블 아래 두 칸 띄우기
+
+    legend_data = [
+        ('A9D08E', '대체 보충'),
+        ('FFF2CC', '보충'),
+        ('95B3D7', '대체 휴근'),
+        ('B1A0C7', '휴근'),
+        ('DA9694', '휴가/학회')
+    ]
+
+    for i, (hex_color, description) in enumerate(legend_data):
+        current_row = legend_start_row + i
+        
+        # 색상 셀 (1열)
+        color_cell = worksheet.cell(row=current_row, column=1)
+        color_cell.fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
+        color_cell.border = thin_border
+
+        # 설명 셀 (2열)
+        desc_cell = worksheet.cell(row=current_row, column=2, value=description)
+        desc_cell.font = style_args['font']
+        desc_cell.border = thin_border
+        desc_cell.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+
+    # 열 너비 조정
+    worksheet.column_dimensions[openpyxl.utils.get_column_letter(1)].width = 11
+    for i in range(2, len(summary_df.columns) + 1):
+        worksheet.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 9
 
 # 메인 로직
 load_data_page5()
@@ -1344,11 +1569,14 @@ initialize_schedule_session_state() # 이전에 추가한 함수 호출
 st.divider()
 if st.button("🚀 근무 배정 실행", type="primary", use_container_width=True):
     st.session_state.assigned = True
-    st.session_state.assignment_results = None 
+    st.session_state.assignment_results = None # 결과를 다시 계산하도록 초기화
     st.rerun()
 
-if st.session_state.assigned:
-    if st.session_state.assignment_results is None:
+# 'assigned' 상태가 True일 때만 결과 표시 로직을 실행
+if st.session_state.get('assigned', False):
+
+    # assignment_results가 아직 없으면 (최초 실행 시) 계산을 수행
+    if st.session_state.get('assignment_results') is None:
         with st.spinner("근무 배정 중... 최적의 조합을 찾는데 다소 시간이 소요될 수 있습니다."):
             # 버튼을 누를 때마다 로그 기록을 깨끗하게 비웁니다.
             st.session_state.request_logs = []
@@ -1551,6 +1779,7 @@ if st.session_state.assigned:
                 date_obj = datetime.datetime.strptime(date, '%Y-%m-%d')
                 df_excel.at[idx, '날짜'] = f"{date_obj.month}월 {date_obj.day}일"
                 df_excel.at[idx, '요일'] = row['요일']
+                df_excel.fillna("", inplace=True)
                 
                 morning_workers_for_excel = df_final_unique[(df_final_unique['날짜'] == date) & (df_final_unique['시간대'] == '오전')]
                 morning_workers_for_excel_sorted = morning_workers_for_excel.sort_values(by=['색상_우선순위', '근무자'])['근무자'].tolist()
@@ -1651,9 +1880,14 @@ if st.session_state.assigned:
 
             # 1. 색상 맵에 특수근무용 색상 추가
             color_map = {
-                '🔴 빨간색': 'C00000', '🟠 주황색': 'FFD966', '🟢 초록색': '92D050',
-                '🟡 노란색': 'FFFF00', '🔵 파란색': '0070C0', '🟣 보라색': '7030A0',
-                '기본': 'FFFFFF', '특수근무색': 'B7DEE8'  # 특수근무 셀 색상
+                '🔴 빨간색': 'DA9694',  # 연한 빨강
+                '🟠 주황색': 'FABF8F',  # 연한 주황
+                '🟢 초록색': 'A9D08E',  # 연한 초록
+                '🟡 노란색': 'FFF2CC',  # 연한 노랑
+                '🔵 파란색': '95B3D7',  # 연한 파랑
+                '🟣 보라색': 'B1A0C7',  # 연한 보라
+                '기본': 'FFFFFF',        # 흰색
+                '특수근무색': 'D0E0E3'   # 연한 청록
             }
             # 2. 특수근무일/빈 날짜용 색상 미리 정의
             special_day_fill = PatternFill(start_color='95B3D7', end_color='95B3D7', fill_type='solid')
@@ -1746,169 +1980,203 @@ if st.session_state.assigned:
                         if oncall_person_for_row:
                             cell.font = duty_font
 
-            ws.column_dimensions['A'].width = 10
+            ws.column_dimensions['A'].width = 11
             for col in ws.columns:
-                if col[0].column_letter != 'A':
-                    ws.column_dimensions[col[0].column_letter].width = 7
+                 if col[0].column_letter != 'A':
+                     ws.column_dimensions[col[0].column_letter].width = 9
 
-            ws_cumulative = wb.create_sheet("누적")
-            df_cum_to_save = st.session_state.df_cumulative_next # 계산된 누적 데이터프레임
+            month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+            next_month_dt = (month_dt + relativedelta(months=1)).replace(day=1)
+            next_month_str = next_month_dt.strftime("%Y년 %-m월")
+            month_start = month_dt.replace(day=1)
+            month_end = (month_start + relativedelta(months=1)) - timedelta(days=1)
 
-            # 누적 시트 헤더 추가 및 스타일링
-            for c_idx, col_name in enumerate(df_cum_to_save.columns, 1):
-                cell = ws_cumulative.cell(row=1, column=c_idx, value=col_name)
-                cell.font = Font(name=font_name, size=9, bold=True, color='FFFFFF')
-                cell.fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid')
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-                cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-
-            # 누적 시트 데이터 추가
-            for r_idx, row_data in enumerate(df_cum_to_save.values, 2):
-                for c_idx, cell_value in enumerate(row_data, 1):
-                    cell = ws_cumulative.cell(row=r_idx, column=c_idx, value=cell_value)
-                    cell.font = default_font
-                    cell.alignment = Alignment(horizontal='center', vertical='center')
-                    cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-
-            # 누적 시트 열 너비 조정
-            for col in ws_cumulative.columns:
-                ws_cumulative.column_dimensions[col[0].column_letter].width = 15
+            summary_df = build_summary_table(df_final_unique, df_cumulative, df_cumulative_next, all_names, next_month_str)
+            style_args = {
+                'font': default_font,
+                'bold_font': Font(name=font_name, size=9, bold=True),
+                'border': border,
+            }
+            append_summary_table_to_excel(ws, summary_df, style_args)
 
             output = io.BytesIO()
             wb.save(output)
             output.seek(0)
             st.session_state.output = output
+            
+            def create_final_schedule_excel(df_excel_original, df_schedule, df_final_unique, special_schedules, **style_args):
+                wb_final = openpyxl.Workbook()
+                ws_final = wb_final.active
+                ws_final.title = "스케줄"
+                final_columns = ['날짜', '요일'] + [str(i) for i in range(1, 13)] + [''] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 5)]
 
-            # ... 이하 G-Sheet 저장 및 다운로드 버튼 표시 로직
+                # 헤더 생성
+                for col_idx, col_name in enumerate(final_columns, 1):
+                    cell = ws_final.cell(row=1, column=col_idx, value=col_name)
+                    cell.fill = PatternFill(start_color='000000', end_color='000000', fill_type='solid')
+                    cell.font = Font(name=style_args['font_name'], size=9, color='FFFFFF', bold=True)
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    cell.border = style_args['border']
+
+                # 데이터 행 순회 (기존 서식 로직 완벽 복원)
+                for row_idx, (idx, row_original) in enumerate(df_excel_original.iterrows(), 2):
+                    date_str_lookup = df_schedule.at[idx, '날짜']
+                    is_special_day = date_str_lookup in {s[0] for s in special_schedules}
+                    is_empty_day = df_final_unique[df_final_unique['날짜'] == date_str_lookup].empty and not is_special_day
+                    oncall_person = str(row_original['오전당직(온콜)'])
+                    
+                    # 💥 수정된 부분: 토요/휴일 당직 인원 확인 로직 추가 💥
+                    weekend_oncall_worker = None
+                    if is_special_day:
+                        weekend_oncall_worker = next((s[2] for s in special_schedules if s[0] == date_str_lookup and s[2] != "당직 없음"), None)
+
+                    # 오후 근무자 필터링
+                    afternoon_workers_original = [str(row_original.get(f'오후{i}', '')) for i in range(1, 6)]
+                    afternoon_workers_final = [p for p in afternoon_workers_original if p and p != oncall_person]
+
+                    # 최종 데이터 행 구성
+                    final_row_data = {col: row_original.get(col) for col in ['날짜', '요일'] + [str(i) for i in range(1, 13)]}
+                    final_row_data[''] = ''
+                    final_row_data['오전당직(온콜)'] = oncall_person
+                    for i, worker in enumerate(afternoon_workers_final[:4], 1):
+                        final_row_data[f'오후{i}'] = worker
+
+                    for col_idx, col_name in enumerate(final_columns, 1):
+                        cell_value = final_row_data.get(col_name, "")
+                        cell = ws_final.cell(row=row_idx, column=col_idx, value=cell_value)
+                        cell.font = style_args['font']
+                        cell.border = style_args['border']
+                        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+                        if is_empty_day:
+                            cell.fill = style_args['empty_day_fill']
+                            continue
+                        
+                        if col_name == '날짜': cell.fill = style_args['empty_day_fill']
+                        elif col_name == '요일': cell.fill = style_args['special_day_fill'] if is_special_day else style_args['default_day_fill']
+                        else:
+                            worker_name = str(cell.value)
+                            if worker_name:
+                                time_slot = '오전' if str(col_name).isdigit() else ('오후' if '오후' in str(col_name) else None)
+                                
+                                # 💥 수정된 부분: 모든 당직자 폰트 적용 로직 통합 💥
+                                if ((time_slot == '오전' and is_special_day and worker_name == weekend_oncall_worker) or
+                                    (time_slot == '오후' and worker_name == oncall_person) or
+                                    (col_name == '오전당직(온콜)')):
+                                    cell.font = style_args['duty_font']
+                                
+                                if time_slot:
+                                    worker_data = df_final_unique[(df_final_unique['날짜'] == date_str_lookup) & (df_final_unique['시간대'] == time_slot) & (df_final_unique['근무자'] == worker_name)]
+                                    if not worker_data.empty:
+                                        color = worker_data.iloc[0]['색상']
+                                        cell.fill = PatternFill(start_color=style_args['color_map'].get(color, 'FFFFFF'), fill_type='solid')
+                                        memo = worker_data.iloc[0]['메모']
+                                        if memo and ('보충' in memo or '이동' in memo):
+                                            cell.comment = Comment(memo, "Schedule Bot")
+                                
+                append_summary_table_to_excel(ws_final, summary_df, style_args)
+
+                ws_final.column_dimensions['A'].width = 11
+                for col in ws_final.columns:
+                    if col[0].column_letter != 'A':
+                        ws_final.column_dimensions[col[0].column_letter].width = 9
+                
+                return wb_final
+            
+            # --- 2. 최종본 엑셀 생성 ---
+            wb_final = create_final_schedule_excel(
+                df_excel_original=df_excel, df_schedule=df_schedule, df_final_unique=df_final_unique,
+                special_schedules=special_schedules,
+                summary_df=summary_df,
+                color_map=color_map, font_name=font_name,
+                duty_font=duty_font, font=default_font,
+                bold_font=Font(name=font_name, size=9, bold=True), # 굵은 폰트 추가
+                border=border,
+                special_day_fill=special_day_fill, empty_day_fill=empty_day_fill, default_day_fill=default_day_fill
+            )
+            output_final = io.BytesIO()
+            wb_final.save(output_final)
+            output_final.seek(0)
+            
+            # --- 3. Google Sheets 저장 (기존 코드) ---
             month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
-            # 다다음달 설정
             next_month_dt = (month_dt + relativedelta(months=1)).replace(day=1)
             next_month_str = next_month_dt.strftime("%Y년 %-m월")
-            # 스케줄 저장은 익월로
             month_start = month_dt.replace(day=1)
-            month_end = month_dt.replace(day=last_day)  # last_day 사용
+            month_end = (month_start + relativedelta(months=1)) - timedelta(days=1)
 
             try:
-                url = st.secrets["google_sheet"]["url"]
                 gc = get_gspread_client()
-                if gc is None: st.stop()
-                sheet = gc.open_by_url(url)
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 (연결 단계): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except NameError as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-            except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"Google Sheets 연결 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-
-            df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, month_start, month_end)
-            try:
+                sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+                
+                df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, month_start, month_end)
                 try:
-                    worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄")
+                    worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄 test")
                 except gspread.exceptions.WorksheetNotFound:
-                    worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄", rows=1000, cols=50)
-                worksheet_schedule.clear()
-                data_to_save = [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.astype(str).values.tolist()
-                worksheet_schedule.update('A1', data_to_save, value_input_option='RAW')
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 ({month_str} 스케줄 저장): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except NameError as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"{month_str} 스케줄 저장 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-            except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"{month_str} 스케줄 저장 중 오류: {type(e).__name__} - {e}")
-                st.stop()
-
-            df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True)
-            try:
+                    worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄 test", rows=1000, cols=50)
+                update_sheet_with_retry(worksheet_schedule, [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.astype(str).values.tolist())
+                
+                df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True)
                 try:
-                    worksheet_cumulative = sheet.worksheet(f"{next_month_str} 누적")
+                    worksheet_cumulative = sheet.worksheet(f"{next_month_str} 누적 test")
                 except gspread.exceptions.WorksheetNotFound:
-                    worksheet_cumulative = sheet.add_worksheet(title=f"{next_month_str} 누적", rows=1000, cols=20)
-                worksheet_cumulative.clear()
-                cumulative_data_to_save = [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist()
-                worksheet_cumulative.update('A1', cumulative_data_to_save, value_input_option='USER_ENTERED')
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 ({next_month_str} 누적 저장): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except NameError as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"{next_month_str} 누적 저장 중 오류: {type(e).__name__} - {e}")
-                st.stop()
+                    worksheet_cumulative = sheet.add_worksheet(title=f"{next_month_str} 누적 test", rows=1000, cols=20)
+                update_sheet_with_retry(worksheet_cumulative, [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist())
             except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"{next_month_str} 누적 저장 중 오류: {type(e).__name__} - {e}")
+                st.error(f"Google Sheets 저장 중 오류 발생: {e}")
                 st.stop()
-
-            # --- 계산이 모두 끝난 후, 최종 결과물을 st.session_state에 저장합니다. ---
-            st.session_state.df_cumulative_next = df_cumulative_next
-            st.session_state.output = output
-
-            results = {
-                "df_cumulative_next": st.session_state.df_cumulative_next,
-                "output": st.session_state.output, 
+            
+            # 모든 결과물을 session_state에 저장
+            st.session_state.assignment_results = {
+                "output_checking": output,
+                "output_final": output_final,
+                "df_cumulative_next": df_cumulative_next,
                 "request_logs": st.session_state.request_logs,
                 "swap_logs": st.session_state.swap_logs,
                 "adjustment_logs": st.session_state.adjustment_logs,
                 "oncall_logs": st.session_state.oncall_logs,
             }
-            st.session_state.assignment_results = results
 
-    # --- 계산이 끝난 후, 결과를 화면에 표시하는 부분 ---
-    if st.session_state.assignment_results:
-        results = st.session_state.assignment_results
-        
+    month_dt = datetime.datetime.strptime(month_str, "%Y년 %m월")
+    next_month_dt = (month_dt + relativedelta(months=1)).replace(day=1)
+    next_month_str = next_month_dt.strftime("%Y년 %-m월")
+    month_start = month_dt.replace(day=1)
+    month_end = (month_start + relativedelta(months=1)) - timedelta(days=1)
+
+    # --- 결과 표시는 계산 블록 바깥에서 항상 수행 ---
+    results = st.session_state.get('assignment_results', {})
+    if results:
         with st.expander("🔍 배정 과정 상세 로그 보기", expanded=True):
-            st.markdown("**📋 요청사항 반영 로그**")
-            if st.session_state.request_logs:
-                st.code("\n".join(st.session_state.request_logs), language='text')
-            else:
-                st.info("반영된 요청사항(휴가/학회)이 없습니다.")
-            st.markdown("---")
-            st.markdown("**🔄 일반 제외/보충 로그 (1:1 이동)**")
-            if st.session_state.swap_logs:
-                st.code("\n".join(st.session_state.swap_logs), language='text')
-            else:
-                st.info("일반 제외/보충이 발생하지 않았습니다.")
-            st.markdown("---")
-            st.markdown("**➕ 추가 제외/보충 로그**")
-            st.write("- 인원 초과(1순위) 제외 = 오후 근무 없는 경우\n- 인원 초과(2순위) 제외 = 오후 근무 있으나 오후도 1:1 이동 가능한 경우\n- 인원 초과(3순위) 제외 =  오후 근무 있고 오후 1:1 이동 불가능한 경우")
-            if st.session_state.adjustment_logs:
-                st.code("\n".join(st.session_state.adjustment_logs), language='text')
-            else:
-                st.info("추가 제외/보충이 발생하지 않았습니다.")
-            st.markdown("---")
-            st.markdown("**📞 오전당직(온콜) 배정 조정 로그**")
-            if st.session_state.oncall_logs:
-                st.code("\n".join(st.session_state.oncall_logs), language='text')
-            else:
-                st.info("모든 오전당직(온콜)이 누적 횟수에 맞게 정상 배정되었습니다.")
-
+            st.markdown("**📋 요청사항 반영 로그**"); st.code("\n".join(results["request_logs"]) if results["request_logs"] else "반영된 요청사항(휴가/학회)이 없습니다.", language='text')
+            st.markdown("---"); st.markdown("**🔄 일반 제외/보충 로그 (1:1 이동)**"); st.code("\n".join(results["swap_logs"]) if results["swap_logs"] else "일반 제외/보충이 발생하지 않았습니다.", language='text')
+            st.markdown("---"); st.markdown("**➕ 추가 제외/보충 로그**"); st.write("- 인원 초과(1순위) 제외 = 오후 근무 없는 경우\n- 인원 초과(2순위) 제외 = 오후 근무 있으나 오후도 1:1 이동 가능한 경우\n- 인원 초과(3순위) 제외 =  오후 근무 있고 오후 1:1 이동 불가능한 경우"); st.code("\n".join(results["adjustment_logs"]) if results["adjustment_logs"] else "추가 제외/보충이 발생하지 않았습니다.", language='text')
+            st.markdown("---"); st.markdown("**📞 오전당직(온콜) 배정 조정 로그**"); st.code("\n".join(results["oncall_logs"]) if results["oncall_logs"] else "모든 오전당직(온콜)이 누적 횟수에 맞게 정상 배정되었습니다.", language='text')
+        
         st.write(" ")
-        if not st.session_state.df_cumulative_next.empty:
-            st.markdown(f"**➕ {st.session_state.df_cumulative_next.columns[0]} 누적 테이블**")
-            st.dataframe(st.session_state.df_cumulative_next, use_container_width=True, hide_index=True)
-            st.success(f"✅ {st.session_state.df_cumulative_next.columns[0]} 누적 테이블이 Google Sheets에 저장되었습니다.")
+        if not results["df_cumulative_next"].empty:
+            st.markdown(f"**➕ {next_month_str} 누적 테이블**"); st.dataframe(results["df_cumulative_next"], use_container_width=True, hide_index=True)
         
         st.divider()
-        st.success(f"✅ {month_str} 스케줄 테이블이 Google Sheets에 저장되었습니다.")
-
-        st.download_button(
-            label="📥 최종 스케줄 다운로드",
-            data=results["output"],
-            file_name=f"{month_str} 스케줄.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_schedule_button",
-            use_container_width=True,
-            type="primary",
-        )
+        st.success(f"✅ {month_str} 스케줄 및 {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📥 최종 스케줄 다운로드",
+                data=results["output_final"],
+                file_name=f"{month_str} 스케줄.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_final_schedule_button",
+                use_container_width=True,
+                type="primary",
+            )
+        with col2:
+            st.download_button(
+                label="📥 최종 스케줄 다운로드 (배정 확인용)",
+                data=results["output_checking"],
+                file_name=f"{month_str} 스케줄 (배정 확인용).xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_checking_schedule_button",
+                use_container_width=True,
+                type="secondary",
+            )
