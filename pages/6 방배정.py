@@ -971,7 +971,7 @@ with tab_weekend:
                     st.markdown("###### **당직 방**")
                     if duty_person_for_date and duty_person_for_date != "당직 없음":
                         duty_room_options = ["선택 안 함"] + [str(i) for i in range(1, 13)]
-                        default_duty_room = st.session_state.weekend_room_settings.get(date_str, {}).get("duty_room", "선택 안 함")
+                        default_duty_room = st.session_state.weekend_room_settings.get(date_str, {}).get("duty_room", "1")
                         duty_room = st.selectbox("당직 방 선택", duty_room_options, key=f"duty_room_{date_str}", 
                                                  index=duty_room_options.index(default_duty_room) if default_duty_room in duty_room_options else 0, label_visibility="collapsed")
                     else: 
