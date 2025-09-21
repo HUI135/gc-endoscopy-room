@@ -2116,27 +2116,35 @@ if st.session_state.get('show_assignment_results', False):
                     msg = f"ℹ️ {person}: {date_str_display} ({time_str_display})의 '{category}' 요청이 배정 균형을 위해 반영되지 않았습니다."
                     unapplied_messages.append(msg)
 
-        # --- Expander로 결과 표시 ---
+        # --- [최종 수정 코드] Expander로 결과 표시 ---
+        # 1. 생성된 메시지를 심각도에 따라 세 그룹으로 분류합니다.
+        critical_unapplied = [msg for msg in unapplied_messages if msg.strip().startswith('⛔️')]
+        warning_unapplied = [msg for msg in unapplied_messages if not msg.strip().startswith('⛔️')]
+        sorted_applied = sorted(applied_messages)
+
+        # 2. 하나의 Expander 안에 세 섹션으로 나누어 결과를 표시합니다.
         st.write("---")
-        st.subheader("📋 요청사항 처리 결과")
+        with st.expander("방배정 상세 로그 보기", expanded=True):
+            
+            # 섹션 1: 수기 수정이 필요한 심각한 미적용 요청
+            st.markdown("##### ⛔️ 요청사항 적용 안 됨 (수기 수정 필요)")
+            # 각 메시지에서 앞의 이모티콘/공백을 제거하고 '• '를 붙여 목록 형식으로 만듭니다.
+            critical_log_text = "\n".join(f"• {msg[2:]}" for msg in sorted(critical_unapplied)) if critical_unapplied else "해당 없음"
+            st.code(critical_log_text, language='text')
+            
+            st.divider()
 
-        # 적용 안 된 요청 Expander
-        with st.expander("요청사항 적용 안 됨", expanded=True if unapplied_messages else False):
-            if not unapplied_messages:
-                st.text("적용되지 않은 요청이 없습니다.")
-            else:
-                # [수정] ⛔️가 ⚠️보다 먼저 오도록 정렬 순서 변경
-                sorted_unapplied = sorted(unapplied_messages, key=lambda x: ('⛔️' in x, '⚠️' in x), reverse=True)
-                for message in sorted_unapplied:
-                    st.text(message)
+            # 섹션 2: 배정 균형 등으로 인해 미적용된 일반 요청
+            st.markdown("##### ⚠️ 요청사항 적용 안 됨")
+            warning_log_text = "\n".join(f"• {msg[2:]}" for msg in sorted(warning_unapplied)) if warning_unapplied else "해당 없음"
+            st.code(warning_log_text, language='text')
 
-        # 적용된 요청 Expander
-        with st.expander("요청사항 적용됨", expanded=True if applied_messages else False):
-            if not applied_messages:
-                st.text("적용된 요청이 없습니다.")
-            else:
-                for message in sorted(applied_messages):
-                    st.text(message)
+            st.divider()
+
+            # 섹션 3: 정상 적용된 요청
+            st.markdown("##### ✅ 요청사항 적용됨")
+            applied_log_text = "\n".join(f"• {msg[2:]}" for msg in sorted_applied) if sorted_applied else "해당 없음"
+            st.code(applied_log_text, language='text')
 
         st.divider()
         st.markdown("**✅ 통합 배치 결과**") # 기존 헤더와 연결
