@@ -2382,6 +2382,11 @@ if st.session_state.get('show_assignment_results', False):
                     if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
                         cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
 
+        sheet.column_dimensions['A'].width = 11
+        for col in sheet.columns:
+            if col[0].column_letter != 'A':
+                sheet.column_dimensions[col[0].column_letter].width = 9
+
         # --- Stats 시트 생성 ---
         stats_sheet = wb.create_sheet("Stats")
         stats_columns = stats_df.columns.tolist()
