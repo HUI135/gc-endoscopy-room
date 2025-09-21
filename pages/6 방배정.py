@@ -2124,10 +2124,10 @@ if st.session_state.get('show_assignment_results', False):
 
         # 2. 하나의 Expander 안에 세 섹션으로 나누어 결과를 표시합니다.
         st.write("---")
-        with st.expander("방배정 상세 로그 보기", expanded=True):
+        with st.expander("🔍 방배정 상세 로그 보기", expanded=True):
             
             # 섹션 1: 수기 수정이 필요한 심각한 미적용 요청
-            st.markdown("##### ⛔️ 요청사항 적용 안 됨 (수기 수정 필요)")
+            st.write("⛔️ 요청사항 적용 안 됨 (수기 수정 필요)")
             # 각 메시지에서 앞의 이모티콘/공백을 제거하고 '• '를 붙여 목록 형식으로 만듭니다.
             critical_log_text = "\n".join(f"• {msg[2:]}" for msg in sorted(critical_unapplied)) if critical_unapplied else "해당 없음"
             st.code(critical_log_text, language='text')
@@ -2135,14 +2135,14 @@ if st.session_state.get('show_assignment_results', False):
             st.divider()
 
             # 섹션 2: 배정 균형 등으로 인해 미적용된 일반 요청
-            st.markdown("##### ⚠️ 요청사항 적용 안 됨")
+            st.write("⚠️ 요청사항 적용 안 됨")
             warning_log_text = "\n".join(f"• {msg[2:]}" for msg in sorted(warning_unapplied)) if warning_unapplied else "해당 없음"
             st.code(warning_log_text, language='text')
 
             st.divider()
 
             # 섹션 3: 정상 적용된 요청
-            st.markdown("##### ✅ 요청사항 적용됨")
+            st.write("✅ 요청사항 적용됨")
             applied_log_text = "\n".join(f"• {msg[2:]}" for msg in sorted_applied) if sorted_applied else "해당 없음"
             st.code(applied_log_text, language='text')
 
