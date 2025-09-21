@@ -192,8 +192,10 @@ if not st.session_state["login_success"]:
 # --- 로그인 성공 후 처리 ---
 if st.session_state["login_success"]:
     st.markdown(f"#### 👋 {st.session_state['name']}님, 안녕하세요!")
-    st.info("왼쪽 사이드바의 메뉴에서 원하시는 작업을 선택해주세요.")
-    
+    st.markdown("- 📖 **프로그램 사용법이 궁금하신가요?** [매뉴얼 보러가기](https://www.notion.so/hip-attention-hui0135/27474879201e805bb7a7f27945b87a19?source=copy_link)")
+
+    st.info("왼쪽 사이드바의 메뉴에서 원하시는 작업을 선택해주세요.")    
+
     if st.session_state["is_admin"]:
         if st.session_state["admin_mode"]:
             st.success("관리자 모드가 활성화되었습니다. 사이드바에서 관리자 메뉴를 이용하세요.")
