@@ -25,6 +25,7 @@ ADMINISTRATOR2 = st.secrets["passwords"]["administrator2"]
 ADMINISTRATOR3 = st.secrets["passwords"]["administrator3"]
 ADMINISTRATOR4 = st.secrets["passwords"]["administrator4"]
 ADMINISTRATOR5 = st.secrets["passwords"]["administrator5"]
+ADMINISTRATOR6 = st.secrets["passwords"]["administrator6"]
 
 # --- [변경] 공지사항 데이터 관리 (구글 시트 사용) ---
 
@@ -167,7 +168,7 @@ def attempt_login():
             st.session_state["employee_id"] = employee_id_input # ✅ int() 변환 제거, 문자열 그대로 저장
             st.session_state["name"] = employee_name
             # ✅ is_admin 확인 시에는 int()로 변환하여 비교 (ADMINISTRATOR 변수들이 숫자일 경우)
-            st.session_state["is_admin"] = int(employee_id_input) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3, ADMINISTRATOR4, ADMINISTRATOR5]
+            st.session_state["is_admin"] = int(employee_id_input) in [ADMINISTRATOR1, ADMINISTRATOR2, ADMINISTRATOR3, ADMINISTRATOR4, ADMINISTRATOR5, ADMINISTRATOR6]
             st.rerun()
         else:
             st.error("사번이 매핑된 이름이 없습니다.")
