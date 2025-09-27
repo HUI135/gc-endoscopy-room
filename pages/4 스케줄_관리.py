@@ -289,6 +289,68 @@ def load_request_data_page4():
         st.error(f"데이터 로드 중 오류 발생: {str(e)}")
         return False
 
+def load_holiday_schedule():
+    """'YYYY년 토요/휴일 스케줄' 시트에서 데이터를 다시 로드하여 세션 상태를 업데이트합니다."""
+    try:
+        # gc와 worksheet_holiday는 세션 상태에서 가져오거나 다시 초기화할 수 있습니다.
+        # 여기서는 안정성을 위해 클라이언트를 다시 가져옵니다.
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(url)
+        worksheet_name = f"{next_month.year}년 토요/휴일 스케줄"
+        
+        try:
+            worksheet_holiday = sheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            # 시트가 없는 경우에 대한 처리 (기존 코드와 동일)
+            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            worksheet_holiday = sheet.add_worksheet(title=worksheet_name, rows="100", cols="20")
+            worksheet_holiday.append_row(["날짜", "근무", "당직"])
+        
+        holiday_data = worksheet_holiday.get_all_records()
+        df_holiday = pd.DataFrame(holiday_data) if holiday_data else pd.DataFrame(columns=["날짜", "근무", "당직"])
+        
+        # 날짜 형식 변환 및 정렬
+        if not df_holiday.empty and '날짜' in df_holiday.columns:
+            df_holiday["날짜"] = pd.to_datetime(df_holiday["날짜"], errors='coerce').dt.date
+            df_holiday = df_holiday.sort_values(by="날짜").reset_index(drop=True)
+        
+        # 세션 상태 업데이트
+        st.session_state["df_holiday"] = df_holiday
+        st.session_state["worksheet_holiday"] = worksheet_holiday
+        return True
+
+    except Exception as e:
+        st.error(f"토요/휴일 데이터 리로드 중 오류 발생: {str(e)}")
+        return False
+
+# --- 휴관일 데이터 로드 함수 정의 ---
+def load_closing_days_schedule():
+    """'YYYY년 휴관일' 시트에서 데이터를 다시 로드하여 세션 상태를 업데이트합니다."""
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(url)
+        worksheet_name = f"{next_month.year}년 휴관일"
+        try:
+            worksheet_closing = sheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
+            worksheet_closing = sheet.add_worksheet(title=worksheet_name, rows="100", cols="1")
+            worksheet_closing.append_row(["날짜"])
+        
+        closing_data = worksheet_closing.get_all_records()
+        df_closing = pd.DataFrame(closing_data) if closing_data else pd.DataFrame(columns=["날짜"])
+
+        if not df_closing.empty and '날짜' in df_closing.columns:
+            df_closing["날짜"] = pd.to_datetime(df_closing["날짜"], errors='coerce').dt.date
+            df_closing = df_closing.sort_values(by="날짜").reset_index(drop=True)
+        
+        st.session_state["df_closing"] = df_closing
+        st.session_state["worksheet_closing"] = worksheet_closing
+        return True
+    except Exception as e:
+        st.error(f"휴관일 데이터 리로드 중 오류 발생: {str(e)}")
+        return False
+    
 # 초기 데이터 로드 및 세션 상태 설정
 url = st.secrets["google_sheet"]["url"]
 from zoneinfo import ZoneInfo
@@ -948,259 +1010,312 @@ with st.expander("📅 월 단위로 일괄 설정"):
 
 st.divider()
 st.subheader(f"📅 {next_month.year}년 토요/휴일 스케줄 관리")
-st.write("- 토요/휴일 스케줄을 추가하거나 삭제할 수 있습니다.")
+st.write("- 아래 테이블에서 직접 스케줄을 추가, 수정, 삭제한 후 **'저장'** 버튼을 누르세요.\n - 또는 '빠른 추가/삭제' 메뉴를 이용할 수도 있습니다.")
 
-# Google Sheet for Saturday/Holiday schedule
-def load_holiday_schedule():
-    try:
-        gc = get_gspread_client()
-        sheet = gc.open_by_url(url)
-        worksheet_name = f"{next_month.year}년 토요/휴일 스케줄"
-        try:
-            worksheet_holiday = sheet.worksheet(worksheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
-            worksheet_holiday = sheet.add_worksheet(title=worksheet_name, rows="100", cols="20")
-            worksheet_holiday.append_row(["날짜", "근무", "당직"])
-        
-        holiday_data = worksheet_holiday.get_all_records()
-        df_holiday = pd.DataFrame(holiday_data) if holiday_data else pd.DataFrame(columns=["날짜", "근무", "당직"])
-        df_holiday["날짜"] = pd.to_datetime(df_holiday["날짜"], errors='coerce').dt.date
-        df_holiday = df_holiday.sort_values(by="날짜")
-        
-        st.session_state["df_holiday"] = df_holiday
-        st.session_state["worksheet_holiday"] = worksheet_holiday
-        return True
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (토요/휴일 데이터 로드): {str(e)}")
-        return False
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
-        return False
-
-# Load holiday schedule initially
-if "df_holiday" not in st.session_state:
-    load_holiday_schedule()
-
-# Retrieve holiday schedule from session state
-df_holiday = st.session_state.get("df_holiday", pd.DataFrame(columns=["날짜", "근무", "당직"]))
-worksheet_holiday = st.session_state.get("worksheet_holiday")
-
-# Display the holiday schedule
+st.write(" ")
+# --- 1. 테이블 직접 수정 UI (st.data_editor) ---
 st.markdown("**📋 토요/휴일 스케줄 테이블**")
-if not df_holiday.empty:
-    st.dataframe(df_holiday, use_container_width=True, hide_index=True)
-else:
-    st.info("현재 토요/휴일 스케줄이 없습니다. 아래에서 추가해주세요.")
 
-# [추가된 부분 1] form 제출 성공 플래그가 있으면, 위젯 값들을 초기화합니다.
-# 이 코드는 반드시 st.form 보다 위에 있어야 합니다.
-if st.session_state.get("form_submitted", False):
-    st.session_state.new_holiday_workers = []
-    st.session_state.new_holiday_duty = ""
-    # 날짜는 기본값인 다음 달 시작일로 되돌립니다.
-    st.session_state.new_holiday_date = next_month_start 
-    st.session_state.form_submitted = False # 확인 후 플래그를 다시 리셋합니다.
+# 세션 상태에 편집용 데이터가 없으면 원본 데이터로 초기화
+if "edited_df_holiday" not in st.session_state:
+    st.session_state.edited_df_holiday = st.session_state.get("df_holiday", pd.DataFrame()).copy()
 
-# Add a new row
-st.markdown("**🟢 토요/휴일 스케줄 추가**")
-with st.form("add_holiday_schedule_form"):
-    col_date, col_workers, col_duty = st.columns([1, 2, 1])
-    with col_date:
-        # 키(key)는 그대로 유지합니다.
-        new_date = st.date_input("날짜 선택", min_value=next_month_start, max_value=next_month_end, key="new_holiday_date")
-    with col_workers:
-        available_names = sorted(df_map["이름"].unique()) if not df_map.empty else []
-        new_workers = st.multiselect("근무자 선택", available_names, key="new_holiday_workers")
-    with col_duty:
-        # 1. 선택 목록의 첫 번째 항목을 "" -> "당직 없음"으로 변경
-        new_duty = st.selectbox("당직자 선택", ["당직 없음"] + available_names, key="new_holiday_duty")
-    
-    submit_add = st.form_submit_button("✔️ 추가")
-    # '토요/휴일 스케줄 추가' 폼의 if submit_add: 블록을 교체
-    if submit_add:
-        # (기존 유효성 검사 로직은 그대로 둡니다)
-        if not new_date: st.error("날짜를 선택하세요.")
-        elif not new_workers: st.error("근무자를 선택하세요.")
-        elif new_duty != "당직 없음" and new_duty not in new_workers: st.error("당직자는 근무자 목록에 포함되어야 합니다.")
-        elif new_date in df_holiday["날짜"].values: st.error(f"{new_date}는 이미 스케줄에 존재합니다.")
-        else:
-            try:
-                # [수정] append_row 사용
-                new_row_data = [new_date.strftime("%Y-%m-%d"), ", ".join(new_workers), new_duty]
-                worksheet_holiday.append_row(new_row_data)
-                
-                st.success(f"{new_date} 스케줄이 추가되었습니다.")
-                time.sleep(1.5)
-                st.session_state.form_submitted = True
-                st.rerun()
-            except Exception as e:
-                st.error(f"스케줄 추가 중 오류 발생: {str(e)}")
-                
-# Delete a row
-st.markdown("**🔴 토요/휴일 스케줄 삭제**")
-if not df_holiday.empty:
-    # st.form으로 삭제 관련 위젯들을 감쌉니다.
-    with st.form("delete_holiday_schedule_form"):
-        sorted_dates = sorted(df_holiday["날짜"].astype(str).unique())
-        selected_date = st.selectbox("삭제할 날짜 선택", sorted_dates, key="delete_holiday_date")
-        
-        # st.button 대신 st.form_submit_button을 사용합니다.
-        submit_delete = st.form_submit_button("🗑️ 삭제")
-        
-        # '토요/휴일 스케줄 삭제' 폼의 if submit_delete: 블록을 교체
-        if submit_delete:
-            try:
-                # [수정] find -> delete_rows 사용
-                cell_to_delete = worksheet_holiday.find(selected_date)
-                if cell_to_delete:
-                    worksheet_holiday.delete_rows(cell_to_delete.row)
-                    st.success(f"{selected_date} 스케줄이 삭제되었습니다.")
-                    time.sleep(1.5)
-                    st.rerun()
+edited_holiday_df = st.data_editor(
+    st.session_state.edited_df_holiday,
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    key="holiday_editor", # 이 key가 페이지 내에서 유일해야 합니다.
+    column_config={
+        "날짜": st.column_config.DateColumn(
+            "날짜 (필수)",
+            format="YYYY-MM-DD",
+            required=True,
+        ),
+        "근무": st.column_config.TextColumn("근무 (쉼표+공백으로 구분)", required=True),
+        "당직": st.column_config.TextColumn("당직"),
+    }
+)
+
+# --- 테이블 수정사항 저장 버튼 ---
+if st.button("💾 테이블 수정사항 저장"):
+    try:
+        is_valid = True
+        error_messages = []
+        df_to_save = edited_holiday_df.copy()
+
+        if df_to_save['날짜'].isnull().any():
+            error_messages.append("모든 행에 날짜를 입력해야 합니다.")
+            is_valid = False
+        if df_to_save['날짜'].duplicated().any():
+            error_messages.append("중복된 날짜가 있습니다. 각 날짜는 한 번만 입력할 수 있습니다.")
+            is_valid = False
+        for index, row in df_to_save.iterrows():
+            duty_person = str(row.get('당직', '')).strip()
+            work_list = [name.strip() for name in str(row.get('근무', '')).split(',')]
+            if duty_person and duty_person != "당직 없음" and duty_person not in work_list:
+                error_messages.append(f"{row['날짜']}의 당직자 '{duty_person}'님은 근무자 목록에 포함되어야 합니다.")
+                is_valid = False
+
+        if is_valid:
+            with st.spinner("테이블 수정사항을 저장하는 중입니다..."):
+                worksheet_holiday = st.session_state.get("worksheet_holiday")
+                if worksheet_holiday:
+                    df_to_save["날짜"] = pd.to_datetime(df_to_save["날짜"]).dt.date
+                    df_to_save = df_to_save.sort_values(by="날짜").reset_index(drop=True)
+                    df_to_save['날짜'] = df_to_save['날짜'].astype(str)
+                    
+                    update_data = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
+                    if update_sheet_with_retry(worksheet_holiday, update_data):
+                        st.success("✅ 테이블 수정사항이 성공적으로 저장되었습니다.")
+                        time.sleep(1.5)
+                        load_holiday_schedule() 
+                        st.session_state.edited_df_holiday = st.session_state.get("df_holiday", pd.DataFrame()).copy()
+                        st.rerun()
                 else:
-                    st.warning("삭제할 날짜를 시트에서 찾을 수 없습니다.")
-            except Exception as e:
-                st.error(f"스케줄 삭제 중 오류 발생: {str(e)}")
-else:
-    st.info("삭제할 스케줄이 없습니다.")
+                    st.error("❌ 시트 정보를 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.")
+        else:
+            for msg in error_messages:
+                st.error(msg)
+    except Exception as e:
+        st.error(f"저장 중 오류 발생: {e}")
+
+# --- 2. 빠른 추가/삭제 UI (st.expander + st.form) ---
+with st.expander("➕ 빠른 추가 / 삭제"):
+    st.markdown("**🟢 토요/휴일 스케줄 추가**")
+    with st.form("add_holiday_schedule_form_expander"):
+        col_date, col_workers, col_duty = st.columns([1, 2, 1])
+        with col_date:
+            new_date = st.date_input("날짜 선택", value=next_month_start, min_value=next_month_start, max_value=next_month_end, key="new_holiday_date_expander")
+        with col_workers:
+            available_names = sorted(df_map["이름"].unique()) if not df_map.empty else []
+            new_workers = st.multiselect("근무자 선택", available_names, key="new_holiday_workers_expander")
+        with col_duty:
+            new_duty = st.selectbox("당직자 선택", ["당직 없음"] + available_names, key="new_holiday_duty_expander")
+        
+        submit_add_expander = st.form_submit_button("✔️ 추가")
+        if submit_add_expander:
+            df_holiday_check = st.session_state.get("df_holiday", pd.DataFrame())
+            if not new_date: st.error("날짜를 선택하세요.")
+            elif not new_workers: st.error("근무자를 선택하세요.")
+            elif new_duty != "당직 없음" and new_duty not in new_workers: st.error("당직자는 근무자 목록에 포함되어야 합니다.")
+            elif not df_holiday_check[df_holiday_check['날짜'] == new_date].empty: st.error(f"{new_date}는 이미 스케줄에 존재합니다.")
+            else:
+                try:
+                    with st.spinner("스케줄을 추가하는 중입니다..."):
+                        worksheet_holiday = st.session_state.get("worksheet_holiday")
+                        new_row_data = [new_date.strftime("%Y-%m-%d"), ", ".join(new_workers), new_duty]
+                        worksheet_holiday.append_row(new_row_data)
+                        st.success(f"{new_date} 스케줄이 추가되었습니다.")
+                        time.sleep(1.5)
+                        load_holiday_schedule()
+                        st.session_state.edited_df_holiday = st.session_state.get("df_holiday", pd.DataFrame()).copy()
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"스케줄 추가 중 오류 발생: {str(e)}")
+
+    st.write("---")
+
+    st.markdown("**🔴 토요/휴일 스케줄 삭제**")
+    df_holiday_current = st.session_state.get("df_holiday", pd.DataFrame())
+    if not df_holiday_current.empty:
+        with st.form("delete_holiday_schedule_form_expander"):
+            sorted_dates = sorted(df_holiday_current["날짜"].astype(str).unique())
+            selected_date_to_delete = st.selectbox("삭제할 날짜 선택", sorted_dates, key="delete_holiday_date_expander")
+            
+            submit_delete_expander = st.form_submit_button("🗑️ 삭제")
+            if submit_delete_expander:
+                try:
+                    with st.spinner("스케줄을 삭제하는 중입니다..."):
+                        worksheet_holiday = st.session_state.get("worksheet_holiday")
+                        cell_to_delete = worksheet_holiday.find(selected_date_to_delete)
+                        if cell_to_delete:
+                            worksheet_holiday.delete_rows(cell_to_delete.row)
+                            st.success(f"{selected_date_to_delete} 스케줄이 삭제되었습니다.")
+                            time.sleep(1.5)
+                            load_holiday_schedule()
+                            st.session_state.edited_df_holiday = st.session_state.get("df_holiday", pd.DataFrame()).copy()
+                            st.rerun()
+                        else:
+                            st.warning("삭제할 날짜를 시트에서 찾을 수 없습니다.")
+                except Exception as e:
+                    st.error(f"스케줄 삭제 중 오류 발생: {str(e)}")
+    else:
+        st.info("삭제할 스케줄이 없습니다.")
+
+# ✂️✂️✂️ st.divider() 부터 load_data_page4() 전까지 이 코드로 모두 교체하세요. ✂️✂️✂️
 
 st.divider()
 st.subheader(f"📅 {next_month.year}년 휴관일 관리")
-st.write("- 휴관일을 추가하거나 삭제할 수 있습니다.")
+st.write("- 아래 테이블에서 직접 휴관일을 월별로 수정하거나, '빠른 추가/삭제' 메뉴를 이용할 수 있습니다.\n - 휴관일 목록은 **'YYYY-MM-DD, YYYY-MM-DD'** 형식으로 입력해야 합니다.")
 
-# Function to load closing days schedule
-def load_closing_days_schedule():
-    try:
-        gc = get_gspread_client()
-        sheet = gc.open_by_url(url)
-        worksheet_name = f"{next_month.year}년 휴관일"
-        try:
-            worksheet_closing = sheet.worksheet(worksheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
-            worksheet_closing = sheet.add_worksheet(title=worksheet_name, rows="100", cols="1")
-            worksheet_closing.append_row(["날짜"])
-        
-        closing_data = worksheet_closing.get_all_records()
-        df_closing = pd.DataFrame(closing_data) if closing_data else pd.DataFrame(columns=["날짜"])
-        df_closing["날짜"] = pd.to_datetime(df_closing["날짜"], errors='coerce').dt.date
-        df_closing = df_closing.sort_values(by="날짜")
-        
-        st.session_state["df_closing"] = df_closing
-        st.session_state["worksheet_closing"] = worksheet_closing
-        return True
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (휴관일 데이터 로드): {str(e)}")
-        return False
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"휴관일 데이터 로드 중 오류 발생: {str(e)}")
-        return False
+# --- 데이터 준비: 월별 그룹화 ---
+df_closing_raw = st.session_state.get("df_closing", pd.DataFrame(columns=["날짜"]))
+df_closing_monthly = pd.DataFrame(columns=['월', '휴관일 목록'])
+if not df_closing_raw.empty:
+    # 날짜 타입 확인 및 변환
+    if not pd.api.types.is_datetime64_any_dtype(df_closing_raw['날짜']):
+        df_closing_raw['날짜'] = pd.to_datetime(df_closing_raw['날짜'], errors='coerce')
+        df_closing_raw.dropna(subset=['날짜'], inplace=True)
+    
+    df_closing_raw['월'] = df_closing_raw['날짜'].dt.strftime('%Y-%m')
+    df_closing_monthly = df_closing_raw.groupby('월')['날짜'].apply(
+        lambda x: ', '.join(sorted(x.dt.strftime('%Y-%m-%d')))
+    ).reset_index(name='휴관일 목록')
 
-# Load closing days schedule initially
-if "df_closing" not in st.session_state:
-    load_closing_days_schedule()
-
-# Retrieve closing days schedule from session state
-df_closing = st.session_state.get("df_closing", pd.DataFrame(columns=["날짜"]))
-worksheet_closing = st.session_state.get("worksheet_closing")
-
-# Display the closing days table
+st.write(" ")
+# --- 1. 테이블 직접 수정 UI (st.data_editor) ---
 st.markdown("**📋 휴관일 테이블**")
-if not df_closing.empty:
-    st.dataframe(df_closing, use_container_width=True, hide_index=True)
-else:
-    st.info("현재 등록된 휴관일이 없습니다. 아래에서 추가해주세요.")
+edited_closing_df = st.data_editor(
+    df_closing_monthly,
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    key="closing_editor",
+    column_config={
+        "월": st.column_config.TextColumn("월 (YYYY-MM)", required=True),
+        "휴관일 목록": st.column_config.TextColumn("휴관일 목록 (쉼표+공백으로 구분)"),
+    }
+)
 
-# [추가된 부분] 폼 제출 성공 플래그가 있으면, 위젯 값을 초기화합니다.
-if st.session_state.get("closing_form_submitted", False):
-    st.session_state.new_closing_date = next_month_start 
-    st.session_state.closing_form_submitted = False # 확인 후 플래그를 다시 리셋합니다.
+# --- 테이블 수정사항 저장 버튼 ---
+if st.button("💾 휴관일 테이블 저장"):
+    try:
+        is_valid = True
+        error_messages = []
+        all_dates = []
 
-# Add new closing days (supports single day or date range for the whole year)
-st.markdown("**🟢 휴관일 추가**")
-st.write("- 하루만 추가하려면 시작일과 종료일을 같은 날짜로 선택하세요.")
+        # 유효성 검사
+        for index, row in edited_closing_df.iterrows():
+            month_str = str(row['월']).strip()
+            dates_str = str(row.get('휴관일 목록', '')).strip()
 
-# --- 수정된 부분 ---
-# 선택 가능한 날짜 범위를 올해 전체로 설정합니다.
-current_year = next_month.year
-year_start = datetime.date(current_year, 1, 1)
-year_end = datetime.date(current_year, 12, 31)
-# --- 여기까지 ---
+            if not re.match(r'^\d{4}-\d{2}$', month_str):
+                error_messages.append(f"{index+1}행: '월'은 'YYYY-MM' 형식이어야 합니다 (예: {month_str}).")
+                is_valid = False
+                continue
 
-with st.form("add_closing_day_form"):
-    # date_input의 min_value와 max_value를 올해의 시작과 끝으로 변경합니다.
-    selected_period = st.date_input(
-        "날짜 또는 기간 선택",
-        value=[next_month_start, next_month_start], # 기본 선택값은 다음 달 시작일
-        min_value=year_start,   # 최솟값: 올해 1월 1일
-        max_value=year_end,     # 최댓값: 올해 12월 31일
-        key="new_closing_period"
-    )
-    
-    submit_add_closing = st.form_submit_button("✔️ 추가")
-    if submit_add_closing:
-        if not selected_period or len(selected_period) != 2:
-            st.error("휴관일로 추가할 날짜 또는 기간을 선택해주세요.")
-            st.stop()
+            if not dates_str: continue
+
+            date_parts = [d.strip() for d in dates_str.split(',')]
+            for date_part in date_parts:
+                if not date_part: continue # 빈 문자열은 건너뛰기
+                if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_part):
+                    error_messages.append(f"{index+1}행: '{date_part}'는 'YYYY-MM-DD' 형식이 아닙니다.")
+                    is_valid = False
+                    continue
+                try:
+                    date_obj = datetime.datetime.strptime(date_part, '%Y-%m-%d').date()
+                    if date_obj.strftime('%Y-%m') != month_str:
+                        error_messages.append(f"{index+1}행: 날짜 '{date_part}'는 해당 월 '{month_str}'에 속하지 않습니다.")
+                        is_valid = False
+                    all_dates.append(date_obj)
+                except ValueError:
+                    error_messages.append(f"{index+1}행: '{date_part}'는 유효한 날짜가 아닙니다.")
+                    is_valid = False
         
-        start_date, end_date = selected_period
-        
-        if start_date > end_date:
-            st.error("시작일은 종료일보다 이전이거나 같아야 합니다.")
-            st.stop()
-
-        try:
-            all_dates_in_period = pd.date_range(start=start_date, end=end_date)
-            new_dates_to_add = []
-
-            for date in all_dates_in_period:
-                if date.date() not in df_closing["날짜"].values:
-                    new_dates_to_add.append(date.date())
-
-            if not new_dates_to_add:
-                st.warning("선택하신 날짜(기간)는 모두 이미 휴관일로 등록되어 있습니다.")
-            else:
-                # [수정] append_rows 사용
-                rows_to_append = [[d.strftime("%Y-%m-%d")] for d in new_dates_to_add]
-                worksheet_closing.append_rows(rows_to_append)
-                st.success(f"총 {len(new_dates_to_add)}개의 휴관일이 성공적으로 추가되었습니다.")
-                time.sleep(1.5)
-                st.rerun()
-    
-        except Exception as e:
-            st.error(f"휴관일 추가 중 오류가 발생했습니다: {str(e)}")
-            st.stop()
-                
-# Delete a closing day
-st.markdown("**🔴 휴관일 삭제**")
-if not df_closing.empty:
-    with st.form("delete_closing_day_form"):
-        sorted_dates = sorted(df_closing["날짜"].astype(str).unique())
-        selected_date_to_delete = st.selectbox("삭제할 날짜 선택", sorted_dates, key="delete_closing_date")
-        
-        submit_delete_closing = st.form_submit_button("🗑️ 삭제")
-        
-        if submit_delete_closing:
-            try:
-                # [수정] find -> delete_rows 사용
-                cell_to_delete = worksheet_closing.find(selected_date_to_delete)
-                if cell_to_delete:
-                    worksheet_closing.delete_rows(cell_to_delete.row)
-                    st.success(f"{selected_date_to_delete} 휴관일이 삭제되었습니다.")
-                    time.sleep(1.5)
-                    st.rerun()
+        if is_valid:
+            with st.spinner("휴관일 정보를 저장하는 중입니다..."):
+                worksheet_closing = st.session_state.get("worksheet_closing")
+                if worksheet_closing:
+                    df_to_save = pd.DataFrame({'날짜': sorted(list(set(all_dates)))})
+                    df_to_save['날짜'] = df_to_save['날짜'].astype(str)
+                    
+                    update_data = [df_to_save.columns.tolist()] + df_to_save.values.tolist()
+                    if update_sheet_with_retry(worksheet_closing, update_data):
+                        st.success("✅ 휴관일 정보가 성공적으로 저장되었습니다.")
+                        time.sleep(1.5)
+                        load_closing_days_schedule()
+                        st.rerun()
                 else:
-                    st.warning("삭제할 날짜를 시트에서 찾을 수 없습니다.")
-            except Exception as e:
-                st.error(f"휴관일 삭제 중 오류 발생: {str(e)}")
-else:
-    st.info("삭제할 휴관일이 없습니다.")
+                    st.error("❌ 시트 정보를 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.")
+        else:
+            for msg in error_messages:
+                st.error(msg)
+    except Exception as e:
+        st.error(f"저장 중 오류 발생: {e}")
 
+# --- 2. 빠른 추가/삭제 UI (st.expander + st.form) ---
+with st.expander("➕ 빠른 추가 / 삭제"):
+    # --- 휴관일 추가 ---
+    st.markdown("**🟢 휴관일 추가**")
+    st.write("- 하루만 추가하려면 시작일과 종료일을 같은 날짜로 선택하세요.")
+    
+    current_year = next_month.year
+    year_start = datetime.date(current_year, 1, 1)
+    year_end = datetime.date(current_year, 12, 31)
+
+    with st.form("add_closing_day_form_expander"):
+        selected_period = st.date_input(
+            "날짜 또는 기간 선택",
+            value=(next_month_start, next_month_start),
+            min_value=year_start,
+            max_value=year_end,
+            key="new_closing_period_expander"
+        )
+        
+        submit_add_closing = st.form_submit_button("✔️ 추가")
+        if submit_add_closing:
+            if not selected_period or len(selected_period) != 2:
+                st.error("휴관일로 추가할 날짜 또는 기간을 선택해주세요.")
+            else:
+                start_date, end_date = selected_period
+                if start_date > end_date:
+                    st.error("시작일은 종료일보다 이전이거나 같아야 합니다.")
+                else:
+                    try:
+                        all_dates_in_period = pd.date_range(start=start_date, end=end_date)
+                        new_dates_to_add = []
+                        df_closing_check = st.session_state.get("df_closing", pd.DataFrame())
+
+                        for date in all_dates_in_period:
+                            if df_closing_check[df_closing_check['날짜'] == date.date()].empty:
+                                new_dates_to_add.append(date.date())
+
+                        if not new_dates_to_add:
+                            st.warning("선택하신 날짜(기간)는 모두 이미 휴관일로 등록되어 있습니다.")
+                        else:
+                            with st.spinner(f"{len(new_dates_to_add)}개의 휴관일을 추가하는 중입니다..."):
+                                worksheet_closing = st.session_state.get("worksheet_closing")
+                                rows_to_append = [[d.strftime("%Y-%m-%d")] for d in new_dates_to_add]
+                                worksheet_closing.append_rows(rows_to_append)
+                                st.success(f"총 {len(new_dates_to_add)}개의 휴관일이 성공적으로 추가되었습니다.")
+                                time.sleep(1.5)
+                                load_closing_days_schedule()
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"휴관일 추가 중 오류가 발생했습니다: {str(e)}")
+
+    st.write("---")
+    
+    # --- 휴관일 삭제 ---
+    st.markdown("**🔴 휴관일 삭제**")
+    df_closing_current = st.session_state.get("df_closing", pd.DataFrame())
+    if not df_closing_current.empty:
+        with st.form("delete_closing_day_form_expander"):
+            sorted_dates = sorted(df_closing_current["날짜"].astype(str).unique())
+            selected_date_to_delete = st.selectbox("삭제할 날짜 선택", sorted_dates, key="delete_closing_date_expander")
+            
+            submit_delete_closing = st.form_submit_button("🗑️ 삭제")
+            if submit_delete_closing:
+                try:
+                    with st.spinner(f"{selected_date_to_delete} 휴관일을 삭제하는 중입니다..."):
+                        worksheet_closing = st.session_state.get("worksheet_closing")
+                        cell_to_delete = worksheet_closing.find(selected_date_to_delete)
+                        if cell_to_delete:
+                            worksheet_closing.delete_rows(cell_to_delete.row)
+                            st.success(f"{selected_date_to_delete} 휴관일이 삭제되었습니다.")
+                            time.sleep(1.5)
+                            load_closing_days_schedule()
+                            st.rerun()
+                        else:
+                            st.warning("삭제할 날짜를 시트에서 찾을 수 없습니다.")
+                except Exception as e:
+                    st.error(f"휴관일 삭제 중 오류 발생: {str(e)}")
+    else:
+        st.info("삭제할 휴관일이 없습니다.")
+
+# --- 페이지 하단 원본 코드 ---
 load_data_page4()
 df_master = st.session_state.get("df_master", pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"]))
 df_request = st.session_state.get("df_request", pd.DataFrame(columns=["이름", "분류", "날짜정보"]))
