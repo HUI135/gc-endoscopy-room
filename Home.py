@@ -13,7 +13,7 @@ from datetime import date
 
 # set_page_config는 가장 먼저 호출
 st.set_page_config(page_title="GC 내시경 마스터", page_icon="🧪", layout="wide")
-st.warning("09/21 ~ 09/22 : 웹페이지 업데이트로 접속이 원할하지 않을 수 있습니다", icon="📢")
+st.error("09/27 ~ 09/28 : 웹페이지 업데이트로 접속이 원할하지 않을 수 있습니다", icon="📢")
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
 
