@@ -644,31 +644,40 @@ if st.session_state.get('show_final_results', False) and not has_unsaved_changes
     
     if special_df_to_update is not None and not special_df_to_update.empty:
         try:
-            st.info("ℹ️ 토요/휴일 스케줄의 변경된 근무 정보를 동기화합니다...")
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-            
-            # 1. 연도와 시트 이름 설정
-            target_year = month_str.split('년')[0]
-            sheet_name = f"{target_year}년 토요/휴일 스케줄"
-            worksheet_special_yearly = sheet.worksheet(sheet_name)
-            
-            # 2. 연간 시트 전체 데이터 로드
-            all_yearly_data = pd.DataFrame(worksheet_special_yearly.get_all_records())
-            
-            # 3. 이번 달 수정 데이터와 연간 데이터 병합
-            special_df_to_update['날짜'] = pd.to_datetime(special_df_to_update['날짜_dt']).dt.strftime('%Y-%m-%d')
-            update_df = special_df_to_update[['날짜', '근무', '당직']]
-            
-            merged_df = pd.merge(all_yearly_data, update_df, on='날짜', how='left', suffixes=('', '_new'))
-            merged_df['근무'] = merged_df['근무_new'].fillna(merged_df['근무'])
-            merged_df['당직'] = merged_df['당직_new'].fillna(merged_df['당직'])
-            
-            final_yearly_df = merged_df[all_yearly_data.columns]
-            
-            # 4. 수정된 전체 연간 데이터로 시트 업데이트
-            special_data_list = [final_yearly_df.columns.tolist()] + final_yearly_df.fillna('').values.tolist()
-            update_sheet_with_retry(worksheet_special_yearly, special_data_list)
+            with st.spinner("토요/휴일 스케줄의 변경된 근무 정보를 동기화합니다..."):
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+                
+                target_year = month_str.split('년')[0]
+                sheet_name = f"{target_year}년 토요/휴일 스케줄"
+                worksheet_special_yearly = sheet.worksheet(sheet_name)
+                
+                # [수정] 1. 시트에서 현재 연간 데이터를 모두 읽어옵니다.
+                all_records = worksheet_special_yearly.get_all_records()
+                
+                # [수정] 2. 이번 달에 해당하는 기존 행들을 찾아 삭제합니다.
+                target_month = datetime.strptime(month_str, "%Y년 %m월").month
+                rows_to_delete_indices = []
+                for i, record in reversed(list(enumerate(all_records))):
+                    try:
+                        record_date = datetime.strptime(record['날짜'], '%Y-%m-%d')
+                        if record_date.month == target_month:
+                            # gspread는 1-based, 헤더 포함이므로 i+2
+                            rows_to_delete_indices.append(i + 2)
+                    except (ValueError, KeyError):
+                        continue
+                
+                if rows_to_delete_indices:
+                    for row_idx in rows_to_delete_indices:
+                        worksheet_special_yearly.delete_rows(row_idx)
+
+                # [수정] 3. 수정된 이번 달 데이터를 시트 마지막에 새로 추가합니다.
+                special_df_to_update['날짜'] = pd.to_datetime(special_df_to_update['날짜_dt']).dt.strftime('%Y-%m-%d')
+                rows_to_append = special_df_to_update[['날짜', '근무', '당직']].fillna('').values.tolist()
+                
+                if rows_to_append:
+                    worksheet_special_yearly.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+                
             st.success(f"✅ '{sheet_name}' 시트가 성공적으로 동기화되었습니다.")
                 
         except gspread.exceptions.WorksheetNotFound:

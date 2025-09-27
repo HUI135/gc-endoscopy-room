@@ -798,10 +798,8 @@ with add_col4:
     st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
     submit_add = st.button("📅 추가", use_container_width=True)
 
-# (기존 if submit_add: 블록 전체를 아래 코드로 교체)
-
 if submit_add:
-    # 1. 저장될 '날짜정보' 문자열 생성
+    # 1. 저장될 '날짜정보' 문자열 생성 (기존 로직과 동일)
     날짜정보 = ""
     if 선택된_날짜들:
         final_date_list = []
@@ -820,14 +818,12 @@ if submit_add:
     try:
         if 날짜정보 and 분류:
             sheet = st.session_state["sheet"]
-            try:
-                worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
-            except WorksheetNotFound:
-                worksheet2 = sheet.add_worksheet(title=f"{month_str} 방배정 요청", rows="100", cols="20")
-                worksheet2.append_row(["이름", "분류", "날짜정보"])
+            worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
             
             df_room_request_temp = st.session_state["df_room_request"].copy()
             new_requests = []
+            
+            # 중복 체크 로직 (기존과 동일)
             for category in 분류:
                 for date in 날짜정보.split(","):
                     date = date.strip()
@@ -837,16 +833,19 @@ if submit_add:
 
             if new_requests:
                 with st.spinner("요청사항을 추가 중입니다..."):
+                    
+                    # ▼▼▼ [수정된 부분] clear()/update() 대신 append_rows() 사용 ▼▼▼
+                    # gspread에 한번에 추가하기 위해 list of lists 형태로 변환
+                    rows_to_append = [[req["이름"], req["분류"], req["날짜정보"]] for req in new_requests]
+                    worksheet2.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+                    # ▲▲▲ [수정 완료] ▲▲▲
+
+                    # 로컬 데이터(session_state) 업데이트 (기존 로직과 동일)
                     new_request_df = pd.DataFrame(new_requests)
                     df_room_request_temp = pd.concat([df_room_request_temp, new_request_df], ignore_index=True).sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-                    
-                    worksheet2.clear()
-                    worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
-                    
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
                     
-                    # --- 스피너가 보이도록 1초 강제 대기 ---
                     time.sleep(1)
                 
                 st.success("요청이 성공적으로 기록되었습니다.")
@@ -854,9 +853,9 @@ if submit_add:
                 time.sleep(1.5)
                 st.rerun()
             else:
-                st.info("ℹ️ 이미 존재하는 요청사항입니다.")
+                st.info("ℹ️ 이미 존재하는 요청사항입니다.") # 기존 로직 유지
         else:
-            st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.")
+            st.warning("요청 분류와 날짜 정보를 올바르게 입력해주세요.") # 기존 로직 유지
     except Exception as e:
         st.error(f"요청 추가 중 오류 발생: {str(e)}")
 
@@ -877,47 +876,47 @@ if not st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
     if submit_delete and selected_items:
         try:
             with st.spinner("요청사항을 삭제 중입니다..."):
-                sheet = st.session_state["sheet"] # <-- 이렇게 수정하세요
-                try:
-                    worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
-                except WorksheetNotFound:
-                    st.error("요청사항이 저장된 시트를 찾을 수 없습니다.")
-                    st.stop()
+                sheet = st.session_state["sheet"]
+                worksheet2 = sheet.worksheet(f"{month_str} 방배정 요청")
                 
-                df_room_request_temp = st.session_state["df_room_request"].copy()
-                selected_indices = []
-                for item in selected_items:
-                    for idx, row in df_room_request_temp.iterrows():
-                        if row['이름'] == name and f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" == item:
-                            selected_indices.append(idx)
-                
-                if selected_indices:
-                    df_room_request_temp = df_room_request_temp.drop(index=selected_indices)
-                    df_room_request_temp = df_room_request_temp.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-                    try:
-                        worksheet2.clear()
-                        worksheet2.update([df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist())
-                    except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                        st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
-                        st.stop()
-                    
+                # ▼▼▼ [수정된 부분] clear()/update() 대신 특정 행을 찾아 삭제 ▼▼▼
+                all_records = worksheet2.get_all_records()
+                rows_to_delete_indices = []
+
+                # 삭제할 항목들을 실제 시트에서 찾아 인덱스를 기록
+                for i, record in enumerate(all_records):
+                    # 삭제 대상인지 확인하기 위해 multiselect 옵션과 동일한 문자열 생성
+                    record_str = f"{record['분류']} - {format_date_for_display(record['날짜정보'])}"
+                    if record['이름'] == name and record_str in selected_items:
+                        # gspread는 1-based index, 헤더 포함이므로 i+2
+                        rows_to_delete_indices.append(i + 2)
+
+                # 찾은 인덱스의 행들을 삭제 (역순으로 정렬하여 삭제 시 인덱스 밀림 방지)
+                if rows_to_delete_indices:
+                    for row_index in sorted(rows_to_delete_indices, reverse=True):
+                        worksheet2.delete_rows(row_index)
+                # ▲▲▲ [수정 완료] ▲▲▲
+
+                    # 로컬 데이터(session_state) 업데이트 (기존 로직과 유사)
+                    df_room_request_temp = st.session_state["df_room_request"].copy()
+                    selected_indices = []
+                    for item in selected_items:
+                        for idx, row in df_room_request_temp.iterrows():
+                            if row['이름'] == name and f"{row['분류']} - {format_date_for_display(row['날짜정보'])}" == item:
+                                selected_indices.append(idx)
+                    df_room_request_temp = df_room_request_temp.drop(index=selected_indices).reset_index(drop=True)
                     st.session_state["df_room_request"] = df_room_request_temp
                     st.session_state["df_user_room_request"] = df_room_request_temp[df_room_request_temp["이름"] == name].copy()
+
                     st.success("요청이 성공적으로 삭제되었습니다.")
                     time.sleep(1.5)
                     st.rerun()
                 else:
-                    st.info("ℹ️ 삭제할 항목을 찾을 수 없습니다.")
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
-            st.stop()
+                    st.info("ℹ️ 삭제할 항목을 찾을 수 없습니다.") # 기존 로직 유지
         except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
             st.error(f"요청 삭제 중 오류 발생: {str(e)}")
-            st.stop()
+            
     elif submit_delete and not selected_items:
-        st.warning("삭제할 항목을 선택해주세요.")
+        st.warning("삭제할 항목을 선택해주세요.") # 기존 로직 유지
 else:
     st.info("📍 삭제할 요청사항이 없습니다.")

@@ -1019,39 +1019,41 @@ else:
 
 st.write(" ")
 
-# 기존 save_to_gsheet 함수를 찾아서 아래 코드로 통째로 교체하세요.
+# 기존 save_to_gsheet 함수를 이 코드로 교체하세요.
 def save_to_gsheet(name, categories, selected_save_dates, month_str, worksheet):
     try:
-        # with st.spinner(...) 구문은 이 함수 바깥으로 옮겼으므로 여기서는 삭제합니다.
         if not name or not categories or not selected_save_dates:
-            # 상태만 반환하고 메시지는 표시하지 않습니다.
-            return None, "input_error" 
+            return None, "input_error"
 
-        df_room_request_temp = st.session_state["df_room_request"].copy()
-        new_requests = []
+        # [수정] 시트에서 직접 최신 데이터를 읽어 중복 검사
+        all_requests = worksheet.get_all_records()
+        df_live_requests = pd.DataFrame(all_requests)
+        
+        new_requests_to_append = []
+        is_duplicate = False
 
         for category in categories:
             for date in selected_save_dates:
                 date = date.strip()
-                existing_request = df_room_request_temp[
-                    (df_room_request_temp['이름'] == name) &
-                    (df_room_request_temp['날짜정보'] == date) &
-                    (df_room_request_temp['분류'] == category)
-                ]
-                if existing_request.empty:
-                    new_requests.append({"이름": name, "분류": category, "날짜정보": date})
+                # 라이브 데이터로 중복 확인
+                if not df_live_requests[(df_live_requests['이름'] == name) &
+                                        (df_live_requests['날짜정보'] == date) &
+                                        (df_live_requests['분류'] == category)].empty:
+                    is_duplicate = True
+                    continue # 중복이면 추가 목록에 넣지 않음
+                
+                new_requests_to_append.append([name, category, date])
 
-        if not new_requests:
-            return df_room_request_temp, "duplicate"
+        if not new_requests_to_append:
+            # 추가할 요청은 없는데 중복이 발견된 경우
+            return st.session_state["df_room_request"], "duplicate"
 
-        new_request_df = pd.DataFrame(new_requests)
-        df_room_request_temp = pd.concat([df_room_request_temp, new_request_df], ignore_index=True)
-        df_room_request_temp = df_room_request_temp.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-
-        if not update_sheet_with_retry(worksheet, [df_room_request_temp.columns.tolist()] + df_room_request_temp.astype(str).values.tolist()):
-            return None, "error"
+        # [수정] append_rows로 안전하게 새 요청만 추가
+        worksheet.append_rows(new_requests_to_append, value_input_option='USER_ENTERED')
         
-        return df_room_request_temp, "success"
+        # 성공 후 최신 데이터 다시 로드하여 반환
+        updated_df = pd.DataFrame(worksheet.get_all_records())
+        return updated_df, "success"
 
     except Exception as e:
         st.error(f"요청 추가 중 오류 발생: {type(e).__name__} - {str(e)}")
@@ -1198,22 +1200,38 @@ if not st.session_state["df_room_request"].empty:
     with col_button_del:
         st.markdown("<div>&nbsp;</div>", unsafe_allow_html=True)
         delete_button_clicked = st.button("📅 삭제", key="request_delete_button")
+    # '방배정 요청 삭제'의 if delete_button_clicked: 블록 전체를 이 코드로 교체하세요.
     if delete_button_clicked:
         if not selected_employee or not selected_items:
             st.error("삭제할 근무자와 항목을 선택해주세요.")
         else:
-            indices = []
-            for item in selected_items:
-                for idx, row in st.session_state["df_room_request"].iterrows():
-                    if row['이름'] == selected_employee and f"{row['분류']} - {row['날짜정보']}" == item:
-                        indices.append(idx)
-            df_room_request = st.session_state["df_room_request"].drop(indices).reset_index(drop=True)
-            st.session_state["df_room_request"] = df_room_request
-            if update_sheet_with_retry(st.session_state["worksheet_room_request"], [df_room_request.columns.tolist()] + df_room_request.values.tolist()):
-                st.cache_data.clear()
-                st.success("요청사항이 삭제되었습니다.")
-                time.sleep(1.5)
-                st.rerun()
+            with st.spinner("요청을 삭제하는 중입니다..."):
+                try:
+                    worksheet = st.session_state["worksheet_room_request"]
+                    all_requests = worksheet.get_all_records()
+                    
+                    # 삭제할 항목 정보를 set으로 만들어 빠른 조회 가능
+                    items_to_delete_set = set(selected_items)
+                    
+                    # 삭제할 행의 인덱스를 뒤에서부터 찾아서 기록 (삭제 시 인덱스 밀림 방지)
+                    rows_to_delete_indices = []
+                    for i, record in reversed(list(enumerate(all_requests))):
+                        record_str = f"{record.get('분류')} - {record.get('날짜정보')}"
+                        if record.get('이름') == selected_employee and record_str in items_to_delete_set:
+                            rows_to_delete_indices.append(i + 2) # gspread는 1-based, 헤더 포함
+                    
+                    # 찾은 행들을 삭제
+                    if rows_to_delete_indices:
+                        for row_idx in rows_to_delete_indices:
+                            worksheet.delete_rows(row_idx)
+
+                    st.cache_data.clear()
+                    st.success("요청사항이 삭제되었습니다.")
+                    time.sleep(1.5)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"요청 삭제 중 오류 발생: {type(e).__name__} - {e}")
 else:
     st.info("📍 방배정 요청이 없습니다.")
 

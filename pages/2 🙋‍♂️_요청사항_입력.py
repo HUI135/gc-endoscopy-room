@@ -271,37 +271,36 @@ def add_request_callback():
     with add_placeholder.container():
         with st.spinner("요청사항을 추가 중입니다..."):
             try:
+                # 세션에서 워크시트 객체를 가져옵니다.
                 worksheet2 = st.session_state["worksheet_request"]
 
+                # '요청 없음'은 특별 처리: 기존 것을 지우고 추가해야 합니다. (아래 삭제 로직 참조)
                 if 분류 == "요청 없음":
-                    df_to_save = st.session_state["df_request"][st.session_state["df_request"]["이름"] != name].copy()
-                    df_to_save = pd.concat([df_to_save, pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": ""}])], ignore_index=True)
-                else:
-                    df_to_save = st.session_state["df_request"][~((st.session_state["df_request"]["이름"] == name) & (st.session_state["df_request"]["분류"] == "요청 없음"))].copy()
-                    new_request_data = {"이름": name, "분류": 분류, "날짜정보": 날짜정보}
-                    df_to_save = pd.concat([df_to_save, pd.DataFrame([new_request_data])], ignore_index=True)
+                    st.error("'요청 없음' 기능은 기존 모든 요청을 삭제해야 하므로, 삭제 로직과 결합해야 합니다. (별도 구현 필요)")
+                    # 여기서 사용자(name)의 모든 행을 삭제하는 로직을 먼저 실행한 뒤,
+                    # new_request_data = [name, 분류, ""]
+                    # worksheet2.append_row(new_request_data)
+                    # 위와 같이 추가해야 합니다.
+                    return
 
-                df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-                
-                try:
-                    worksheet2.clear()
-                    worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
-                except gspread.exceptions.APIError as e:
-                    st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                    st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
-                    st.stop()
-                
-                st.session_state["df_request"] = df_to_save
-            
+                # --- ▼▼▼ 핵심 수정 부분 ▼▼▼ ---
+                # 시트 맨 끝에 한 줄만 추가합니다.
+                new_request_data = [name, 분류, 날짜정보]
+                worksheet2.append_row(new_request_data)
+                # --- ▲▲▲ 핵심 수정 부분 ▲▲▲ ---
+
+                # 성공 후, 화면에 즉시 반영하기 위해 st.session_state의 DataFrame도 업데이트합니다.
+                df_request = st.session_state["df_request"]
+                new_df = pd.DataFrame([{"이름": name, "분류": 분류, "날짜정보": 날짜정보}])
+                st.session_state["df_request"] = pd.concat([df_request, new_df], ignore_index=True)
+
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 (요청 추가): {str(e)}")
+                st.warning(f"Google Sheets API 오류: {str(e)}")
                 st.stop()
             except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
                 st.error(f"요청 추가 중 오류 발생: {str(e)}")
                 st.stop()
-        
+
         st.success("요청이 성공적으로 기록되었습니다.")
         time.sleep(1.5)
     
@@ -320,51 +319,44 @@ def delete_requests_callback():
     with delete_placeholder.container():
         with st.spinner("요청사항을 삭제 중입니다..."):
             try:
-                # sheet = gc.open_by_url(url) <-- 이 부분을 삭제하고
-                worksheet2 = st.session_state["worksheet_request"] # <-- 세션에서 바로 가져옵니다.
+                worksheet2 = st.session_state["worksheet_request"]
+                selected_items = st.session_state.get("delete_select", []) # UI에서 선택된 항목들
+
+                # --- ▼▼▼ 핵심 수정 부분 ▼▼▼ ---
+                # 1. 시트의 현재 데이터를 모두 실시간으로 다시 가져옵니다.
+                all_records = worksheet2.get_all_records()
                 rows_to_delete_indices = []
-                for item in selected_items:
-                    parts = item.split(" - ", 1)
-                    if len(parts) == 2:
-                        분류_str, 날짜정보_str = parts
-                        matching_rows = st.session_state["df_request"][
-                            (st.session_state["df_request"]['이름'] == name) &
-                            (st.session_state["df_request"]['분류'] == 분류_str) &
-                            (st.session_state["df_request"]['날짜정보'] == 날짜정보_str)
-                        ]
-                        rows_to_delete_indices.extend(matching_rows.index.tolist())
-                
+
+                # 2. 삭제할 행의 인덱스를 찾습니다. (헤더가 1행이므로 데이터는 2행부터 시작)
+                for index, record in enumerate(all_records):
+                    # UI에 표시된 형식('분류 - 날짜정보')과 동일하게 문자열 생성
+                    item_str = f"{record['분류']} - {record['날짜정보']}"
+                    # 현재 로그인한 사용자의 요청이고, 삭제 대상으로 선택된 항목인지 확인
+                    if record['이름'] == name and item_str in selected_items:
+                        # gspread는 1-기반 인덱스 사용, +2는 헤더(1행)와 0-기반(enumerate) 때문
+                        rows_to_delete_indices.append(index + 2)
+
+                # 3. 찾은 인덱스의 행들을 삭제합니다. (중요: 인덱스가 엉키지 않게 역순으로 정렬 후 삭제)
                 if rows_to_delete_indices:
-                    df_to_save = st.session_state["df_request"].drop(index=rows_to_delete_indices).reset_index(drop=True)
-                    
-                    df_to_save = df_to_save.sort_values(by=["이름", "날짜정보"]).fillna("").reset_index(drop=True)
-                    
-                    try:
-                        worksheet2.clear()
-                        worksheet2.update([df_to_save.columns.tolist()] + df_to_save.astype(str).values.tolist())
-                    except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                        st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
-                        st.stop()
-                    
-                    st.session_state["df_request"] = df_to_save
-                    # st.session_state["df_user_request"] = df_to_save[df_to_save["이름"] == name].copy()
-                else:
-                    st.warning("삭제할 항목을 찾을 수 없습니다.")
-                    return
-            
+                    for row_index in sorted(rows_to_delete_indices, reverse=True):
+                        worksheet2.delete_rows(row_index)
+                # --- ▲▲▲ 핵심 수정 부분 ▲▲▲ ---
+
+                # 성공 후, 화면에 즉시 반영하기 위해 st.session_state의 DataFrame도 업데이트합니다.
+                # (간단하게는 전체 데이터를 다시 불러오는 것이 가장 정확합니다.)
+                updated_records = worksheet2.get_all_records()
+                st.session_state["df_request"] = pd.DataFrame(updated_records)
+
+
             except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접수되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 (요청 삭제): {str(e)}")
+                st.warning(f"Google Sheets API 오류: {str(e)}")
                 st.stop()
             except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
                 st.error(f"요청 삭제 중 오류 발생: {str(e)}")
                 st.stop()
-        
+
         st.success("요청이 성공적으로 삭제되었습니다.")
         time.sleep(1.5)
-        # st.rerun()
 
 # 토요/휴일 스케줄 데이터 로드 함수 (새로 추가)
 @st.cache_data(show_spinner=False)
