@@ -142,7 +142,7 @@ def load_data_page6_no_cache(month_str, retries=3, delay=5):
         worksheet_cumulative = sheet.worksheet(f"{month_str} 누적")
         df_cumulative = pd.DataFrame(worksheet_cumulative.get_all_records())
         if df_cumulative.empty:
-            df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+            df_cumulative = pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (목표)", "오후당직 (목표)"])
         else:
             df_cumulative.rename(columns={f"{month_str}": "이름"}, inplace=True)
 
@@ -1809,7 +1809,7 @@ if st.session_state.get('show_assignment_results', False):
         # --- 배정 로직 ---
         total_stats = {'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(), 'rooms': {str(i): Counter() for i in range(1, 13)}, 'time_room_slots': {s: Counter() for s in time_slots}}
         df_cumulative = st.session_state["df_cumulative"]
-        afternoon_duty_counts = {row['이름']: int(row['오후당직']) for _, row in df_cumulative.iterrows() if pd.notna(row.get('오후당직')) and int(row['오후당직']) > 0}
+        afternoon_duty_counts = {row['이름']: int(row['오후당직 (목표)']) for _, row in df_cumulative.iterrows() if pd.notna(row.get('오후당직 (목표)')) and int(row['오후당직 (목표)']) > 0}
 
         assignments, date_cache, request_cells, result_data = {}, {}, {}, []
         assignable_slots = [s for s in st.session_state["time_slots"].keys() if not (s.startswith('8:30') and s.endswith('_당직'))]
