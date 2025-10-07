@@ -58,6 +58,7 @@ try:
     kst = ZoneInfo("Asia/Seoul")
     now = datetime.datetime.now(kst)
     today = now.date()
+
     next_month_date = today.replace(day=1) + relativedelta(months=1)
 
     # 모든 날짜 관련 변수를 다음 달 기준으로 설정합니다.

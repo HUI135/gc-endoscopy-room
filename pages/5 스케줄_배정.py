@@ -1225,9 +1225,9 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
 
     active_weekdays = [pd.to_datetime(date) if isinstance(date, str) else date for date in active_weekdays]
     df_cum_indexed = df_cumulative.set_index('항목').T
-
-    # ✨ [추가] 함수의 시작 부분에서 현재까지의 주간 근무 횟수를 미리 계산합니다.
-    weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
+    
+    # --- scores를 루프 시작 전 '한 번만' 정확히 계산 ---
+    scores = {w: (df_cum_indexed.loc[w, f'{time_slot}누적'] + current_cumulative[time_slot].get(w, 0)) for w in all_names if w in df_cum_indexed.index}
 
     # 추가 제외 / 보충 로직
     for date in active_weekdays:
@@ -1236,9 +1236,7 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
         current_workers = current_workers_df['근무자'].unique()
         count_diff = len(current_workers) - target_count
         
-        scores = {w: (df_cum_indexed.loc[w, f'{time_slot}누적'] + current_cumulative[time_slot].get(w, 0)) for w in all_names if w in df_cum_indexed.index}
-
-        # [인원 부족 시 보충] - (기존 로직과 동일)
+        # [인원 부족 시 보충]
         if count_diff < 0:
             needed = -count_diff
             day_name = day_map.get(date.weekday())
@@ -1265,48 +1263,30 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
             for worker_to_add in candidates[:needed]:
                 df_final = update_worker_status(df_final, date_str, time_slot, worker_to_add, '추가보충', '인원 부족 (균형 조정)', '🟡 노란색', day_map, week_numbers)
                 current_cumulative[time_slot][worker_to_add] = current_cumulative[time_slot].get(worker_to_add, 0) + 1
-    
-        # ✨ [인원 초과 시 제외] - (로직 수정)
+                scores[worker_to_add] = scores.get(worker_to_add, 0) + 1 # scores 실시간 업데이트
+
+        # [인원 초과 시 제외]
         elif count_diff > 0:
             over_count = count_diff
             must_work = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'꼭 근무({time_slot})'}
             
             potential_removals = [w for w in current_workers if w not in must_work]
             
-            # --- ✨ 새로운 정렬 로직 시작 ---
-            current_week = week_numbers.get(date.date())
+            if not potential_removals or not scores: continue
+            
+            min_overall_score = min(scores.values())
 
-            def is_safe_to_remove(worker):
-                """이 근무자를 제외해도 주간 최소 근무 규칙을 위반하지 않는지 확인합니다."""
-                if not current_week:
-                    return True # 주차 정보가 없으면 규칙 적용 불가, 일단 안전하다고 판단
+            potential_removals.sort(key=lambda w: (
+                scores.get(w, 0) <= min_overall_score + 1,
+                -scores.get(w, 0)
+            ))
 
-                # get을 사용하여 안전하게 주간 근무 횟수를 가져옵니다.
-                count = weekly_counts.get(worker, {}).get(time_slot, defaultdict(int))[current_week]
-
-                if time_slot == '오전':
-                    # 현재 3회 초과 근무 중이어야 제외해도 3회 이상이 보장됩니다.
-                    return count > 3
-                elif time_slot == '오후':
-                    # 현재 1회 초과 근무 중이어야 제외해도 1회 이상이 보장됩니다.
-                    return count > 1
-                return True
-
-            # 정렬 기준: 1.제거해도 안전한가(True가 먼저), 2.누적 근무가 많은가(내림차순)
-            potential_removals.sort(
-                key=lambda w: (is_safe_to_remove(w), scores.get(w, 0)),
-                reverse=True
-            )
-            removable_workers = potential_removals
-            # --- ✨ 새로운 정렬 로직 끝 ---
-
-            for worker_to_remove in removable_workers[:over_count]:
+            # --- ✨✨ NameError가 발생했던 오타 수정 ✨✨ ---
+            # removable_workers -> potential_removals 로 변경
+            for worker_to_remove in potential_removals[:over_count]:
                 df_final = update_worker_status(df_final, date_str, time_slot, worker_to_remove, '추가제외', '인원 초과 (균형 조정)', '🟣 보라색', day_map, week_numbers)
                 current_cumulative[time_slot][worker_to_remove] = current_cumulative[time_slot].get(worker_to_remove, 0) - 1
-                
-                # ✨ [추가] 제외가 발생했으므로, 다음 사람을 판단하기 위해 주간 근무 횟수 정보를 즉시 업데이트합니다.
-                if current_week and worker_to_remove in weekly_counts:
-                    weekly_counts[worker_to_remove][time_slot][current_week] -= 1
+                scores[worker_to_remove] = scores.get(worker_to_remove, 0) - 1 # scores 실시간 업데이트
 
     return df_final, current_cumulative
 
