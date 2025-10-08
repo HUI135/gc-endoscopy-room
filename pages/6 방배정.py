@@ -517,7 +517,7 @@ if not st.session_state.get("data_loaded", False):
 
 # 세션에 저장된 df_schedule이 비어있으면 에러 메시지 출력 후 실행 중단
 if st.session_state["df_schedule"].empty:
-    st.info("스케줄이 아직 배정되지 않았습니다.")
+    st.info("해당 월의 스케줄이 아직 생성되지 않았습니다.")
     st.stop()
 
 # 근무자 명단 수정

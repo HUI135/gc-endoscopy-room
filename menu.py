@@ -59,6 +59,9 @@ def menu():
                 if st.sidebar.button("🗓️ 스케줄 배정", use_container_width=True, disabled=(current_page_basename == "5 스케줄_배정.py")):
                     st.switch_page("pages/5 스케줄_배정.py")
 
+                if st.sidebar.button("✍️ 스케줄 수정", use_container_width=True, disabled=(current_page_basename == "5 스케줄_수정.py")):
+                    st.switch_page("pages/5 스케줄_수정.py")
+
                 # 스케줄 배정과 방배정 사이 간격
                 st.sidebar.markdown("<div style='margin-top: 4px;'></div>", unsafe_allow_html=True)
                 

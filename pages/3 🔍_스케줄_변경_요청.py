@@ -30,11 +30,12 @@ now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
+month_str = "2025년 10월"
 YEAR_STR = month_str.split('년')[0]
 # '온콜'을 AM_COLS에서 분리하여 명확하게 관리
 AM_COLS = [str(i) for i in range(1, 13)]
 ONCALL_COL = '오전당직(온콜)'
-PM_COLS = [f'오후{i}' for i in range(1, 6)]
+PM_COLS = [f'오후{i}' for i in range(1, 5)]
 REQUEST_SHEET_NAME = f"{month_str} 스케줄 변경요청"
 
 # --- 함수 정의 ---
@@ -279,6 +280,76 @@ def is_person_assigned_at_time(df, person_name, date_obj, shift_type):
             return True
     return False
 
+# --- 1. 기존 load_schedule_data 및 find_latest_schedule_version 함수를 이 코드로 완전히 교체하세요 ---
+
+def find_latest_schedule_version(sheet, month_str):
+    """주어진 월에 해당하는 스케줄 시트 중 가장 최신 버전을 찾습니다."""
+    versions = {}
+    pattern = re.compile(f"^{re.escape(month_str)} 스케줄( ver(\d+\.\d+))?$")
+    for ws in sheet.worksheets():
+        match = pattern.match(ws.title)
+        if match:
+            version_num_str = match.group(2)
+            version_num = float(version_num_str.replace(' ver', '')) if version_num_str else 1.0
+            versions[ws.title] = version_num
+    
+    if not versions:
+        return None
+    
+    latest_version_name = sorted(versions.items(), key=lambda item: item[1], reverse=True)[0][0]
+    return latest_version_name
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_schedule_data(month_str):
+    """가장 최신 버전의 스케줄 데이터를 불러온 후, 필요한 열만 남도록 필터링합니다."""
+    try:
+        gc = get_gspread_client()
+        if not gc:
+            return pd.DataFrame(), None
+
+        spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        latest_version_name = find_latest_schedule_version(spreadsheet, month_str)
+        
+        if not latest_version_name:
+            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
+            return pd.DataFrame(), None
+
+        worksheet = spreadsheet.worksheet(latest_version_name)
+        records = worksheet.get_all_records()
+        
+        if not records:
+            st.info(f"'{latest_version_name}' 시트에 데이터가 없습니다.")
+            return pd.DataFrame(), latest_version_name
+            
+        df = pd.DataFrame(records)
+        if '날짜' not in df.columns:
+            st.info(f"'{latest_version_name}' 시트의 형식이 올바르지 않습니다.")
+            return pd.DataFrame(), latest_version_name
+
+        # ▼▼▼ [핵심 수정] 데이터프레임 자체를 필요한 열만 남도록 필터링합니다. ▼▼▼
+        essential_columns = ['날짜', '요일'] + [str(i) for i in range(1, 13)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 5)]
+        columns_to_keep = [col for col in essential_columns if col in df.columns]
+        df = df[columns_to_keep]
+        # ▲▲▲ [핵심 수정] ▲▲▲
+            
+        df.fillna('', inplace=True)
+        df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
+        df.dropna(subset=['날짜_dt'], inplace=True)
+        
+        return df, latest_version_name
+
+    except gspread.exceptions.APIError as e:
+        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+        st.error(f"Google Sheets API 오류 (스케줄 데이터 로드): {str(e)}")
+        st.stop()
+    except gspread.exceptions.WorksheetNotFound:
+        st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
+        return pd.DataFrame(), None
+    except Exception as e:
+        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+        st.error(f"스케줄 데이터 로드 중 오류 발생: {str(e)}")
+        st.stop()
+
 # --- 메인 로직 ---
 try:
     user_name = st.session_state.get("name", "")
@@ -311,15 +382,26 @@ if st.button("🔄 새로고침 (R)"):
         st.error(f"새로고침 중 오류 발생: {str(e)}")
         st.stop()
 
-df_schedule = load_schedule_data(month_str)
+df_schedule, loaded_version = load_schedule_data(month_str)
 
 if df_schedule.empty:
     st.stop()
 else:
+    # 불러온 스케줄의 버전 정보를 화면에 표시합니다.
+    if loaded_version:
+        version_match = re.search(r'(ver\s*\d+\.\d+)', loaded_version)
+        if version_match:
+            st.info(f"✅ 현재 표시되는 스케줄은 **'{version_match.group(1)}'** 입니다.")
+        else:
+            st.info(f"✅ 현재 표시되는 스케줄은 기본 버전입니다.")
+
+    # [수정] df_schedule이 이미 필터링되었으므로, 바로 표시합니다. (날짜_dt 열만 제외)
     st.dataframe(df_schedule.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)
+    
     st.divider()
 
     st.subheader("✨ 스케줄 변경 요청하기")
+    # 이하 나머지 코드는 그대로 유지됩니다.
     with st.expander("🔑 사용설명서"):
         st.markdown("""
         **🟢 나의 스케줄을 상대방과 바꾸기**
@@ -346,6 +428,7 @@ else:
     st.write(" ")
     st.markdown("<h6 style='font-weight:bold;'>🟢 나의 스케줄을 상대방과 바꾸기</h6>", unsafe_allow_html=True)
 
+    df_schedule = df_schedule[['날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4', '날짜_dt']]  # 필요한 열만 남김
     user_shifts = get_person_shifts(df_schedule, user_name)
 
     if not user_shifts:

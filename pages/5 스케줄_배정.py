@@ -1092,6 +1092,78 @@ def load_closing_days(month_str):
         st.error(f"휴관일 정보를 불러오는 중 오류가 발생했습니다: {e}")
         return [], pd.DataFrame(columns=["날짜"])
 
+def transform_schedule_for_checking(df_final_unique, df_excel, month_start, month_end):
+    """
+    [수정] 배정 확인용 스케줄 데이터를 생성합니다.
+    휴가/제외 인원을 포함한 모든 인원이 출력되도록 열 개수를 동적으로 계산합니다.
+    """
+    # [핵심 수정 1] 월 전체에서 일별 최대 인원수 계산
+    daily_counts = df_final_unique.groupby(['날짜', '시간대'])['근무자'].nunique().unstack(fill_value=0)
+    max_am_workers = int(daily_counts.get('오전', pd.Series([0])).max())
+    max_pm_workers = int(daily_counts.get('오후', pd.Series([0])).max())
+
+    # 토요/휴일 스케줄의 최대 인원수도 고려
+    if not df_excel.empty:
+        weekend_am_counts = df_excel[[str(i) for i in range(1, 13)]].apply(lambda row: row.str.strip().ne('').sum(), axis=1)
+        max_am_workers = max(max_am_workers, weekend_am_counts.max())
+
+    # 최종 열 개수 확정 (최소 12, 4개는 유지)
+    max_am_workers = max(max_am_workers, 12)
+    max_pm_workers = max(max_pm_workers, 4)
+
+    date_range = pd.date_range(start=month_start, end=month_end)
+    date_list = [f"{d.month}월 {d.day}일" for d in date_range]
+    weekday_map = {'Mon': '월', 'Tue': '화', 'Wed': '수', 'Thu': '목', 'Fri': '금', 'Sat': '토', 'Sun': '일'}
+    weekdays = [weekday_map[d.strftime('%a')] for d in date_range]
+    target_year = month_start.year
+
+    # [핵심 수정 2] 동적으로 계산된 열 개수로 컬럼 정의
+    columns = ['날짜', '요일'] + \
+              [str(i) for i in range(1, max_am_workers + 1)] + \
+              ['오전당직(온콜)'] + \
+              [f'오후{i}' for i in range(1, max_pm_workers + 1)]
+    result_df = pd.DataFrame(columns=columns)
+
+    for date, weekday in zip(date_list, weekdays):
+        date_key = datetime.strptime(date, '%m월 %d일').replace(year=target_year).strftime('%Y-%m-%d')
+        
+        row_data = {'날짜': date, '요일': weekday}
+
+        # 오전/오후 근무자 정보 처리
+        for time_slot, max_workers, col_prefix in [('오전', max_am_workers, ''), ('오후', max_pm_workers, '오후')]:
+            # 모든 상태의 근무자 정보를 가져옴
+            workers_info = df_final_unique[
+                (df_final_unique['날짜'] == date_key) &
+                (df_final_unique['시간대'] == time_slot)
+            ].sort_values(by=['색상_우선순위', '근무자']).to_dict('records')
+
+            for i in range(max_workers):
+                col_name = f"{col_prefix}{i+1}" if col_prefix else str(i+1)
+                if i < len(workers_info):
+                    info = workers_info[i]
+                    worker_name = info['근무자']
+                    status = info['상태']
+                    if status not in ['근무', '당직', '기본']:
+                        row_data[col_name] = f"{worker_name}({status})"
+                    else:
+                        row_data[col_name] = worker_name
+                else:
+                    row_data[col_name] = ''
+
+        # 당직 및 주말 정보 처리
+        excel_row = df_excel[df_excel['날짜'] == date]
+        if not excel_row.empty:
+            row_data['오전당직(온콜)'] = excel_row['오전당직(온콜)'].iloc[0] if '오전당직(온콜)' in excel_row.columns else ''
+            if weekday in ['토', '일']:
+                for i in range(1, max_am_workers + 1):
+                    row_data[str(i)] = excel_row[str(i)].iloc[0] if str(i) in excel_row.columns and pd.notna(excel_row[str(i)].iloc[0]) else ''
+                for i in range(1, max_pm_workers + 1):
+                    row_data[f'오후{i}'] = ''
+
+        result_df = pd.concat([result_df, pd.DataFrame([row_data])], ignore_index=True)
+
+    return result_df
+
 def transform_schedule_data(df, df_excel, month_start, month_end):
     # 모든 상태 포함 (제외, 추가제외 포함)
     df = df[['날짜', '시간대', '근무자', '요일', '상태', '색상', '메모']].copy()
@@ -1479,6 +1551,7 @@ if st.session_state.get('assigned', False):
                 
                 weekday_map_korean = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
 
+                # [수정 1] 오전 휴가자 상태를 '제외'가 아닌 '휴가' 또는 '학회'로 설정
                 for vac in (vacationers & base_workers):
                     korean_day = weekday_map_korean[date.weekday()]
                     log_date = f"{date.strftime('%-m월 %-d일')} ({korean_day})"
@@ -1486,8 +1559,9 @@ if st.session_state.get('assigned', False):
                     
                     st.session_state.request_logs.append(f"• {log_date} {vac} - {reason}로 인한 제외")
                     
-                    df_final = update_worker_status(df_final, date_str, time_slot_am, vac, '제외', f'{reason}로 인한 제외', '🔴 빨간색', day_map, week_numbers)
-        
+                    # '제외' 대신 실제 사유(reason)를 상태(status)로 전달
+                    df_final = update_worker_status(df_final, date_str, time_slot_am, vac, reason, f'{reason}로 인한 제외', '🔴 빨간색', day_map, week_numbers)
+            
             # 오전 배정 후 동기화
             df_final, changed = sync_am_to_pm_exclusions(df_final, active_weekdays, day_map, week_numbers, initial_master_assignments)
 
@@ -1503,6 +1577,7 @@ if st.session_state.get('assigned', False):
             time_slot_pm = '오후'
             target_count_pm = 4
             
+            # 오후 초기 배정
             for date in active_weekdays:
                 date_str = date.strftime('%Y-%m-%d')
                 morning_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
@@ -1511,20 +1586,22 @@ if st.session_state.get('assigned', False):
                 base_workers = initial_master_assignments.get((date_str, time_slot_pm), set())
                 must_work = set(requests_on_date[requests_on_date['분류'] == f'꼭 근무({time_slot_pm})']['이름'].tolist())
                 
-                # 오후 배정 대상 계산
                 eligible_workers = morning_workers | must_work
-                final_workers = (base_workers & eligible_workers) - vacationers | must_work  # 기본 마스터와 오전 근무자 교집합에서 휴가 제외, 꼭 근무 추가
-                # final_workers = set(random.sample(list(final_workers), min(len(final_workers), target_count_pm))) if final_workers else set()  # 목표 인원(4명)으로 제한
-
-                # 근무자 배정
+                final_workers = (base_workers & eligible_workers) - vacationers | must_work
+                
                 for worker in final_workers:
                     df_final = update_worker_status(df_final, date_str, time_slot_pm, worker, '근무', '' if worker in must_work else '', '🟠 주황색' if worker in must_work else '기본', day_map, week_numbers)
                 
-                # 휴가로 인한 제외 처리
+                # [수정 2] 오후 휴가자 상태도 '제외'가 아닌 실제 사유로 설정
                 for vac in (vacationers & base_workers):
                     if not df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot_pm) & (df_final['근무자'] == vac) & (df_final['상태'] == '근무')].empty:
                         continue
-                    df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, '제외', '휴가로 제외', '🔴 빨간색', day_map, week_numbers)
+                    
+                    reason_series = requests_on_date[requests_on_date['이름'] == vac]['분류']
+                    reason = reason_series.iloc[0] if not reason_series.empty else "휴가"
+                    
+                    # '제외' 대신 실제 사유(reason)를 상태(status)로 전달
+                    df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, reason, f'{reason}로 제외', '🔴 빨간색', day_map, week_numbers)
 
             # 오후 배정 후 동기화
             df_final, changed = sync_am_to_pm_exclusions(df_final, active_weekdays, day_map, week_numbers, initial_master_assignments)
@@ -2032,19 +2109,25 @@ if st.session_state.get('assigned', False):
                 gc = get_gspread_client()
                 sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
                 
-                df_schedule_to_save = transform_schedule_data(df_final_unique, df_excel, month_start, month_end)
+                # 이 함수가 이제 동적으로 열이 생성된 데이터프레임을 반환합니다.
+                df_schedule_to_save = transform_schedule_for_checking(df_final_unique, df_excel, month_start, month_end)
+                
                 try:
-                    worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄 test")
+                    worksheet_schedule = sheet.worksheet(f"{month_str} 스케줄 ver1.0")
                 except gspread.exceptions.WorksheetNotFound:
-                    worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄 test", rows=1000, cols=50)
+                    worksheet_schedule = sheet.add_worksheet(title=f"{month_str} 스케줄 ver1.0", rows=1000, cols=50) # cols는 여유있게
+                
                 update_sheet_with_retry(worksheet_schedule, [df_schedule_to_save.columns.tolist()] + df_schedule_to_save.astype(str).values.tolist())
                 
-                df_cumulative_next.rename(columns={'이름': next_month_str}, inplace=True)
                 try:
-                    worksheet_cumulative = sheet.worksheet(f"{next_month_str} 누적 test")
+                    # 시트 이름을 "누적 요약"으로 변경하여 기존 시트와 구분하는 것을 권장합니다.
+                    worksheet_summary = sheet.worksheet(f"{next_month_str} 누적 ver1.0")
                 except gspread.exceptions.WorksheetNotFound:
-                    worksheet_cumulative = sheet.add_worksheet(title=f"{next_month_str} 누적 test", rows=1000, cols=20)
-                update_sheet_with_retry(worksheet_cumulative, [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist())
+                    worksheet_summary = sheet.add_worksheet(title=f"{next_month_str} 누적 ver1.0", rows=100, cols=50)
+                
+                # [핵심] df_cumulative_next 대신 summary_df 변수를 사용하여 시트를 업데이트합니다.
+                update_sheet_with_retry(worksheet_summary, [summary_df.columns.tolist()] + summary_df.values.tolist())
+
             except Exception as e:
                 st.error(f"Google Sheets 저장 중 오류 발생: {e}")
                 st.stop()
@@ -2093,7 +2176,7 @@ if st.session_state.get('assigned', False):
                 st.warning("⚠️ 요약 테이블 데이터를 불러올 수 없습니다. 새로고침 후 다시 시도해주세요.")
 
             st.divider()
-            st.success(f"✅ {month_str} 스케줄 및 {next_month_str} 누적 테이블이 Google Sheets에 저장되었습니다.")
+            st.success(f"✅ {month_str} 스케줄 및 {next_month_str} 누적 테이블 ver1.0이 Google Sheets에 저장되었습니다.")
             
             col1, col2 = st.columns(2)
             with col1:
