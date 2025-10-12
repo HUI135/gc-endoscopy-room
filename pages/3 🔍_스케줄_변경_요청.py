@@ -39,12 +39,6 @@ PM_COLS = [f'오후{i}' for i in range(1, 5)]
 REQUEST_SHEET_NAME = f"{month_str} 스케줄 변경요청"
 
 # --- 함수 정의 ---
-def clean_name(name):
-    """이름 뒤에 붙는 (상태) 문자열을 제거합니다."""
-    if not isinstance(name, str):
-        return ""
-    return re.sub(r'\s*\(.*\)', '', name).strip()
-
 def get_gspread_client():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -218,7 +212,9 @@ def get_shift_type(col_name):
 
 # ✅ 수정된 get_person_shifts 함수
 def get_person_shifts(df, person_name):
+    # 중복을 방지하기 위해 세트(set)를 사용
     shifts_set = set()
+
     am_cols_in_df = [col for col in AM_COLS if col in df.columns]
     oncall_col_in_df = ONCALL_COL if ONCALL_COL in df.columns else None
     pm_cols_in_df = [col for col in PM_COLS if col in df.columns]
@@ -227,26 +223,27 @@ def get_person_shifts(df, person_name):
         dt = row['날짜_dt']
         date_str_display = dt.strftime("%-m월 %-d일") + f" ({'월화수목금토일'[dt.weekday()]})"
 
-        # 1. 온콜 근무 확인 (clean_name 적용)
-        if oncall_col_in_df and clean_name(row[oncall_col_in_df]) == person_name:
+        # 1. 온콜 근무 확인
+        if oncall_col_in_df and row[oncall_col_in_df] == person_name:
             shift_type = '오전당직(온콜)'
             display_str = f"{date_str_display} - {shift_type}"
             shifts_set.add((dt.date(), shift_type, display_str, person_name))
 
-        # 2. 일반 오전 근무 확인 (clean_name 적용)
-        is_in_am = any(clean_name(row[col]) == person_name for col in am_cols_in_df)
+        # 2. 일반 오전 근무 확인
+        is_in_am = any(row[col] == person_name for col in am_cols_in_df)
         if is_in_am:
             shift_type = '오전'
             display_str = f"{date_str_display} - {shift_type}"
             shifts_set.add((dt.date(), shift_type, display_str, person_name))
 
-        # 3. 오후 근무 확인 (clean_name 적용)
-        is_in_pm = any(clean_name(row[col]) == person_name for col in pm_cols_in_df)
+        # 3. 오후 근무 확인
+        is_in_pm = any(row[col] == person_name for col in pm_cols_in_df)
         if is_in_pm:
             shift_type = '오후'
             display_str = f"{date_str_display} - {shift_type}"
             shifts_set.add((dt.date(), shift_type, display_str, person_name))
 
+    # 세트를 정렬된 딕셔너리 리스트로 변환하여 반환
     sorted_shifts = sorted(list(shifts_set), key=lambda x: (x[0], x[1]))
     return [
         {'date_obj': date_obj, 'shift_type': stype, 'display_str': dstr, 'person_name': pname}
@@ -254,11 +251,8 @@ def get_person_shifts(df, person_name):
     ]
 
 def get_all_employee_names(df):
-    all_cols = [col for col in df.columns if col in AM_COLS + [ONCALL_COL] + PM_COLS]
-    all_names_raw = df[all_cols].values.ravel()
-    # clean_name 함수를 적용하고, 빈 문자열을 제외한 후, set으로 중복을 제거합니다.
-    cleaned_names = {clean_name(name) for name in all_names_raw if clean_name(name)}
-    return cleaned_names
+    all_cols = [col for col in df.columns if col in AM_COLS + PM_COLS]
+    return set(df[all_cols].values.ravel()) - {''}
 
 # ✅ 수정된 is_person_assigned_at_time 함수
 def is_person_assigned_at_time(df, person_name, date_obj, shift_type):
@@ -269,8 +263,10 @@ def is_person_assigned_at_time(df, person_name, date_obj, shift_type):
 
     check_cols = []
     if shift_type == "오전":
+        # '온콜'을 제외한 오전 근무 열만 확인
         check_cols = [col for col in AM_COLS if col in row_dict]
     elif shift_type == "오전당직(온콜)":
+        # '온콜' 열만 확인
         if ONCALL_COL in row_dict:
             check_cols = [ONCALL_COL]
     elif shift_type == "오후":
@@ -278,9 +274,9 @@ def is_person_assigned_at_time(df, person_name, date_obj, shift_type):
     else:
         return False
 
-    # 해당 열들에 이름이 있는지 확인 (clean_name 적용)
+    # 해당 열들에 이름이 있는지 확인
     for col in check_cols:
-        if clean_name(row_dict.get(col)) == person_name:
+        if row_dict.get(col) == person_name:
             return True
     return False
 
@@ -399,16 +395,8 @@ else:
         else:
             st.info(f"✅ 현재 표시되는 스케줄은 기본 버전입니다.")
 
-    # ▼▼▼ [핵심 수정] 화면 표시용 데이터프레임에서 (상태) 문자열 제거 ▼▼▼
-    df_display = df_schedule.copy()
-    # 이름이 포함될 수 있는 모든 열 목록
-    name_cols = [str(i) for i in range(1, 13)] + [ONCALL_COL] + PM_COLS
-    for col in name_cols:
-        if col in df_display.columns:
-            # clean_name 함수를 각 셀에 적용
-            df_display[col] = df_display[col].apply(clean_name)
-    
-    st.dataframe(df_display.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)
+    # [수정] df_schedule이 이미 필터링되었으므로, 바로 표시합니다. (날짜_dt 열만 제외)
+    st.dataframe(df_schedule.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)
     
     st.divider()
 

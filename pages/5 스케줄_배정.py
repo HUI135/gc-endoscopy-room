@@ -81,7 +81,7 @@ now = datetime.now(kst)
 today = now.date()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_str = month_dt.strftime("%Y년 %-m월")
-# month_str = "2025년 10월"
+month_str = "2025년 10월"
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
 month_start = month_dt
 month_end = month_dt.replace(day=last_day)
@@ -1612,7 +1612,7 @@ df_cumulative_next = df_cumulative.copy()
 initialize_schedule_session_state()
 
 # 1단계: 메인 배정 실행 버튼
-if st.button("🚀 근무 배정 실행", type="primary", use_container_width=True, disabled=st.session_state.get("show_confirmation_warning", False)):
+if st.button("🚀 스케줄 배정 수행", type="primary", use_container_width=True, disabled=st.session_state.get("show_confirmation_warning", False)):
     gc = get_gspread_client()
     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     latest_version = find_latest_schedule_version(sheet, month_str)

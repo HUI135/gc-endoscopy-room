@@ -1060,7 +1060,7 @@ else:
 
         save_option = st.radio(
             "저장 옵션 선택",
-            (f"현재 버전 - '{selected_sheet_name}' 덮어쓰기", f"다음 버전 - '{new_sheet_name}'(으)로 새로 저장하기"),
+            (f"현재 버전 - '{selected_sheet_name}' 덮어쓰기", f"다음 버전 - '{new_sheet_name}'으로 새로 저장하기"),
             key="save_option",
             label_visibility="collapsed"
         )

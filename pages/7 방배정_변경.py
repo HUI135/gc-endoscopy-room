@@ -545,12 +545,9 @@ edited_df = st.data_editor(
 
 # [핵심 수정] '실시간 차이 비교' 방식으로 변경사항 미리보기 로직을 재구성합니다.
 
-# 1. '일괄 적용' 버튼으로 인해 생성된 로그를 가져옵니다. (이것은 그대로 유지됩니다)
 batch_log = st.session_state.get("changed_cells_log", [])
 
-# 2. 수동으로 편집된 내용을 '실시간'으로 계산합니다. (세션에 로그를 누적하지 않습니다)
 manual_change_log = []
-# 기준이 되는 데이터는 세션에 저장된 df_final_assignment 입니다.
 base_df = st.session_state.df_final_assignment 
 
 if not edited_df.equals(base_df):
