@@ -731,7 +731,8 @@ with col_delete:
             delete_schedule_version(month_str, selected_sheet_name)
 
 if not st.session_state.get("data_loaded", False):
-    data = load_data(month_str, selected_sheet_name, "") # 버전 문자열은 파일명 생성 시 따로 처리하므로 빈 값 전달
+    data = load_data(month_str, selected_sheet_name, version_str)
+    
     st.session_state["df_schedule_original"] = data["schedule"]
     st.session_state["df_cumulative_next_display"] = data["cumulative_display"]
     st.session_state["df_display_initial"] = data["schedule"].copy()

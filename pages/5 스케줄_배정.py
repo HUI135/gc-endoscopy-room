@@ -41,7 +41,10 @@ def initialize_schedule_session_state():
         "swap_logs": [],
         "adjustment_logs": [],
         "oncall_logs": [],
-        "assignment_results": None
+        "assignment_results": None,
+        # ▼▼▼ 아래 두 줄을 추가합니다 ▼▼▼
+        "show_confirmation_warning": False,
+        "latest_existing_version": None
     }
     for key, value in keys_to_init.items():
         if key not in st.session_state:
@@ -78,7 +81,7 @@ now = datetime.now(kst)
 today = now.date()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_str = month_dt.strftime("%Y년 %-m월")
-month_str = "2025년 10월"
+# month_str = "2025년 10월"
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
 month_start = month_dt
 month_end = month_dt.replace(day=last_day)
@@ -133,67 +136,119 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
                 st.stop()
     return False
 
+def find_latest_schedule_version(sheet, month_str):
+    """주어진 월에 해당하는 스케줄 시트 중 가장 최신 버전을 찾습니다."""
+    versions = {}
+    # 'ver 1.0', 'ver1.0' 등 다양한 형식을 모두 찾도록 정규식 수정
+    pattern = re.compile(f"^{re.escape(month_str)} 스케줄(?: ver\s*(\d+\.\d+))?$")
+    
+    for ws in sheet.worksheets():
+        match = pattern.match(ws.title)
+        if match:
+            version_num_str = match.group(1) # ver 뒤의 숫자 부분 (예: '1.0')
+            # 버전 넘버가 있으면 float으로 변환, 없으면 (기본 시트면) 1.0으로 처리
+            version_num = float(version_num_str) if version_num_str else 1.0
+            versions[ws.title] = version_num
+    
+    if not versions:
+        return None
+
+    # 가장 높은 버전 번호를 가진 시트의 이름을 반환
+    return max(versions, key=versions.get)
+
+def find_latest_cumulative_version(sheet, month_str):
+    """주어진 월의 '다음 달'에 해당하는 누적 시트 중 가장 최신 버전을 찾습니다."""
+    versions = {}
+    pattern = re.compile(f"^{re.escape(month_str)} 누적(?: ver\s*(\d+\.\d+))?$")
+    
+    for ws in sheet.worksheets():
+        match = pattern.match(ws.title)
+        if match:
+            version_num_str = match.group(1)
+            version_num = float(version_num_str) if version_num_str else 1.0
+            versions[ws.title] = version_num
+            
+    if not versions:
+        return None # 최신 버전을 찾지 못하면 None 반환
+        
+    return max(versions, key=versions.get)
+
 @st.cache_data(ttl=600, show_spinner="최신 데이터를 구글 시트에서 불러오는 중...")
 def load_data_page5():
     url = st.secrets["google_sheet"]["url"]
     try:
         gc = get_gspread_client()
-        if gc is None:
-            st.stop()
+        if gc is None: st.stop()
         sheet = gc.open_by_url(url)
     except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주세요.")
-        st.error(f"스프레드시트 열기 실패: {type(e).__name__} - {e}")
-        st.stop()
+        st.error(f"스프레드시트 열기 실패: {e}"); st.stop()
 
-    def load_worksheet(sheet, title, default_cols, create_if_missing=True, master_names=None):
-        try:
-            worksheet = sheet.worksheet(title)
-        except gspread.exceptions.WorksheetNotFound:
-            if create_if_missing:
-                st.warning(f"⚠️ '{title}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
-                worksheet = sheet.add_worksheet(title=title, rows=100, cols=20)
-                worksheet.append_row(default_cols)
-                if title.endswith("요청") and master_names:
-                    for name in master_names:
-                        worksheet.append_row([name, "요청 없음", ""])
-            else:
-                st.error(f"❌ '{title}' 시트를 찾을 수 없습니다.")
-                st.stop()
-        try:
-            records = worksheet.get_all_records()
-            data = pd.DataFrame(records) if records else pd.DataFrame(columns=default_cols)
-            return worksheet, data
-        except Exception as e:
-            st.error(f"'{title}' 데이터 로드 실패: {type(e).__name__} - {e}")
-            st.stop()
+    # --- 마스터 시트 로드 ---
+    try:
+        ws1 = sheet.worksheet("마스터")
+        df_master = pd.DataFrame(ws1.get_all_records())
+        master_names_list = df_master["이름"].unique().tolist()
+    except WorksheetNotFound:
+        st.error("❌ '마스터' 시트를 찾을 수 없습니다."); st.stop()
+    except Exception as e:
+        st.error(f"'마스터' 시트 로드 실패: {e}"); st.stop()
 
-    # 마스터 시트 로드
-    ws1, df_master = load_worksheet(sheet, "마스터", ["이름", "주차", "요일", "근무여부"], False)
-    master_names_list = df_master["이름"].unique().tolist()
+    # --- 요청사항 시트 로드 ---
+    try:
+        ws2 = sheet.worksheet(f"{month_str} 요청")
+        df_request = pd.DataFrame(ws2.get_all_records())
+    except WorksheetNotFound:
+        st.warning(f"⚠️ '{month_str} 요청' 시트를 찾을 수 없어 새로 생성합니다.")
+        ws2 = sheet.add_worksheet(title=f"{month_str} 요청", rows=100, cols=3)
+        ws2.append_row(["이름", "분류", "날짜정보"])
+        df_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+    except Exception as e:
+        st.error(f"'요청' 시트 로드 실패: {e}"); st.stop()
 
-    # 요청사항 시트 로드
-    ws2, df_request = load_worksheet(sheet, f"{month_str} 요청", ["이름", "분류", "날짜정보"], True, master_names_list)
-
-    # 누적 시트 로드 및 초기화
-    cumulative_cols = ["항목"] + master_names_list
-    ws4, df_cumulative = load_worksheet(sheet, f"{month_str} 누적", cumulative_cols, True)
+    # --- [핵심 수정] 최신 버전 누적 시트 로드 (원본 형태 그대로) ---
+    df_cumulative = pd.DataFrame()
+    # 다음 달 기준 최신 누적 시트 이름 찾기
+    latest_cum_version_name = find_latest_cumulative_version(sheet, month_str)
     
-    if df_cumulative.empty:
+    worksheet_to_load = None
+    if latest_cum_version_name:
+        try:
+            worksheet_to_load = sheet.worksheet(latest_cum_version_name)
+        except WorksheetNotFound:
+            st.warning(f"'{latest_cum_version_name}' 시트를 찾지 못했습니다.")
+    
+    # 최신 버전이 없으면 이전 달의 최종 누적 시트(현재 월 기준)를 찾음
+    if worksheet_to_load is None:
+        try:
+            prev_month_cum_sheet_name = f"{month_str} 누적"
+            worksheet_to_load = sheet.worksheet(prev_month_cum_sheet_name)
+        except WorksheetNotFound:
+            st.warning(f"⚠️ '{prev_month_cum_sheet_name}' 시트도 찾을 수 없습니다. 빈 누적 테이블로 시작합니다.")
+
+    if worksheet_to_load:
+        all_values = worksheet_to_load.get_all_values()
+        if all_values and len(all_values) > 1:
+            headers = all_values[0]
+            data = [row for row in all_values[1:] if any(cell.strip() for cell in row)]
+            df_cumulative = pd.DataFrame(data, columns=headers)
+        else:
+            st.warning(f"'{worksheet_to_load.title}' 시트가 비어있습니다.")
+
+    # 누적 시트가 비었거나 '항목' 열이 없으면 기본값으로 생성
+    if df_cumulative.empty or '항목' not in df_cumulative.columns:
+        default_cols = ["항목"] + master_names_list
         default_data = [
-            ["오전누적"] + [0] * len(master_names_list),
-            ["오후누적"] + [0] * len(master_names_list),
-            ["오전당직 (목표)"] + [0] * len(master_names_list),
-            ["오후당직 (목표)"] + [0] * len(master_names_list)
+            ["오전누적"] + [0] * len(master_names_list), ["오후누적"] + [0] * len(master_names_list),
+            ["오전당직 (목표)"] + [0] * len(master_names_list), ["오후당직 (목표)"] + [0] * len(master_names_list)
         ]
-        df_cumulative = pd.DataFrame(default_data, columns=cumulative_cols)
-        update_sheet_with_retry(ws4, [cumulative_cols] + default_data)
-    else:
-        # 숫자 열 변환
-        for col in df_cumulative.columns[1:]:
+        df_cumulative = pd.DataFrame(default_data, columns=default_cols)
+
+    # 숫자 열 변환
+    for col in df_cumulative.columns:
+        if col != '항목': # '항목' 열은 문자열이므로 제외
             df_cumulative[col] = pd.to_numeric(df_cumulative[col], errors='coerce').fillna(0).astype(int)
 
-    # 근무/보충 테이블 생성
+    # --- 근무/보충 테이블 생성 ---
     df_shift = generate_shift_table(df_master)
     df_supplement = generate_supplement_table(df_shift, master_names_list)
     
@@ -433,18 +488,26 @@ def append_final_summary_to_excel(worksheet, df_final_summary, style_args):
 st.header("🗓️ 스케줄 배정", divider='rainbow')
 st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 
-# 새로고침 버튼
 if st.button("🔄 새로고침 (R)"):
     try:
         st.cache_data.clear()
         st.cache_resource.clear()
-        st.session_state["data_loaded"] = False
-        st.session_state["df_cumulative"] = pd.DataFrame()  # 누적 시트 강제 리셋
-        st.session_state["edited_df_cumulative"] = pd.DataFrame()
-        st.session_state.assigned = False
-        st.session_state.assignment_results = None
-        load_data_page5()
-        st.success("데이터가 새로고침되었습니다.")
+
+        # ▼▼▼ [핵심 수정] 페이지에 필요한 데이터만 선택적으로 삭제합니다 ▼▼▼
+        keys_to_clear = [
+            "assigned", "output", "df_cumulative_next", "request_logs", 
+            "swap_logs", "adjustment_logs", "oncall_logs", "assignment_results",
+            "show_confirmation_warning", "latest_existing_version",
+            "data_loaded", "df_master", "df_request", "df_cumulative", 
+            "df_shift", "df_supplement", "edited_df_cumulative"
+        ]
+        
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+        # --- 수정 끝 ---
+        
+        st.success("데이터가 새로고침되었습니다. 페이지를 다시 로드합니다.")
         time.sleep(1)
         st.rerun()
     except Exception as e:
@@ -613,29 +676,43 @@ with st.expander("📁 테이블 펼쳐보기"):
 
     st.markdown("**➕ 누적 테이블**")
     st.write("- 변동이 있는 경우, 수정 가능합니다.")
-    display_cumulative_table(st.session_state["df_cumulative"])
+    # 1. 표시할 행 이름 정의 및 원본 데이터에서 필터링
+    rows_to_display = ["오전누적", "오후누적", "오전당직 (목표)", "오후당직 (목표)"]
+    df_cumulative_full = st.session_state["df_cumulative"]
+    df_to_edit = df_cumulative_full[df_cumulative_full['항목'].isin(rows_to_display)]
 
-    if "edited_df_cumulative" not in st.session_state:
-        st.session_state["edited_df_cumulative"] = df_cumulative.copy()
-
-    edited_df = st.data_editor(
-        st.session_state["df_cumulative"],
+    # 2. 필터링된 데이터를 data_editor에 표시 (display_cumulative_table 호출 제거)
+    edited_partial_df = st.data_editor(
+        df_to_edit,
         use_container_width=True,
-        hide_index=True,  # 인덱스 숨기기
-        column_config={
-            "항목": {"editable": False},
-        }
+        hide_index=True,
+        column_config={"항목": {"editable": False}},
+        key="cumulative_editor" # 고유 키 부여
     )
 
+    # 3. 저장 버튼 로직
     if st.button("💾 누적 테이블 수정사항 저장"):
         try:
-            st.session_state["edited_df_cumulative"] = edited_df
-            st.session_state["df_cumulative"] = edited_df.copy()
+            # 원본 전체 데이터의 복사본 생성
+            df_updated_full = st.session_state["df_cumulative"].copy()
+
+            # '항목'을 인덱스로 설정하여 정확한 위치에 업데이트 준비
+            df_updated_full.set_index('항목', inplace=True)
+            edited_partial_df.set_index('항목', inplace=True)
+
+            # 수정된 내용으로 원본 업데이트
+            df_updated_full.update(edited_partial_df)
+            df_updated_full.reset_index(inplace=True) # 인덱스를 다시 열로 복원
+
+            # 세션 상태 및 Google Sheet 업데이트 (이제 df_updated_full이 최신 전체 데이터임)
+            st.session_state["df_cumulative"] = df_updated_full.copy()
+            st.session_state["edited_df_cumulative"] = df_updated_full.copy()
             
             gc = get_gspread_client()
             sheet = gc.open_by_url(url)
-            worksheet4 = sheet.worksheet(f"{month_str} 누적")
-            update_data = [edited_df.columns.tolist()] + edited_df.values.tolist()
+            worksheet4 = sheet.worksheet(f"{month_str} 누적") # 주의: 이 로직은 최신 버전을 찾지 않음
+            update_data = [df_updated_full.columns.tolist()] + df_updated_full.values.tolist()
+            
             if update_sheet_with_retry(worksheet4, update_data):
                 st.success(f"{month_str} 누적 테이블이 성공적으로 저장되었습니다.")
                 time.sleep(1.5)
@@ -646,13 +723,15 @@ with st.expander("📁 테이블 펼쳐보기"):
         except Exception as e:
             st.error(f"누적 테이블 저장 중 오류 발생: {str(e)}")
 
+    # 4. 다운로드 버튼 로직
     with st.container():
         excel_data = excel_download(
             name=f"{month_str} 테이블 종합",
             sheet1=df_shift_processed, name1="근무 테이블",
             sheet2=df_supplement_processed, name2="보충 테이블",
             sheet3=df_request, name3="요청사항 테이블",
-            sheet4=edited_df, name4="누적 테이블"
+            # 수정된 전체 데이터를 다운로드에 사용
+            sheet4=st.session_state["edited_df_cumulative"], name4="누적 테이블"
         )
         st.download_button(
             label="📥 상단 테이블 다운로드",
@@ -1384,7 +1463,6 @@ def calculate_weekly_counts(df_final, all_names, week_numbers):
     return weekly_counts
 
 def balance_weekly_and_cumulative(df_final, active_weekdays, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, all_names, df_cumulative):
-    st.info("⚙️ 최종 누적 횟수 균형 조정 실행...")
     df_cum_indexed = df_cumulative.set_index('항목').T
     
     for time_slot in ['오전', '오후']:
@@ -1393,10 +1471,6 @@ def balance_weekly_and_cumulative(df_final, active_weekdays, initial_master_assi
             if not scores: break
 
             min_s, max_s = min(scores.values()), max(scores.values())
-
-            if max_s - min_s <= 2:
-                st.success(f"✅ {time_slot} 최종 균형 조정 완료 (편차: {max_s - min_s:.1f})")
-                break
             
             worker_scores = sorted(scores.items(), key=lambda item: item[1])
             w_l, s_l = worker_scores[0]
@@ -1424,8 +1498,6 @@ def balance_weekly_and_cumulative(df_final, active_weekdays, initial_master_assi
                     am_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '보충', '추가보충']))]['근무자'])
                     if w_l not in am_workers: continue
                 
-                st.warning(f"🔄 [{i+1}차] {time_slot} 균형 맞교환: {date.strftime('%-m/%d')} {w_h}({s_h:.0f}) ↔️ {w_l}({s_l:.0f})")
-                
                 is_master = w_l in initial_master_assignments.get((date_str, time_slot), set())
                 status, color, memo = ('근무', '기본', '마스터 복귀') if is_master else ('추가보충', '🟡 노란색', '최종 균형 조정')
                 
@@ -1443,12 +1515,6 @@ def balance_weekly_and_cumulative(df_final, active_weekdays, initial_master_assi
             else:
                 max_workers = ", ".join([worker for worker, score in scores.items() if score == max_s])
                 min_workers = ", ".join([worker for worker, score in scores.items() if score == min_s])
-                error_message = (
-                    f"⚠️ {time_slot} 최종 균형 조정 중단: 더 이상 맞교환할 대상을 찾지 못했습니다. (현재 편차: {max_s - min_s:.1f})  \n"
-                    f"    - **최대 누적 ({max_s:.0f}회):** {max_workers}  \n"
-                    f"    - **최소 누적 ({min_s:.0f}회):** {min_workers}"
-                )
-                st.error(error_message)
                 break
         
         else:
@@ -1460,7 +1526,6 @@ def balance_final_cumulative_with_weekly_check(df_final, active_weekdays, df_sup
     """
     [완성본] 주간 최소 근무 횟수를 보장하면서 월간 누적 편차를 2 이하로 맞추는 최종 균형 조정 함수
     """
-    st.info("📊 월간 최종 누적 균형 조정 실행 (주간 최소 근무 확인)...")
 
     # 규칙 설정: 주간 최소 오전 근무 3회, 오후 근무 1회
     MIN_AM_PER_WEEK = 3
@@ -1546,15 +1611,46 @@ df_cumulative_next = df_cumulative.copy()
 
 initialize_schedule_session_state()
 
-st.divider()
-if st.button("🚀 근무 배정 실행", type="primary", use_container_width=True):
-    st.session_state.assigned = True
-    st.session_state.assignment_results = None
-    st.session_state.request_logs = []
-    st.session_state.swap_logs = []
-    st.session_state.adjustment_logs = []
-    st.session_state.oncall_logs = []
-    st.rerun()
+# 1단계: 메인 배정 실행 버튼
+if st.button("🚀 근무 배정 실행", type="primary", use_container_width=True, disabled=st.session_state.get("show_confirmation_warning", False)):
+    gc = get_gspread_client()
+    sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+    latest_version = find_latest_schedule_version(sheet, month_str)
+
+    # 이미 버전이 존재하면 확인 단계로 넘어감
+    if latest_version:
+        st.session_state.show_confirmation_warning = True
+        st.session_state.latest_existing_version = latest_version
+        st.rerun()
+    # 버전이 없으면 바로 배정 실행
+    else:
+        st.session_state.assigned = True
+        st.session_state.assignment_results = None
+        st.session_state.request_logs, st.session_state.swap_logs, st.session_state.adjustment_logs, st.session_state.oncall_logs = [], [], [], []
+        st.rerun()
+
+# 2단계: 확인 경고 및 최종 실행 UI
+if st.session_state.get("show_confirmation_warning", False):
+    latest_version = st.session_state.get("latest_existing_version", "알 수 없는 버전")
+    
+    # 정규식을 사용하여 'verX.X' 부분만 추출
+    version_match = re.search(r'(ver\s*\d+\.\d+)', latest_version)
+    version_str = version_match.group(1) if version_match else latest_version
+    
+    st.warning(f"⚠️ **이미 '{version_str}' 버전이 존재합니다.**\n\n새로운 'ver1.0' 스케줄을 생성하시더라도 {version_str}은 계속 남아있습니다. 계속하시겠습니까?")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ 네, 새로운 ver1.0으로 배정을 실행합니다.", use_container_width=True, type="primary"):
+            st.session_state.assigned = True
+            st.session_state.show_confirmation_warning = False
+            st.session_state.assignment_results = None
+            st.session_state.request_logs, st.session_state.swap_logs, st.session_state.adjustment_logs, st.session_state.oncall_logs = [], [], [], []
+            st.rerun()
+    with col2:
+        if st.button("❌ 아니요, 취소합니다.", use_container_width=True):
+            st.session_state.show_confirmation_warning = False
+            st.rerun()
 
 if st.session_state.get('assigned', False):
 
@@ -2219,7 +2315,7 @@ if st.session_state.get('assigned', False):
                     worksheet_summary = sheet.add_worksheet(title=f"{next_month_str} 누적 ver1.0", rows=100, cols=50)
                 
                 # [핵심] df_cumulative_next 대신 summary_df 변수를 사용하여 시트를 업데이트합니다.
-                update_sheet_with_retry(worksheet_summary, [summary_df.columns.tolist()] + summary_df.values.tolist())
+                update_sheet_with_retry(worksheet_summary, [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist())
 
             except Exception as e:
                 st.error(f"Google Sheets 저장 중 오류 발생: {e}")
