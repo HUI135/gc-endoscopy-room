@@ -29,7 +29,7 @@ st.session_state.current_page = os.path.basename(__file__)
 
 menu.menu()
 
-# random.seed(42)
+random.seed(42)
 
 def initialize_schedule_session_state():
     """스케줄 배정 페이지에서 사용할 모든 세션 상태 키를 초기화합니다."""
@@ -1341,28 +1341,31 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
         elif count_diff > 0:
             over_count = count_diff
             must_work = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'꼭 근무({time_slot})'}
-            
-            potential_removals = [w for w in current_workers if w not in must_work]
-            
-            if not potential_removals or not scores: continue
-            
-            min_overall_score = min(scores.values())
 
-            potential_removals.sort(key=lambda w: (
-                scores.get(w, 0) <= min_overall_score + 1,
-                -scores.get(w, 0)
-            ))
+            # ✨ [핵심 변경 1] 루프가 돌 때마다 제외 가능한 최신 근무자 목록을 가져옵니다.
+            for _ in range(over_count):
+                # 현재 근무 중인 인원 목록을 다시 계산
+                current_workers_df = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '보충', '추가보충']))]
+                potential_removals = [w for w in current_workers_df['근무자'].unique() if w not in must_work]
 
-            # --- ✨✨ NameError가 발생했던 오타 수정 ✨✨ ---
-            # removable_workers -> potential_removals 로 변경
-            for worker_to_remove in potential_removals[:over_count]:
-                df_final = update_worker_status(df_final, date_str, time_slot, worker_to_remove, '추가제외', '인원 초과 (균형 조정)', '🟣 보라색', day_map, week_numbers)
+                if not potential_removals:
+                    break # 제외할 후보가 없으면 중단
+
+                # ✨ [핵심 변경 2] '바로 이 순간'의 실시간 점수를 기준으로 정렬합니다.
+                # scores 딕셔너리는 외부에서 계속 업데이트되고 있으므로 항상 최신 상태입니다.
+                potential_removals.sort(key=lambda w: scores.get(w, 0), reverse=True) # 점수가 높은 순으로 정렬
+
+                # 가장 점수가 높은 한 명을 선택하여 제외
+                worker_to_remove = potential_removals[0]
+
+                df_final = update_worker_status(df_final, date_str, time_slot, worker_to_remove, '추가제외', '인원 초과 (실시간 균형 조정)', '🟣 보라색', day_map, week_numbers)
+
+                # ✨ [핵심 변경 3] 점수를 즉시 업데이트하여 다음 루프에 반영합니다.
                 current_cumulative[time_slot][worker_to_remove] = current_cumulative[time_slot].get(worker_to_remove, 0) - 1
-                scores[worker_to_remove] = scores.get(worker_to_remove, 0) - 1 # scores 실시간 업데이트
+                scores[worker_to_remove] = scores.get(worker_to_remove, 0) - 1
 
     return df_final, current_cumulative
 
-# 코드 상단 함수 정의 구역에 아래 함수를 추가하세요.
 from collections import defaultdict
 
 def calculate_weekly_counts(df_final, all_names, week_numbers):
@@ -1379,8 +1382,6 @@ def calculate_weekly_counts(df_final, all_names, week_numbers):
             except (KeyError, ValueError):
                 continue
     return weekly_counts
-
-# 기존 balance_weekly_and_cumulative 함수의 내용을 아래 코드로 전체 교체하세요.
 
 def balance_weekly_and_cumulative(df_final, active_weekdays, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, all_names, df_cumulative):
     st.info("⚙️ 최종 누적 횟수 균형 조정 실행...")
@@ -1453,6 +1454,92 @@ def balance_weekly_and_cumulative(df_final, active_weekdays, initial_master_assi
         else:
             st.warning(f"⚠️ {time_slot} 균형 조정이 최대 반복 횟수({i+1}회)에 도달했습니다.")
 
+    return df_final, current_cumulative
+
+def balance_final_cumulative_with_weekly_check(df_final, active_weekdays, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, all_names, df_cumulative):
+    """
+    [완성본] 주간 최소 근무 횟수를 보장하면서 월간 누적 편차를 2 이하로 맞추는 최종 균형 조정 함수
+    """
+    st.info("📊 월간 최종 누적 균형 조정 실행 (주간 최소 근무 확인)...")
+
+    # 규칙 설정: 주간 최소 오전 근무 3회, 오후 근무 1회
+    MIN_AM_PER_WEEK = 3
+    MIN_PM_PER_WEEK = 1
+
+    # 오전, 오후 각각에 대해 조정 실행
+    for time_slot in ['오전', '오후']:
+        # 최대 50번까지 반복하며 편차를 줄임
+        for i in range(50):
+            # 1. '바로 지금' 시점의 실시간 누적 점수와 주간 근무 횟수를 계산
+            df_cum_indexed = df_cumulative.set_index('항목').T
+            scores = {w: (df_cum_indexed.loc[w, f'{time_slot}누적'] + current_cumulative[time_slot].get(w, 0)) for w in all_names if w in df_cum_indexed.index}
+            if not scores: break
+
+            weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
+            
+            min_s, max_s = min(scores.values()), max(scores.values())
+            
+            # 2. 목표 달성: 편차가 2 이하이면 해당 시간대 조정 완료
+            if max_s - min_s <= 2:
+                st.success(f"✅ [{time_slot}] 최종 누적 편차 2 이하 달성! (편차: {max_s - min_s})")
+                break
+
+            # 3. 최고점자(w_h)와 최저점자(w_l) 선정
+            worker_scores = sorted(scores.items(), key=lambda item: item[1])
+            w_l, s_l = worker_scores[0]    # 가장 근무 적게 한 사람
+            w_h, s_h = worker_scores[-1]   # 가장 근무 많이 한 사람
+            
+            swap_found = False
+            # 4. 최고점자의 근무일 중 하나를 최저점자에게 넘길 날짜 탐색
+            for date in active_weekdays:
+                date_str = date.strftime('%Y-%m-%d')
+                
+                # 조건 1: 최고점자(w_h)가 해당일에 실제로 근무 중인가?
+                is_working_df = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['근무자'] == w_h) & (df_final['상태'].isin(['근무', '보충', '추가보충']))]
+                if is_working_df.empty:
+                    continue # 근무 중이 아니면 다른 날짜 탐색
+
+                # [핵심 안전장치] 조건 2: 이 근무를 빼도 w_h의 주간 최소 근무 횟수를 만족하는가?
+                week_of_date = week_numbers.get(date.date())
+                min_shifts = MIN_AM_PER_WEEK if time_slot == '오전' else MIN_PM_PER_WEEK
+                if weekly_counts.get(w_h, {}).get(time_slot, {}).get(week_of_date, 0) - 1 < min_shifts:
+                    continue # 만족하지 못하면 다른 날짜 탐색
+
+                # 조건 3: 최저점자(w_l)가 이 날, 이 시간대에 보충 근무가 가능한가?
+                # (이미 근무 중이거나, 휴가/보충불가 요청이 있거나, 보충 테이블에 없으면 불가능)
+                is_already_working = not df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['근무자'] == w_l)].empty
+                if is_already_working: continue
+                
+                no_supp_req = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 불가({time_slot})'}
+                if w_l in no_supp_req: continue
+                
+                # 보충 테이블에서 보충 가능한지 최종 확인
+                day_name = day_map.get(date.weekday())
+                supplement_row = df_supplement_processed[df_supplement_processed['시간대'] == f"{day_name} {time_slot}"]
+                can_supplement = any(w_l in supplement_row[col].dropna().str.replace('🔺', '').str.strip().tolist() for col in supplement_row.columns if col.startswith('보충'))
+                if not can_supplement: continue
+
+                # 5. 모든 조건을 통과했다면, 근무 교체 실행!
+                st.warning(f"🔄 [{i+1}차/{time_slot}] 최종 균형 조정: {date.strftime('%-m/%d')} {w_h}({s_h:.0f}회) ➔ {w_l}({s_l:.0f}회)")
+                
+                # 최고점자는 제외 처리
+                df_final = update_worker_status(df_final, date_str, time_slot, w_h, '추가제외', '최종 누적 균형 조정', '🟣 보라색', day_map, week_numbers)
+                current_cumulative[time_slot][w_h] = current_cumulative[time_slot].get(w_h, 0) - 1
+                
+                # 최저점자는 보충 처리
+                df_final = update_worker_status(df_final, date_str, time_slot, w_l, '추가보충', '최종 누적 균형 조정', '🟡 노란색', day_map, week_numbers)
+                current_cumulative[time_slot][w_l] = current_cumulative[time_slot].get(w_l, 0) + 1
+                
+                swap_found = True
+                break # 교체에 성공했으므로, 다시 처음부터 점수 계산을 위해 루프 탈출
+            
+            # 만약 모든 날짜를 다 찾아봤는데 교체할 대상을 못 찾았다면, 조정 중단
+            if not swap_found:
+                st.error(f"⚠️ [{time_slot}] 최종 균형 조정 중단: 주간 최소 근무 규칙을 위반하지 않는 교체 대상을 더 이상 찾지 못했습니다. (현재 편차: {max_s - min_s})")
+                break
+        else: # for문이 break 없이 50회를 모두 돌았다면
+            st.warning(f"⚠️ [{time_slot}] 최종 균형 조정이 최대 반복 횟수({i+1}회)에 도달했습니다.")
+            
     return df_final, current_cumulative
 
 df_cumulative_next = df_cumulative.copy()
@@ -1611,17 +1698,26 @@ if st.session_state.get('assigned', False):
                 df_final, active_weekdays, time_slot_pm, target_count_pm, initial_master_assignments,
                 df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names
             )
-            # 주간 및 누적 균형 조정
+
             df_final, current_cumulative = balance_weekly_and_cumulative(
                 df_final, active_weekdays, initial_master_assignments, df_supplement_processed,
                 df_request, day_map, week_numbers, current_cumulative, all_names,
-                df_cumulative  # [추가] 이 인자를 추가해주세요.
+                df_cumulative
             )
+
+            # ✨✨✨✨✨✨✨✨✨ [새 코드 추가 위치] ✨✨✨✨✨✨✨✨✨
+            # 바로 이어서, 새로 만든 최종 누적 균형 조정 함수를 호출합니다.
+            df_final, current_cumulative = balance_final_cumulative_with_weekly_check(
+                df_final, active_weekdays, df_supplement_processed, df_request, 
+                day_map, week_numbers, current_cumulative, all_names, df_cumulative
+            )
+            # ✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨
 
             # 최종 데이터프레임 정리
             df_final_unique_sorted = df_final.sort_values(by=['날짜', '시간대', '근무자']).drop_duplicates(
                 subset=['날짜', '시간대', '근무자'], keep='last'
             )
+
             weekday_map_korean = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
 
             swap_map = {}
@@ -1931,9 +2027,6 @@ if st.session_state.get('assigned', False):
                     elif '오후' in str(col_name):  
                         worker = str(row[col_name]).strip()
                         if worker and pd.notna(worker):
-                            if oncall_person_for_row and worker == oncall_person_for_row:
-                                cell.font = duty_font
-                            
                             worker_data = df_final_unique[(df_final_unique['날짜'] == date_str_lookup) & (df_final_unique['시간대'] == '오후') & (df_final_unique['근무자'] == worker)]
                             if not worker_data.empty:
                                 color_name = worker_data.iloc[0]['색상']
@@ -2181,9 +2274,9 @@ if st.session_state.get('assigned', False):
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
-                    label="📥 최종 스케줄 다운로드",
+                    label="📥 스케줄 ver1.0ㅌㄱ 다운로드",
                     data=results.get("output_final"),
-                    file_name=f"{month_str} 스케줄.xlsx",
+                    file_name=f"{month_str} 스케줄 ver1.0.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_final_schedule_button",
                     use_container_width=True,
@@ -2191,9 +2284,9 @@ if st.session_state.get('assigned', False):
                 )
             with col2:
                 st.download_button(
-                    label="📥 최종 스케줄 다운로드 (배정 확인용)",
+                    label="📥 스케줄 ver1.0 다운로드 (배정 확인용)",
                     data=results.get("output_checking"),
-                    file_name=f"{month_str} 스케줄 (배정 확인용).xlsx",
+                    file_name=f"{month_str} 스케줄 ver1.0 (배정 확인용).xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_checking_schedule_button",
                     use_container_width=True,

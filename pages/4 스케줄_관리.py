@@ -238,24 +238,61 @@ def load_request_data_page4():
         # 누적 시트 로드
         try:
             worksheet4 = sheet.worksheet(f"{month_str} 누적")
+            all_values = worksheet4.get_all_values()
+
+            # 시트가 비어있거나, 헤더만 있거나, 형식이 맞지 않으면 예외 발생시켜 새로 생성
+            if not all_values or len(all_values) < 2 or all_values[0][0] != '항목':
+                raise gspread.exceptions.WorksheetNotFound("Invalid format or empty sheet")
+
+            headers = all_values[0]
+            data = all_values[1:]
+            
+            # 데이터를 DataFrame으로 변환 후 행/열 전환
+            df_transposed = pd.DataFrame(data, columns=headers).set_index('항목')
+            df_cumulative_temp = df_transposed.transpose().reset_index()
+            df_cumulative_temp.rename(columns={'index': '이름'}, inplace=True)
+
         except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없습니다. 시트를 새로 생성합니다.")
-            worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
-            worksheet4.append_row(["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-            names_in_master = df_master["이름"].unique()
-            new_rows = [[name, 0, 0, 0, 0] for name in names_in_master]
-            new_cumulative_df = pd.DataFrame(new_rows, columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]).sort_values(by="이름")
-            worksheet4.update([new_cumulative_df.columns.tolist()] + new_cumulative_df.values.tolist())
-        df_cumulative_temp = pd.DataFrame(worksheet4.get_all_records()) if worksheet4.get_all_records() else pd.DataFrame(columns=["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
+            st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없거나 형식이 맞지 않아 새로 생성합니다.")
+            
+            # 만약 기존 시트가 있다면 삭제 후 재생성 (형식 오류 방지)
+            try:
+                sheet.del_worksheet(sheet.worksheet(f"{month_str} 누적"))
+            except gspread.exceptions.WorksheetNotFound:
+                pass # 원래 없었으면 그냥 통과
+            
+            worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="30")
+            
+            names_in_master = sorted(list(df_master["이름"].unique()))
+            header = ["항목"] + names_in_master
+            rows = [
+                ["오전누적"] + ['0'] * len(names_in_master),
+                ["오후누적"] + ['0'] * len(names_in_master),
+                ["오전당직 (목표)"] + ['0'] * len(names_in_master),
+                ["오후당직 (목표)"] + ['0'] * len(names_in_master)
+            ]
+            worksheet4.update([header] + rows, "A1")
+            
+            # 새로 만든 시트를 기준으로 DataFrame 생성
+            df_cumulative_temp = pd.DataFrame({
+                "이름": names_in_master, "오전누적": 0, "오후누적": 0,
+                "오전당직 (목표)": 0, "오후당직 (목표)": 0
+            })
+
+        # --- 공통 후처리 부분 ---
         if not df_cumulative_temp.empty:
-            df_cumulative_temp.rename(columns={df_cumulative_temp.columns[0]: '이름'}, inplace=True)
+            # 코드 내에서 사용하는 컬럼명으로 통일
+            df_cumulative_temp.rename(columns={
+                '오전당직 (목표)': '오전당직 (온콜)',
+                '오후당직 (목표)': '오후당직'
+            }, inplace=True)
+
+            # 숫자 형식으로 변환 및 정렬
             for col_name in ["오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]:
                 if col_name in df_cumulative_temp.columns:
                     df_cumulative_temp[col_name] = pd.to_numeric(df_cumulative_temp[col_name], errors='coerce').fillna(0).astype(int)
+            
             df_cumulative_temp = df_cumulative_temp.sort_values(by="이름")
-        st.session_state["df_cumulative"] = df_cumulative_temp
-        st.session_state["edited_df_cumulative"] = df_cumulative_temp.copy()
-        st.session_state["worksheet4"] = worksheet4
 
         # 토요/휴일 스케줄 로드
         worksheet_name = f"{next_month.year}년 토요/휴일 스케줄"
@@ -270,7 +307,10 @@ def load_request_data_page4():
         df_holiday["날짜"] = pd.to_datetime(df_holiday["날짜"], errors='coerce').dt.date
         df_holiday = df_holiday.sort_values(by="날짜")
         st.session_state["df_holiday"] = df_holiday
+        st.session_state["edited_df_holiday"] = df_holiday.copy() # 👈 이 줄을 추가하세요
         st.session_state["worksheet_holiday"] = worksheet_holiday
+
+        load_closing_days_schedule() # 👈 휴관일 데이터 로드 함수 호출 추가
 
         # 근무 및 보충 테이블 생성
         st.session_state["df_shift"] = generate_shift_table(df_master)
@@ -292,8 +332,11 @@ def load_request_data_page4():
 def load_holiday_schedule():
     """'YYYY년 토요/휴일 스케줄' 시트에서 데이터를 다시 로드하여 세션 상태를 업데이트합니다."""
     try:
-        # gc와 worksheet_holiday는 세션 상태에서 가져오거나 다시 초기화할 수 있습니다.
-        # 여기서는 안정성을 위해 클라이언트를 다시 가져옵니다.
+        # 오류 수정을 위해 날짜 변수 정의를 함수 내부에 추가
+        now = datetime.datetime.now(ZoneInfo("Asia/Seoul"))
+        today = now.date()
+        next_month = today.replace(day=1) + relativedelta(months=1)
+
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
         worksheet_name = f"{next_month.year}년 토요/휴일 스케줄"
@@ -301,7 +344,6 @@ def load_holiday_schedule():
         try:
             worksheet_holiday = sheet.worksheet(worksheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            # 시트가 없는 경우에 대한 처리 (기존 코드와 동일)
             st.warning(f"⚠️ '{worksheet_name}' 시트를 찾을 수 없습니다. 새로 생성합니다.")
             worksheet_holiday = sheet.add_worksheet(title=worksheet_name, rows="100", cols="20")
             worksheet_holiday.append_row(["날짜", "근무", "당직"])
@@ -309,12 +351,10 @@ def load_holiday_schedule():
         holiday_data = worksheet_holiday.get_all_records()
         df_holiday = pd.DataFrame(holiday_data) if holiday_data else pd.DataFrame(columns=["날짜", "근무", "당직"])
         
-        # 날짜 형식 변환 및 정렬
         if not df_holiday.empty and '날짜' in df_holiday.columns:
             df_holiday["날짜"] = pd.to_datetime(df_holiday["날짜"], errors='coerce').dt.date
             df_holiday = df_holiday.sort_values(by="날짜").reset_index(drop=True)
         
-        # 세션 상태 업데이트
         st.session_state["df_holiday"] = df_holiday
         st.session_state["worksheet_holiday"] = worksheet_holiday
         return True
@@ -323,10 +363,14 @@ def load_holiday_schedule():
         st.error(f"토요/휴일 데이터 리로드 중 오류 발생: {str(e)}")
         return False
 
-# --- 휴관일 데이터 로드 함수 정의 ---
 def load_closing_days_schedule():
     """'YYYY년 휴관일' 시트에서 데이터를 다시 로드하여 세션 상태를 업데이트합니다."""
     try:
+        # 오류 수정을 위해 날짜 변수 정의를 함수 내부에 추가
+        now = datetime.datetime.now(ZoneInfo("Asia/Seoul"))
+        today = now.date()
+        next_month = today.replace(day=1) + relativedelta(months=1)
+
         gc = get_gspread_client()
         sheet = gc.open_by_url(url)
         worksheet_name = f"{next_month.year}년 휴관일"
@@ -465,30 +509,65 @@ if "data_loaded" not in st.session_state:
             df_request = df_request.sort_values(by="이름")
             update_sheet_with_retry(request_worksheet, [df_request.columns.tolist()] + df_request.astype(str).values.tolist())
 
-        # --- 누적 시트 동기화 ---
-        needs_update = False
-        removed_from_cumulative = cumulative_names - final_master_names
-        missing_in_cumulative = final_master_names - cumulative_names
-
-        if removed_from_cumulative:
-            df_cumulative = df_cumulative[~df_cumulative["이름"].isin(removed_from_cumulative)]
-            needs_update = True
-        if missing_in_cumulative or cumulative_worksheet is None:
-            if cumulative_worksheet is None:
-                st.warning(f"'{month_str} 누적' 시트가 없어 새로 생성합니다.")
-                cumulative_worksheet = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
-                cumulative_worksheet.append_row(["이름", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-                missing_in_cumulative = final_master_names
+        try:
+            cumulative_worksheet = sheet.worksheet(f"{month_str} 누적")
+            all_values = cumulative_worksheet.get_all_values()
             
-            new_cumulative_rows = pd.DataFrame([[name, 0, 0, 0, 0] for name in missing_in_cumulative], columns=df_cumulative.columns)
-            df_cumulative = pd.concat([df_cumulative, new_cumulative_rows], ignore_index=True)
-            needs_update = True
+            if not all_values or len(all_values) < 2 or all_values[0][0] != '항목':
+                 raise gspread.exceptions.WorksheetNotFound("Invalid format")
+
+            sheet_names = set(all_values[0][1:])
+            
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"'{month_str} 누적' 시트가 없거나 형식이 맞지 않아 새로 생성하고 동기화합니다.")
+            try:
+                sheet.del_worksheet(sheet.worksheet(f"{month_str} 누적"))
+            except:
+                pass 
+            cumulative_worksheet = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="30")
+            all_values = [] 
+            sheet_names = set()
+
+        removed_names = sheet_names - final_master_names
+        added_names = final_master_names - sheet_names
+        needs_update = bool(removed_names or added_names or not all_values)
 
         if needs_update:
             st.info("매핑 시트를 기준으로 누적 시트 명단을 동기화합니다.")
-            df_cumulative = df_cumulative.sort_values(by="이름")
-            update_sheet_with_retry(cumulative_worksheet, [df_cumulative.columns.tolist()] + df_cumulative.values.tolist())
+            
+            if not all_values: 
+                header = ["항목"] + sorted(list(final_master_names))
+                rows = [
+                    ["오전누적"] + ['0'] * len(final_master_names),
+                    ["오후누적"] + ['0'] * len(final_master_names),
+                    ["오전당직 (목표)"] + ['0'] * len(final_master_names),
+                    ["오후당직 (목표)"] + ['0'] * len(final_master_names)
+                ]
+                update_data = [header] + rows
+            else: 
+                df = pd.DataFrame(all_values[1:], columns=all_values[0]).set_index('항목')
+                if removed_names:
+                    df = df.drop(columns=list(removed_names))
+                if added_names:
+                    for name in added_names:
+                        df[name] = '0'
+                
+                sorted_names = sorted(list(final_master_names))
+                df = df[sorted_names]
+
+                update_data = [["항목"] + df.columns.tolist()] + df.reset_index().values.tolist()
+
+            update_sheet_with_retry(cumulative_worksheet, update_data)
         
+        # 동기화 후 최종 데이터를 다시 불러와서 DataFrame 생성 (df_cumulative 정의)
+        all_values = cumulative_worksheet.get_all_values()
+        headers = all_values[0]
+        data = all_values[1:]
+        df_transposed = pd.DataFrame(data, columns=headers).set_index('항목')
+        df_cumulative = df_transposed.transpose().reset_index().rename(columns={'index': '이름'})
+        
+        load_closing_days_schedule() # 👈 휴관일 데이터 로드 함수 호출 추가
+
         # 4. 모든 동기화 완료 후, 최종 데이터를 세션 상태에 저장
         st.session_state["df_map"] = df_map
         st.session_state["df_master"] = df_master
@@ -599,46 +678,57 @@ def load_data_page4():
 
         try:
             worksheet4 = sheet.worksheet(f"{month_str} 누적")
-        except gspread.exceptions.WorksheetNotFound:
-            st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없습니다. 시트를 새로 생성합니다.")
-            try:
-                worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="20")
-                worksheet4.append_row([f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-                names_in_master = st.session_state["df_master"]["이름"].unique()
-                new_rows = [[name, "", "", "", ""] for name in names_in_master]
-                for row in new_rows:
-                    try:
-                        worksheet4.append_row(row)
-                    except gspread.exceptions.APIError as e:
-                        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                        st.error(f"Google Sheets API 오류 (누적 시트 초기화): {e.response.status_code} - {e.response.text}")
-                        st.stop()
-            except gspread.exceptions.APIError as e:
-                st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-                st.error(f"Google Sheets API 오류 ('{month_str} 누적' 시트 생성): {e.response.status_code} - {e.response.text}")
-                st.stop()
-            except Exception as e:
-                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-                st.error(f"'{month_str} 누적' 시트 생성/초기화 실패: {type(e).__name__} - {e}")
-                st.stop()
+            all_values = worksheet4.get_all_values()
 
-        try:
-            df_cumulative_temp = pd.DataFrame(worksheet4.get_all_records()) if worksheet4.get_all_records() else pd.DataFrame(columns=[f"{month_str}", "오전누적", "오후누적", "오전당직 (온콜)", "오후당직"])
-            if not df_cumulative_temp.empty:
-                df_cumulative_temp.rename(columns={df_cumulative_temp.columns[0]: '이름'}, inplace=True)
-                for col_name in ["오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]:
-                    if col_name in df_cumulative_temp.columns:
-                        df_cumulative_temp[col_name] = pd.to_numeric(df_cumulative_temp[col_name], errors='coerce').fillna(0).astype(int)
-            st.session_state["df_cumulative"] = df_cumulative_temp
-            st.session_state["worksheet4"] = worksheet4
-        except gspread.exceptions.APIError as e:
-            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-            st.error(f"Google Sheets API 오류 (누적 데이터 로드): {e.response.status_code} - {e.response.text}")
-            st.stop()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"누적 데이터 로드 실패: {type(e).__name__} - {e}")
-            st.stop()
+            if not all_values or len(all_values) < 2 or all_values[0][0] != '항목':
+                raise gspread.exceptions.WorksheetNotFound("Invalid format or empty sheet")
+
+            headers = all_values[0]
+            data = all_values[1:]
+            
+            df_transposed = pd.DataFrame(data, columns=headers).set_index('항목')
+            df_cumulative_temp = df_transposed.transpose().reset_index()
+            df_cumulative_temp.rename(columns={'index': '이름'}, inplace=True)
+
+        except gspread.exceptions.WorksheetNotFound:
+            st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없거나 형식이 맞지 않아 새로 생성합니다.")
+            
+            try:
+                sheet.del_worksheet(sheet.worksheet(f"{month_str} 누적"))
+            except gspread.exceptions.WorksheetNotFound:
+                pass
+            
+            worksheet4 = sheet.add_worksheet(title=f"{month_str} 누적", rows="100", cols="30")
+            
+            names_in_master = sorted(list(st.session_state["df_master"]["이름"].unique()))
+            header = ["항목"] + names_in_master
+            rows = [
+                ["오전누적"] + ['0'] * len(names_in_master),
+                ["오후누적"] + ['0'] * len(names_in_master),
+                ["오전당직 (목표)"] + ['0'] * len(names_in_master),
+                ["오후당직 (목표)"] + ['0'] * len(names_in_master)
+            ]
+            worksheet4.update([header] + rows, "A1")
+            
+            df_cumulative_temp = pd.DataFrame({
+                "이름": names_in_master, "오전누적": 0, "오후누적": 0,
+                "오전당직 (목표)": 0, "오후당직 (목표)": 0
+            })
+
+        if not df_cumulative_temp.empty:
+            df_cumulative_temp.rename(columns={
+                '오전당직 (목표)': '오전당직 (온콜)',
+                '오후당직 (목표)': '오후당직'
+            }, inplace=True)
+
+            for col_name in ["오전누적", "오후누적", "오전당직 (온콜)", "오후당직"]:
+                if col_name in df_cumulative_temp.columns:
+                    df_cumulative_temp[col_name] = pd.to_numeric(df_cumulative_temp[col_name], errors='coerce').fillna(0).astype(int)
+            
+            df_cumulative_temp = df_cumulative_temp.sort_values(by="이름")
+
+        st.session_state["df_cumulative"] = df_cumulative_temp
+        st.session_state["worksheet4"] = worksheet4
 
         try:
             st.session_state["df_shift"] = generate_shift_table(st.session_state["df_master"])
@@ -816,9 +906,19 @@ with st.form("fixed_form_namelist"):
                         # [수정] 4. 누적 시트: append_row로 안전하게 추가
                         try:
                             worksheet4 = sheet.worksheet(f"{month_str} 누적")
-                            worksheet4.append_row([new_employee_name, 0, 0, 0, 0])
+                            # 새 인원의 데이터를 리스트로 준비 (헤더 포함)
+                            new_col_data = [
+                                new_employee_name, # 이름 (헤더)
+                                '0', # 오전누적
+                                '0', # 오후누적
+                                '0', # 오전당직 (목표)
+                                '0'  # 오후당직 (목표)
+                            ]
+                            # 시트의 마지막 열 다음에 새 열을 추가
+                            last_col = len(worksheet4.row_values(1))
+                            worksheet4.insert_cols([new_col_data], col=last_col + 1)
                         except WorksheetNotFound:
-                            pass # 없으면 그냥 통과
+                            pass # 시트가 없으면 다음 동기화 때 처리되므로 통과
 
                     st.success(f"{new_employee_name}님을 모든 관련 시트에 추가했습니다.")
                     time.sleep(1)
@@ -855,14 +955,23 @@ with st.form("fixed_form_namelist"):
                             worksheet1.delete_rows(cell.row)
                     
                     # [수정] 3. 요청사항, 누적 시트: find -> delete_rows로 안전하게 삭제
-                    for sheet_name_suffix in ["요청", "누적"]:
-                        try:
-                            ws = sheet.worksheet(f"{month_str} {sheet_name_suffix}")
-                            cell = ws.find(selected_employee_name)
-                            if cell:
-                                ws.delete_rows(cell.row)
-                        except WorksheetNotFound:
-                            continue # 시트가 없으면 무시
+                    try:
+                        ws_req = sheet.worksheet(f"{month_str} 요청")
+                        cell_req = ws_req.find(selected_employee_name)
+                        if cell_req:
+                            ws_req.delete_rows(cell_req.row)
+                    except WorksheetNotFound:
+                        pass
+                    
+                    # [수정] 4. 누적 시트: find -> delete_columns로 안전하게 삭제
+                    try:
+                        ws_cum = sheet.worksheet(f"{month_str} 누적")
+                        # 첫 번째 행(헤더)에서 이름을 찾아 해당 열 삭제
+                        cell_cum = ws_cum.find(selected_employee_name, in_row=1)
+                        if cell_cum:
+                            ws_cum.delete_columns(cell_cum.col)
+                    except WorksheetNotFound:
+                        pass
 
                 st.success(f"{selected_employee_name}님을 모든 관련 시트에서 삭제했습니다.")
                 time.sleep(1)
@@ -1147,7 +1256,7 @@ with st.expander("➕ 빠른 추가 / 삭제"):
 
 st.divider()
 st.subheader(f"📅 {next_month.year}년 휴관일 관리")
-st.write("- 아래 테이블에서 직접 휴관일을 월별로 수정하거나, '빠른 추가/삭제' 메뉴를 이용할 수 있습니다.\n - 휴관일 목록은 **'YYYY-MM-DD, YYYY-MM-DD'** 형식으로 입력해야 합니다.")
+st.write("- 아래 테이블에서 직접 휴관일을 월별로 수정하거나, '빠른 추가/삭제' 메뉴를 이용할 수 있습니다.\n - 휴관일 목록은 'YYYY-MM-DD, YYYY-MM-DD' 형식으로 입력해야 합니다.")
 
 # --- 데이터 준비: 월별 그룹화 ---
 df_closing_raw = st.session_state.get("df_closing", pd.DataFrame(columns=["날짜"]))

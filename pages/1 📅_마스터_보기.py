@@ -433,6 +433,8 @@ df_user_master = st.session_state["df_user_master"]
 근무옵션 = ["오전", "오후", "오전 & 오후", "근무없음"]
 요일리스트 = ["월", "화", "수", "목", "금"]
 today = now.date()
+today = now.date() - relativedelta(months=1)
+
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 year, month = next_month_date.year, next_month_date.month
 _, last_day = calendar.monthrange(year, month)

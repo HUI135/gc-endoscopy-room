@@ -31,6 +31,8 @@ now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
+month_str = "2025년 10월"
+
 YEAR_STR = month_str.split('년')[0]
 REQUEST_SHEET_NAME = f"{month_str} 방배정 변경요청"
 

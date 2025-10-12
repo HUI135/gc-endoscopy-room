@@ -350,6 +350,7 @@ now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
+month_str = "2025년 10월"
 st.header(f"🔄 {month_str} 방배정 변경", divider='rainbow')
 
 # 데이터 로드 및 새로고침 로직 통합
@@ -575,7 +576,6 @@ if not edited_df.equals(base_df):
 # 3. '일괄 적용' 로그와 '수동 변경' 로그를 합쳐서 최종 미리보기 목록을 만듭니다.
 final_log_to_display = batch_log + manual_change_log
 
-st.divider()
 st.caption("📝 변경사항 미리보기")
 if final_log_to_display:
     log_df = pd.DataFrame(final_log_to_display)
