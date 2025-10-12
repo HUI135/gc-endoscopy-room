@@ -173,6 +173,42 @@ def format_sheet_date_for_display(date_string):
         except ValueError: pass
     return date_string
 
+def delete_schedule_version(month_str, sheet_to_delete):
+    """선택된 스케줄 버전과 해당 누적 시트를 Google Sheets에서 삭제합니다."""
+    try:
+        with st.spinner(f"'{sheet_to_delete}' 버전 삭제 중..."):
+            gc = get_gspread_client()
+            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+
+            # 1. 스케줄 시트 삭제
+            try:
+                worksheet_to_delete = sheet.worksheet(sheet_to_delete)
+                sheet.del_worksheet(worksheet_to_delete)
+                st.info(f"'{sheet_to_delete}' 시트를 삭제했습니다.")
+            except WorksheetNotFound:
+                st.warning(f"'{sheet_to_delete}' 시트를 찾을 수 없어 삭제를 건너뜁니다.")
+
+            # 2. 해당 버전의 누적 시트 이름 생성 및 삭제
+            version_str = " " + sheet_to_delete.split(" 스케줄 ")[1] if " ver" in sheet_to_delete else ""
+            current_month_dt = datetime.strptime(month_str, "%Y년 %m월")
+            next_month_str = (current_month_dt + relativedelta(months=1)).strftime("%Y년 %-m월")
+            cum_sheet_name = f"{next_month_str} 누적{version_str}"
+            
+            try:
+                worksheet_cum_to_delete = sheet.worksheet(cum_sheet_name)
+                sheet.del_worksheet(worksheet_cum_to_delete)
+                st.info(f"'{cum_sheet_name}' 시트를 삭제했습니다.")
+            except WorksheetNotFound:
+                st.warning(f"'{cum_sheet_name}' 시트를 찾을 수 없어 삭제를 건너뜁니다.")
+        
+        st.success("선택한 버전이 성공적으로 삭제되었습니다.")
+        time.sleep(2)
+        st.cache_data.clear()
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"버전 삭제 중 오류가 발생했습니다: {e}")
+
 # --- 1. 기존 엑셀 생성 함수 전체를 이 코드로 교체하세요 ---
 
 def create_formatted_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_special, df_requests, closing_dates, month_str):
@@ -675,11 +711,24 @@ version_str = " " + selected_sheet_name.split(" 스케줄 ")[1] if " ver" in sel
 
 # --- 1. 새로고침 버튼 부분을 이 코드로 교체하세요 ---
 
-if st.button("🔄 현재 버전 데이터 새로고침"):
-    st.cache_data.clear()
-    for key in ["data_loaded", "df_display_modified", "change_log", "apply_messages", "df_cumulative_next_display", "cumulative_editor", "closing_dates"]:
-        if key in st.session_state: del st.session_state[key]
-    st.rerun()
+# --- 새로고침 및 삭제 버튼 UI ---
+col_refresh, col_delete, none = st.columns([2, 2, 2])
+
+with col_refresh:
+    if st.button("🔄 현재 버전 데이터 새로고침", use_container_width=True):
+        st.cache_data.clear()
+        for key in ["data_loaded", "df_display_modified", "change_log", "apply_messages", "df_cumulative_next_display", "cumulative_editor", "closing_dates"]:
+            if key in st.session_state: del st.session_state[key]
+        st.rerun()
+
+with col_delete:
+    # 삭제는 위험한 작업이므로 확인 절차를 거칩니다.
+    with st.expander("🗑️ 현재 버전 데이터 완전 삭제"):
+        st.error("이 작업은 되돌릴 수 없습니다! Google Sheets에서 해당 버전의 스케줄과 누적 시트가 영구적으로 삭제됩니다.")
+        
+        # 최종 삭제 확인 버튼
+        if st.button("네, 선택한 버전을 영구적으로 삭제합니다.", type="primary", use_container_width=True):
+            delete_schedule_version(month_str, selected_sheet_name)
 
 if not st.session_state.get("data_loaded", False):
     data = load_data(month_str, selected_sheet_name, "") # 버전 문자열은 파일명 생성 시 따로 처리하므로 빈 값 전달
