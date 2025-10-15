@@ -227,10 +227,10 @@ def create_formatted_schedule_excel(initial_df, edited_df, edited_cumulative_df,
     color_map = {
         '휴가': 'DA9694', '학회': 'DA9694',
         '꼭 근무': 'FABF8F',
-        '추가보충': 'FFF28F', '보충': 'FFF28F',
-        '대체 보충': 'A9D08E',
-        '추가제외': 'B1A0C7', '제외': 'B1A0C7',
-        '대체 휴근': '95B3D7',
+        '보충': 'FFF28F',
+        '대체보충': 'A9D08E',
+        '휴근': 'B1A0C7',
+        '대체휴근': '95B3D7',
         '특수근무': 'D0E0E3',
         '기본': 'FFFFFF'
     }
@@ -455,7 +455,7 @@ def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_
     bold_font = Font(name=font_name, size=9, bold=True)
     duty_font = Font(name=font_name, size=9, bold=True, color="FF69B4")
     header_font = Font(name=font_name, size=9, color='FFFFFF', bold=True)
-    color_map = {'휴가': 'DA9694', '학회': 'DA9694', '꼭 근무': 'FABF8F', '추가보충': 'FFF28F', '보충': 'FFF28F', '대체 보충': 'A9D08E', '추가제외': 'B1A0C7', '제외': 'B1A0C7', '대체 휴근': '95B3D7', '특수근무': 'D0E0E3', '기본': 'FFFFFF'}
+    color_map = {'휴가': 'DA9694', '학회': 'DA9694', '꼭 근무': 'FABF8F', '보충': 'FFF28F', '대체보충': 'A9D08E', '휴근': 'B1A0C7', '대체휴근': '95B3D7', '특수근무': 'D0E0E3', '기본': 'FFFFFF'}
     header_fill = PatternFill(start_color='000000', fill_type='solid')
     date_col_fill = PatternFill(start_color='808080', fill_type='solid')
     weekday_fill = PatternFill(start_color='FFF2CC', fill_type='solid')
@@ -547,7 +547,7 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
     bold_font = Font(name=font_name, size=9, bold=True)
     duty_font = Font(name=font_name, size=9, bold=True, color="FF69B4")
     header_font = Font(name=font_name, size=9, color='FFFFFF', bold=True)
-    color_map = {'휴가': 'DA9694', '학회': 'DA9694', '꼭 근무': 'FABF8F', '추가보충': 'FFF28F', '보충': 'FFF28F', '대체 보충': 'A9D08E', '추가제외': 'B1A0C7', '제외': 'B1A0C7', '대체 휴근': '95B3D7', '특수근무': 'D0E0E3', '기본': 'FFFFFF'}
+    color_map = {'휴가': 'DA9694', '학회': 'DA9694', '꼭 근무': 'FABF8F', '보충': 'FFF28F', '대체보충': 'A9D08E', '휴근': 'B1A0C7', '대체휴근': '95B3D7', '특수근무': 'D0E0E3', '기본': 'FFFFFF'}
     header_fill = PatternFill(start_color='000000', fill_type='solid')
     date_col_fill = PatternFill(start_color='808080', fill_type='solid')
     weekday_fill = PatternFill(start_color='FFF2CC', fill_type='solid')
