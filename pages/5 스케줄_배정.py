@@ -38,11 +38,11 @@ def initialize_schedule_session_state():
         "output": None,
         "df_cumulative_next": pd.DataFrame(),
         "request_logs": [],
+        # ▼▼▼ 아래 줄을 추가하세요 (이미 있다면 OK) ▼▼▼
         "swap_logs": [],
         "adjustment_logs": [],
         "oncall_logs": [],
         "assignment_results": None,
-        # ▼▼▼ 아래 두 줄을 추가합니다 ▼▼▼
         "show_confirmation_warning": False,
         "latest_existing_version": None
     }
@@ -484,6 +484,45 @@ def append_final_summary_to_excel(worksheet, df_final_summary, style_args):
             cell.font = style_args['font']
             cell.border = style_args['border']
             cell.alignment = Alignment(horizontal='center', vertical='center')
+
+def replace_adjustments(df):
+    """동일 인물 + 동일 주차에서 추가보충/추가제외 -> 대체보충/대체제외로 변경"""
+    color_priority = {'🟠 주황색': 0, '🟢 초록색': 1, '🟡 노란색': 2, '기본': 3, '🔴 빨간색': 4, '🔵 파란색': 5, '🟣 보라색': 6, '특수근무색': -1}
+
+    # 중복 제거를 먼저 수행하여 최신 상태만 유지
+    df = df.sort_values(by=['날짜', '시간대', '근무자']).drop_duplicates(
+        subset=['날짜', '시간대', '근무자'], keep='last'
+    ).copy()
+
+    # 주차별, 근무자별, 시간대별로 그룹화
+    grouped = df.groupby(['근무자', '주차', '시간대', '상태']).size().unstack(fill_value=0)
+    
+    for (worker, week, shift), counts in grouped.iterrows():
+        if '추가보충' in counts.index and '추가제외' in counts.index:
+            if counts['추가보충'] == 1 and counts['추가제외'] == 1:
+                # 대체제외 날짜 찾기
+                jeoe_mask = (df['근무자'] == worker) & (df['주차'] == week) & (df['시간대'] == shift) & (df['상태'] == '추가제외')
+                bochung_mask = (df['근무자'] == worker) & (df['주차'] == week) & (df['시간대'] == shift) & (df['상태'] == '추가보충')
+                
+                jeoe_date = df.loc[jeoe_mask, '날짜']
+                bochung_date = df.loc[bochung_mask, '날짜']
+                
+                # 날짜가 존재하는지 확인
+                jeoe_date_str = jeoe_date.iloc[0] if not jeoe_date.empty else None
+                bochung_date_str = bochung_date.iloc[0] if not bochung_date.empty else None
+                
+                if jeoe_date_str and bochung_date_str:
+                    # 대체보충으로 변경
+                    df.loc[bochung_mask, '상태'] = '대체보충'
+                    df.loc[bochung_mask, '색상'] = '🟢 초록색'
+                    df.loc[bochung_mask, '메모'] = f"{pd.to_datetime(jeoe_date_str).strftime('%-m월 %-d일')}일과 대체"
+
+                    # 대체제외로 변경
+                    df.loc[jeoe_mask, '상태'] = '대체제외'
+                    df.loc[jeoe_mask, '색상'] = '🔵 파란색'
+                    df.loc[jeoe_mask, '메모'] = f"{pd.to_datetime(bochung_date_str).strftime('%-m월 %-d일')}일과 대체"
+    
+    return df
 
 st.header("🗓️ 스케줄 배정", divider='rainbow')
 st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
@@ -1611,6 +1650,7 @@ df_cumulative_next = df_cumulative.copy()
 
 initialize_schedule_session_state()
 
+st.divider()
 # 1단계: 메인 배정 실행 버튼
 if st.button("🚀 스케줄 배정 수행", type="primary", use_container_width=True, disabled=st.session_state.get("show_confirmation_warning", False)):
     gc = get_gspread_client()
@@ -1807,50 +1847,78 @@ if st.session_state.get('assigned', False):
                 df_final, active_weekdays, df_supplement_processed, df_request, 
                 day_map, week_numbers, current_cumulative, all_names, df_cumulative
             )
+
+            # ✨✨✨ [핵심 수정 1] 상태 변경은 이 함수가 유일하게 담당합니다. ✨✨✨
+            df_final = replace_adjustments(df_final)
             # ✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨✨
 
-            # 최종 데이터프레임 정리
+            # df_final_unique_sorted 생성 후 로그 생성 부분 수정
             df_final_unique_sorted = df_final.sort_values(by=['날짜', '시간대', '근무자']).drop_duplicates(
                 subset=['날짜', '시간대', '근무자'], keep='last'
+            ).copy()
+
+            # 대체 로그 생성
+            df_replacements = df_final_unique_sorted[
+                df_final_unique_sorted['상태'].isin(['대체보충', '대체제외'])
+            ].copy()
+            df_replacements['주차'] = df_replacements['날짜'].apply(
+                lambda x: week_numbers.get(pd.to_datetime(x).date())
             )
 
+            weekly_swap_dates = {}
+            for (week, worker, time_slot), group in df_replacements.groupby(['주차', '근무자', '시간대']):
+                dates_excluded = sorted(group[group['상태'] == '대체제외']['날짜'].tolist())
+                dates_supplemented = sorted(group[group['상태'] == '대체보충']['날짜'].tolist())
+
+                if dates_excluded and dates_supplemented:
+                    key = (week, worker, time_slot)
+                    weekly_swap_dates[key] = {
+                        '제외일': dates_excluded,
+                        '보충일': dates_supplemented
+                    }
+                    
+                    # 메모 업데이트
+                    memo_for_exclusion = f"{', '.join([pd.to_datetime(d).strftime('%-m월 %-d일') for d in dates_supplemented])}일과 대체"
+                    memo_for_supplement = f"{', '.join([pd.to_datetime(d).strftime('%-m월 %-d일') for d in dates_excluded])}일과 대체"
+
+                    df_final_unique_sorted.loc[
+                        (df_final_unique_sorted['근무자'] == worker) &
+                        (df_final_unique_sorted['시간대'] == time_slot) &
+                        (df_final_unique_sorted['날짜'].isin(dates_excluded)), '메모'
+                    ] = memo_for_exclusion
+
+                    df_final_unique_sorted.loc[
+                        (df_final_unique_sorted['근무자'] == worker) &
+                        (df_final_unique_sorted['시간대'] == time_slot) &
+                        (df_final_unique_sorted['날짜'].isin(dates_supplemented)), '메모'
+                    ] = memo_for_supplement
+
+            # 로그 생성
+            st.session_state.swap_logs, st.session_state.adjustment_logs = [], []
             weekday_map_korean = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
 
-            swap_map = {}
+            # 대체 로그
+            for (week, worker, time_slot), swap_info in weekly_swap_dates.items():
+                excluded_dates_str = [pd.to_datetime(d).strftime('%-m월 %-d일') for d in sorted(swap_info['제외일'])]
+                supplemented_dates_str = [pd.to_datetime(d).strftime('%-m월 %-d일') for d in sorted(swap_info['보충일'])]
+                log_message = f"• {worker} ({time_slot}): {', '.join(excluded_dates_str)}(대체 제외) ➔ {', '.join(supplemented_dates_str)}(대체 보충)"
+                if log_message not in st.session_state.swap_logs:
+                    st.session_state.swap_logs.append(log_message)
+
+            # 추가 보충/제외 로그
             for _, row in df_final_unique_sorted.iterrows():
-                status = row['상태']
-                memo = str(row['메모'])
-                
-                if status == '제외' and '보충' in memo:
-                    worker = row['근무자']
+                if row['상태'] in ['추가보충', '추가제외']:
                     date_obj = pd.to_datetime(row['날짜'])
-                    korean_day = weekday_map_korean[date_obj.weekday()]
-                    from_log_info = f"{date_obj.strftime('%-m월 %-d일')} ({korean_day}) {row['시간대']}"
-                    
-                    to_date_str = memo.replace(' 보충', '').replace('(으)로', '')
-                    key = f"{worker}-{to_date_str}"
-                    swap_map[key] = from_log_info
-
-            for _, row in df_final_unique_sorted.iterrows():
-                worker = row['근무자']
-                status = row['상태']
-                memo = str(row['메모'])
-                date_obj = pd.to_datetime(row['날짜'])
-                korean_day = weekday_map_korean[date_obj.weekday()]
-                log_date_info = f"{date_obj.strftime('%-m월 %-d일')} ({korean_day}) {row['시간대']}"
-
-                if status == '보충' and '에서 이동' in memo:
-                    key = f"{worker}-{date_obj.strftime('%-m월 %-d일')}"
-                    if key in swap_map:
-                        from_log_info = swap_map[key]
-                        st.session_state.swap_logs.append(f"• {worker}: {from_log_info}에서 제외 ➔ {log_date_info}(으)로 이동")
-                
-                elif status == '추가제외':
-                    st.session_state.adjustment_logs.append(f"• {log_date_info} {worker} - {memo or '인원 초과'}로 추가 제외")
-                
-                elif status == '추가보충':
-                    st.session_state.adjustment_logs.append(f"• {log_date_info} {worker} - {memo or '인원 부족'}으로 추가 보충")
-            
+                    log_date_info = f"{date_obj.strftime('%-m월 %-d일')} ({weekday_map_korean[date_obj.weekday()]}) {row['시간대']}"
+                    if row['상태'] == '추가제외':
+                        st.session_state.adjustment_logs.append(f"• {log_date_info} {row['근무자']} - {row['메모'] or '인원 초과'}로 추가 제외")
+                    elif row['상태'] == '추가보충':
+                        st.session_state.adjustment_logs.append(f"• {log_date_info} {row['근무자']} - {row['메모'] or '인원 부족'}으로 추가 보충")
+                        
+            # 모든 로그를 날짜 기준으로 정렬합니다.
+            st.session_state.request_logs.sort(key=get_sort_key)
+            st.session_state.swap_logs.sort(key=get_sort_key)
+            st.session_state.adjustment_logs.sort(key=get_sort_key)          
             st.session_state.request_logs.sort(key=get_sort_key)
             st.session_state.swap_logs.sort(key=get_sort_key)
             st.session_state.adjustment_logs.sort(key=get_sort_key)
@@ -2315,7 +2383,12 @@ if st.session_state.get('assigned', False):
                     worksheet_summary = sheet.add_worksheet(title=f"{next_month_str} 누적 ver1.0", rows=100, cols=50)
                 
                 # [핵심] df_cumulative_next 대신 summary_df 변수를 사용하여 시트를 업데이트합니다.
-                update_sheet_with_retry(worksheet_summary, [df_cumulative_next.columns.tolist()] + df_cumulative_next.values.tolist())
+                summary_df_to_save = build_summary_table(
+                    df_cumulative, all_names, next_month_str,
+                    df_final_unique=df_final_unique_sorted
+                )
+
+                update_sheet_with_retry(worksheet_summary, [summary_df_to_save.columns.tolist()] + summary_df_to_save.values.tolist())
 
             except Exception as e:
                 st.error(f"Google Sheets 저장 중 오류 발생: {e}")
@@ -2331,6 +2404,8 @@ if st.session_state.get('assigned', False):
                 "swap_logs": st.session_state.swap_logs,
                 "adjustment_logs": st.session_state.adjustment_logs,
                 "oncall_logs": st.session_state.oncall_logs,
+                "df_final_unique_sorted": df_final_unique_sorted,
+                "df_schedule": df_schedule,       
             }
 
     month_dt = datetime.strptime(month_str, "%Y년 %m월")
@@ -2344,16 +2419,46 @@ if st.session_state.get('assigned', False):
         if results:
             with st.expander("🔍 배정 과정 상세 로그 보기", expanded=True):
                 st.markdown("**📋 요청사항 반영 로그**"); st.code("\n".join(results.get("request_logs", [])) if results.get("request_logs") else "반영된 요청사항(휴가/학회)이 없습니다.", language='text')
-                st.markdown("---"); st.markdown("**🔄 일반 제외/보충 로그 (1:1 이동)**"); st.code("\n".join(results.get("swap_logs", [])) if results.get("swap_logs") else "일반 제외/보충이 발생하지 않았습니다.", language='text')
-                st.markdown("---"); st.markdown("**➕ 추가 제외/보충 로그**"); st.write("- 인원 초과(1순위) 제외 = 오후 근무 없는 경우\n- 인원 초과(2순위) 제외 = 오후 근무 있으나 오후도 1:1 이동 가능한 경우\n- 인원 초과(3순위) 제외 =  오후 근무 있고 오후 1:1 이동 불가능한 경우"); st.code("\n".join(results.get("adjustment_logs", [])) if results.get("adjustment_logs") else "추가 제외/보충이 발생하지 않았습니다.", language='text')
+                st.markdown("---"); st.markdown("**🔄 대체 보충/휴근 로그 (1:1 이동)**"); st.code("\n".join(results.get("swap_logs", [])) if results.get("swap_logs") else "일반 제외/보충이 발생하지 않았습니다.", language='text')
                 st.markdown("---"); st.markdown("**📞 오전당직(온콜) 배정 조정 로그**"); st.code("\n".join(results.get("oncall_logs", [])) if results.get("oncall_logs") else "모든 오전당직(온콜)이 누적 횟수에 맞게 정상 배정되었습니다.", language='text')
             
 
             if results.get("df_excel") is not None and not results["df_excel"].empty:
-                df_excel_display = results.get("df_excel")
+                # 1. 엑셀 원본 데이터는 보존하고, 화면 표시용 복사본을 생성합니다.
+                df_for_display = results.get("df_excel").copy()
+                
+                # 2. 상태 정보를 담고 있는 데이터프레임들을 불러옵니다.
+                df_final_unique = results.get("df_final_unique_sorted")
+                df_schedule = results.get("df_schedule")
+                
+                if df_final_unique is not None and df_schedule is not None:
+                    # 3. 빠른 조회를 위해 (날짜, 시간대, 근무자)를 키로 하는 상태 정보 딕셔너리를 만듭니다.
+                    status_lookup = {}
+                    for _, row in df_final_unique.iterrows():
+                        key = (row['날짜'], row['시간대'], row['근무자'])
+                        status_lookup[key] = row['상태']
+
+                    # 4. 화면에 표시할 복사본 데이터프레임의 내용을 업데이트합니다.
+                    for idx, row in df_for_display.iterrows():
+                        date_str = df_schedule.at[idx, '날짜'] # YYYY-MM-DD 형식의 날짜
+
+                        for col_name in df_for_display.columns:
+                            worker_name = row[col_name]
+                            if worker_name and pd.notna(worker_name):
+                                time_slot = '오전' if str(col_name).isdigit() else ('오후' if '오후' in str(col_name) else None)
+                                
+                                if time_slot:
+                                    key = (date_str, time_slot, worker_name)
+                                    status = status_lookup.get(key)
+                                    
+                                    # '근무', '당직' 등 기본 상태가 아닐 경우에만 상태를 괄호로 추가합니다.
+                                    if status and status not in ['근무', '당직', '기본']:
+                                        df_for_display.at[idx, col_name] = f"{worker_name}({status})"
+                
                 st.write(" ")
                 st.markdown(f"**➕ {next_month_str} 배정 스케줄**")
-                st.dataframe(df_excel_display, use_container_width=True, hide_index=True)
+                # 5. 상태 정보가 추가된 복사본을 화면에 출력합니다.
+                st.dataframe(df_for_display, use_container_width=True, hide_index=True)
             else:
                 st.warning("⚠️ 배정 테이블 데이터를 불러올 수 없습니다. 새로고침 후 다시 시도해주세요.")
 
@@ -2370,7 +2475,7 @@ if st.session_state.get('assigned', False):
             col1, col2 = st.columns(2)
             with col1:
                 st.download_button(
-                    label="📥 스케줄 ver1.0ㅌㄱ 다운로드",
+                    label="📥 스케줄 ver1.0 다운로드",
                     data=results.get("output_final"),
                     file_name=f"{month_str} 스케줄 ver1.0.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
