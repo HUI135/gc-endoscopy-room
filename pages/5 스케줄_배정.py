@@ -486,42 +486,60 @@ def append_final_summary_to_excel(worksheet, df_final_summary, style_args):
             cell.alignment = Alignment(horizontal='center', vertical='center')
 
 def replace_adjustments(df):
-    """동일 인물 + 동일 주차에서 추가보충/추가제외 -> 대체보충/대체제외로 변경"""
+    """
+    [수정됨] 동일 인물 + 동일 주차에서 추가보충/추가제외 -> 대체보충/대체제외로 변경합니다.
+    추가보충/추가제외가 1:N 또는 N:1일 경우, 날짜가 빠른 순서대로 1:1 매칭합니다.
+    """
     color_priority = {'🟠 주황색': 0, '🟢 초록색': 1, '🟡 노란색': 2, '기본': 3, '🔴 빨간색': 4, '🔵 파란색': 5, '🟣 보라색': 6, '특수근무색': -1}
 
-    # 중복 제거를 먼저 수행하여 최신 상태만 유지
-    df = df.sort_values(by=['날짜', '시간대', '근무자']).drop_duplicates(
-        subset=['날짜', '시간대', '근무자'], keep='last'
-    ).copy()
-
-    # 주차별, 근무자별, 시간대별로 그룹화
-    grouped = df.groupby(['근무자', '주차', '시간대', '상태']).size().unstack(fill_value=0)
+    # 1. '추가보충' 또는 '추가제외'인 행만 필터링 (주차 정보 포함 필수)
+    adjustments_df = df[df['상태'].isin(['추가보충', '추가제외'])].copy()
     
-    for (worker, week, shift), counts in grouped.iterrows():
-        if '추가보충' in counts.index and '추가제외' in counts.index:
-            if counts['추가보충'] == 1 and counts['추가제외'] == 1:
-                # 대체제외 날짜 찾기
-                jeoe_mask = (df['근무자'] == worker) & (df['주차'] == week) & (df['시간대'] == shift) & (df['상태'] == '추가제외')
-                bochung_mask = (df['근무자'] == worker) & (df['주차'] == week) & (df['시간대'] == shift) & (df['상태'] == '추가보충')
-                
-                jeoe_date = df.loc[jeoe_mask, '날짜']
-                bochung_date = df.loc[bochung_mask, '날짜']
-                
-                # 날짜가 존재하는지 확인
-                jeoe_date_str = jeoe_date.iloc[0] if not jeoe_date.empty else None
-                bochung_date_str = bochung_date.iloc[0] if not bochung_date.empty else None
-                
-                if jeoe_date_str and bochung_date_str:
-                    # 대체보충으로 변경
-                    df.loc[bochung_mask, '상태'] = '대체보충'
-                    df.loc[bochung_mask, '색상'] = '🟢 초록색'
-                    df.loc[bochung_mask, '메모'] = f"{pd.to_datetime(jeoe_date_str).strftime('%-m월 %-d일')}일과 대체"
+    # 2. 그룹별로 순차 매칭을 위해 날짜순으로 정렬
+    adjustments_df.sort_values(by='날짜', inplace=True)
 
-                    # 대체제외로 변경
-                    df.loc[jeoe_mask, '상태'] = '대체제외'
-                    df.loc[jeoe_mask, '색상'] = '🔵 파란색'
-                    df.loc[jeoe_mask, '메모'] = f"{pd.to_datetime(bochung_date_str).strftime('%-m월 %-d일')}일과 대체"
-    
+    # 3. 그룹별로 순차 매칭 수행
+    for (worker, week, shift), group in adjustments_df.groupby(['근무자', '주차', '시간대']):
+        
+        # 날짜 순으로 정렬된 추가보충 및 추가제외 레코드 리스트를 얻습니다.
+        bochung_records = group[group['상태'] == '추가보충'].to_dict('records')
+        jeoe_records = group[group['상태'] == '추가제외'].to_dict('records')
+
+        # 대체 가능 횟수 (min(추가보충 수, 추가제외 수))
+        num_swaps = min(len(bochung_records), len(jeoe_records))
+
+        # 4. 최대 가능 횟수만큼 순차적으로 짝짓기
+        for i in range(num_swaps):
+            bochung = bochung_records[i]
+            jeoe = jeoe_records[i]
+            
+            # 매칭 날짜를 YYYY-MM-DD 형식으로 가져옵니다.
+            bochung_date_str = bochung['날짜']
+            jeoe_date_str = jeoe['날짜']
+            
+            # 5. 원본 df에 상태 업데이트 (매칭된 두 레코드에 대해)
+            
+            # 대체보충으로 변경 (추가보충이었던 레코드)
+            bochung_mask = (df['날짜'] == bochung_date_str) & \
+                           (df['시간대'] == shift) & \
+                           (df['근무자'] == worker) & \
+                           (df['상태'] == '추가보충')
+            
+            df.loc[bochung_mask, '상태'] = '대체보충'
+            df.loc[bochung_mask, '색상'] = '🟢 초록색'
+            df.loc[bochung_mask, '메모'] = f"{pd.to_datetime(jeoe_date_str).strftime('%-m월 %-d일')}일과 대체"
+
+            # 대체제외로 변경 (추가제외였던 레코드)
+            jeoe_mask = (df['날짜'] == jeoe_date_str) & \
+                        (df['시간대'] == shift) & \
+                        (df['근무자'] == worker) & \
+                        (df['상태'] == '추가제외')
+            
+            df.loc[jeoe_mask, '상태'] = '대체제외'
+            df.loc[jeoe_mask, '색상'] = '🔵 파란색'
+            df.loc[jeoe_mask, '메모'] = f"{pd.to_datetime(bochung_date_str).strftime('%-m월 %-d일')}일과 대체"
+            
+    # 6. 최종 결과를 반환합니다. (호출한 곳에서 최종 중복 제거 필요)
     return df
 
 st.header("🗓️ 스케줄 배정", divider='rainbow')
