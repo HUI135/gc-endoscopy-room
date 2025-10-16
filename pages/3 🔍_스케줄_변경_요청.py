@@ -55,39 +55,33 @@ def get_gspread_client():
         st.error(f"Google Sheets 인증 정보를 불러오는 데 실패했습니다: {str(e)}")
         st.stop()
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_schedule_data(month_str):
-    try:
-        gc = get_gspread_client()
-        if not gc:
-            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
-            return pd.DataFrame()
-        spreadsheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        worksheet = spreadsheet.worksheet(f"{month_str} 스케줄")
-        records = worksheet.get_all_records()
-        if not records:
-            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
-            return pd.DataFrame()
-        df = pd.DataFrame(records)
-        if '날짜' not in df.columns:
-            st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
-            return pd.DataFrame()
-        df.fillna('', inplace=True)
-        df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
-        df.dropna(subset=['날짜_dt'], inplace=True)
-        return df
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (스케줄 데이터 로드): {str(e)}")
-        st.stop()
-    except gspread.exceptions.WorksheetNotFound:
-        st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
-        return pd.DataFrame()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.info(f"{month_str} 스케줄이 아직 배정되지 않았습니다.")
-        st.error(f"스케줄 데이터 로드 중 오류 발생: {str(e)}")
-        st.stop()
+def find_latest_schedule_version(sheet, month_str):
+    """주어진 월에 해당하는 스케줄 시트 중 가장 최신 버전을 찾습니다. '최종'이 최우선입니다."""
+    versions = {}
+    
+    # 1. '최종' 시트 존재 여부 확인 (가장 높은 우선순위)
+    final_version_name = f"{month_str} 스케줄 최종"
+    for ws in sheet.worksheets():
+        if ws.title == final_version_name:
+            return final_version_name
+    
+    # 2. 'ver X.X' 및 기본 버전 찾기 (기존 로직 유지)
+    # 'ver 1.0', 'ver1.0' 등 다양한 형식을 모두 찾도록 정규식 수정
+    pattern = re.compile(f"^{re.escape(month_str)} 스케줄(?: ver\s*(\d+\.\d+))?$")
+
+    for ws in sheet.worksheets():
+        match = pattern.match(ws.title)
+        if match:
+            version_num_str = match.group(1) # ver 뒤의 숫자 부분 (예: '1.0')
+            # 버전 넘버가 있으면 float으로 변환, 없으면 (기본 시트면) 1.0으로 처리
+            version_num = float(version_num_str) if version_num_str else 1.0
+            versions[ws.title] = version_num
+
+    if not versions:
+        return None
+
+    # 가장 높은 버전 번호를 가진 시트의 이름을 반환
+    return max(versions, key=versions.get)
 
 @st.cache_data(ttl=30, show_spinner=False)
 def get_my_requests(month_str, employee_id):
@@ -280,28 +274,9 @@ def is_person_assigned_at_time(df, person_name, date_obj, shift_type):
             return True
     return False
 
-# --- 1. 기존 load_schedule_data 및 find_latest_schedule_version 함수를 이 코드로 완전히 교체하세요 ---
-
-def find_latest_schedule_version(sheet, month_str):
-    """주어진 월에 해당하는 스케줄 시트 중 가장 최신 버전을 찾습니다."""
-    versions = {}
-    pattern = re.compile(f"^{re.escape(month_str)} 스케줄( ver(\d+\.\d+))?$")
-    for ws in sheet.worksheets():
-        match = pattern.match(ws.title)
-        if match:
-            version_num_str = match.group(2)
-            version_num = float(version_num_str.replace(' ver', '')) if version_num_str else 1.0
-            versions[ws.title] = version_num
-    
-    if not versions:
-        return None
-    
-    latest_version_name = sorted(versions.items(), key=lambda item: item[1], reverse=True)[0][0]
-    return latest_version_name
-
 @st.cache_data(ttl=300, show_spinner=False)
 def load_schedule_data(month_str):
-    """가장 최신 버전의 스케줄 데이터를 불러온 후, 필요한 열만 남도록 필터링합니다."""
+    """가장 최신 버전의 스케줄 데이터를 불러온 후, 필요한 열만 남도록 필터링하고 이름을 정제합니다.""" # <== 주석 설명 업데이트
     try:
         gc = get_gspread_client()
         if not gc:
@@ -326,13 +301,21 @@ def load_schedule_data(month_str):
             st.info(f"'{latest_version_name}' 시트의 형식이 올바르지 않습니다.")
             return pd.DataFrame(), latest_version_name
 
-        # ▼▼▼ [핵심 수정] 데이터프레임 자체를 필요한 열만 남도록 필터링합니다. ▼▼▼
         essential_columns = ['날짜', '요일'] + [str(i) for i in range(1, 13)] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 5)]
         columns_to_keep = [col for col in essential_columns if col in df.columns]
         df = df[columns_to_keep]
-        # ▲▲▲ [핵심 수정] ▲▲▲
-            
+        
         df.fillna('', inplace=True)
+        
+        # [✅ 핵심 수정] 이름이 포함된 모든 열에서 괄호와 그 안의 내용을 제거합니다.
+        # 이 작업을 데이터 로드 초기에 한 번만 수행하면 모든 로직에서 정제된 이름을 사용할 수 있습니다.
+        name_columns = [col for col in df.columns if col not in ['날짜', '요일', '날짜_dt']]
+        for col in name_columns:
+            # .apply()를 사용하여 각 셀(x)에 함수를 적용합니다.
+            # str(x)로 셀 값을 문자열로 변환하고, .split('(')[0]으로 '(' 이전의 문자열만 가져옵니다.
+            # .strip()으로 양옆의 공백을 제거합니다.
+            df[col] = df[col].apply(lambda x: str(x).split('(')[0].strip())
+        
         df['날짜_dt'] = pd.to_datetime(YEAR_STR + '년 ' + df['날짜'].astype(str), format='%Y년 %m월 %d일', errors='coerce')
         df.dropna(subset=['날짜_dt'], inplace=True)
         
@@ -389,11 +372,16 @@ if df_schedule.empty:
 else:
     # 불러온 스케줄의 버전 정보를 화면에 표시합니다.
     if loaded_version:
-        version_match = re.search(r'(ver\s*\d+\.\d+)', loaded_version)
-        if version_match:
-            st.info(f"✅ 현재 표시되는 스케줄은 **'{version_match.group(1)}'** 입니다.")
+        # ' 스케줄 '을 기준으로 시트 이름을 분리하여 마지막 부분을 버전으로 인식합니다.
+        # 예: "2025년 10월 스케줄 ver1.0" -> "ver1.0"
+        # 예: "2025년 10월 스케줄 최종" -> "최종"
+        version_str = loaded_version.split(' 스케줄 ')[-1]
+
+        # version_str이 비어있다면 "2025년 10월 스케줄"과 같은 기본 시트입니다.
+        if version_str:
+            st.info(f"현재 표시되는 스케줄 버전은 '**{version_str}**' 입니다.")
         else:
-            st.info(f"✅ 현재 표시되는 스케줄은 기본 버전입니다.")
+            st.info(f"현재 표시되는 스케줄 버전은 **기본 버전**입니다.")
 
     # [수정] df_schedule이 이미 필터링되었으므로, 바로 표시합니다. (날짜_dt 열만 제외)
     st.dataframe(df_schedule.drop(columns=['날짜_dt'], errors='ignore'), use_container_width=True, hide_index=True)

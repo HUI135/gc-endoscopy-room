@@ -136,12 +136,22 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
                 st.stop()
     return False
 
+# 'find_latest_schedule_version' 함수 (수정 필요)
+
 def find_latest_schedule_version(sheet, month_str):
-    """주어진 월에 해당하는 스케줄 시트 중 가장 최신 버전을 찾습니다."""
+    """주어진 월에 해당하는 스케줄 시트 중 가장 최신 버전을 찾습니다. '최종'이 최우선입니다."""
     versions = {}
+    
+    # 1. '최종' 시트 존재 여부 확인 (가장 높은 우선순위)
+    final_version_name = f"{month_str} 스케줄 최종"
+    for ws in sheet.worksheets():
+        if ws.title == final_version_name:
+            return final_version_name
+    
+    # 2. 'ver X.X' 및 기본 버전 찾기 (기존 로직 유지)
     # 'ver 1.0', 'ver1.0' 등 다양한 형식을 모두 찾도록 정규식 수정
     pattern = re.compile(f"^{re.escape(month_str)} 스케줄(?: ver\s*(\d+\.\d+))?$")
-    
+
     for ws in sheet.worksheets():
         match = pattern.match(ws.title)
         if match:
@@ -149,7 +159,7 @@ def find_latest_schedule_version(sheet, month_str):
             # 버전 넘버가 있으면 float으로 변환, 없으면 (기본 시트면) 1.0으로 처리
             version_num = float(version_num_str) if version_num_str else 1.0
             versions[ws.title] = version_num
-    
+
     if not versions:
         return None
 
@@ -157,20 +167,34 @@ def find_latest_schedule_version(sheet, month_str):
     return max(versions, key=versions.get)
 
 def find_latest_cumulative_version(sheet, month_str):
-    """주어진 월의 '다음 달'에 해당하는 누적 시트 중 가장 최신 버전을 찾습니다."""
+    """
+    주어진 월에 해당하는 누적 시트 중 가장 최신 버전을 찾습니다.
+    '최종' 버전을 최우선으로 간주합니다.
+    """
     versions = {}
-    pattern = re.compile(f"^{re.escape(month_str)} 누적(?: ver\s*(\d+\.\d+))?$")
+    final_version_name = f"{month_str} 누적 최종"
     
+    # 1. '최종' 시트가 있는지 먼저 확인 (가장 높은 우선순위)
+    for ws in sheet.worksheets():
+        if ws.title == final_version_name:
+            return final_version_name # '최종' 버전을 찾으면 즉시 반환
+    
+    # 2. '최종'이 없으면 'ver X.X' 및 기본 버전('누적')을 찾음
+    # 'ver 1.0', 'ver1.0' 등 다양한 형식을 모두 찾도록 정규식 수정
+    pattern = re.compile(f"^{re.escape(month_str)} 누적(?: ver\s*(\d+\.\d+))?$")
+
     for ws in sheet.worksheets():
         match = pattern.match(ws.title)
         if match:
-            version_num_str = match.group(1)
+            version_num_str = match.group(1) # ver 뒤의 숫자 부분 (예: '1.0')
+            # 버전 넘버가 있으면 float으로 변환, 없으면(기본 '누적' 시트) 1.0으로 처리
             version_num = float(version_num_str) if version_num_str else 1.0
             versions[ws.title] = version_num
-            
+
     if not versions:
-        return None # 최신 버전을 찾지 못하면 None 반환
-        
+        return None # 어떠한 버전의 시트도 찾지 못하면 None 반환
+
+    # 'ver'가 붙은 시트 중 가장 높은 버전 번호를 가진 시트의 이름을 반환
     return max(versions, key=versions.get)
 
 @st.cache_data(ttl=600, show_spinner="최신 데이터를 구글 시트에서 불러오는 중...")
@@ -205,26 +229,24 @@ def load_data_page5():
     except Exception as e:
         st.error(f"'요청' 시트 로드 실패: {e}"); st.stop()
 
-    # --- [핵심 수정] 최신 버전 누적 시트 로드 (원본 형태 그대로) ---
+    # --- [핵심 수정] 누적 시트 로드 로직을 단순하고 명확하게 변경 ---
     df_cumulative = pd.DataFrame()
-    # 다음 달 기준 최신 누적 시트 이름 찾기
+    worksheet_to_load = None
+
+    # 1. month_str에 해당하는 가장 최신 버전('최종' 우선)의 누적 시트 이름을 찾습니다.
     latest_cum_version_name = find_latest_cumulative_version(sheet, month_str)
     
-    worksheet_to_load = None
     if latest_cum_version_name:
         try:
             worksheet_to_load = sheet.worksheet(latest_cum_version_name)
         except WorksheetNotFound:
-            st.warning(f"'{latest_cum_version_name}' 시트를 찾지 못했습니다.")
-    
-    # 최신 버전이 없으면 이전 달의 최종 누적 시트(현재 월 기준)를 찾음
-    if worksheet_to_load is None:
-        try:
-            prev_month_cum_sheet_name = f"{month_str} 누적"
-            worksheet_to_load = sheet.worksheet(prev_month_cum_sheet_name)
-        except WorksheetNotFound:
-            st.warning(f"⚠️ '{prev_month_cum_sheet_name}' 시트도 찾을 수 없습니다. 빈 누적 테이블로 시작합니다.")
+            # 시트 이름은 찾았으나 gspread에서 못 여는 예외적인 경우
+            st.warning(f"⚠️ '{latest_cum_version_name}' 시트를 찾았지만 열 수 없습니다. 빈 테이블로 시작합니다.")
+    else:
+        # month_str에 해당하는 누적 시트가 아예 없는 경우
+        st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없어, 빈 누적 테이블로 시작합니다.")
 
+    # 2. 찾은 시트에서 데이터 로드
     if worksheet_to_load:
         all_values = worksheet_to_load.get_all_values()
         if all_values and len(all_values) > 1:
@@ -232,7 +254,7 @@ def load_data_page5():
             data = [row for row in all_values[1:] if any(cell.strip() for cell in row)]
             df_cumulative = pd.DataFrame(data, columns=headers)
         else:
-            st.warning(f"'{worksheet_to_load.title}' 시트가 비어있습니다.")
+            st.warning(f"'{worksheet_to_load.title}' 시트가 비어있어, 빈 테이블로 시작합니다.")
 
     # 누적 시트가 비었거나 '항목' 열이 없으면 기본값으로 생성
     if df_cumulative.empty or '항목' not in df_cumulative.columns:
@@ -245,7 +267,7 @@ def load_data_page5():
 
     # 숫자 열 변환
     for col in df_cumulative.columns:
-        if col != '항목': # '항목' 열은 문자열이므로 제외
+        if col != '항목':
             df_cumulative[col] = pd.to_numeric(df_cumulative[col], errors='coerce').fillna(0).astype(int)
 
     # --- 근무/보충 테이블 생성 ---
@@ -324,35 +346,6 @@ def split_column_to_multiple(df, column_name, prefix):
     df = pd.concat([df, split_data], axis=1)
 
     return df
-
-def append_transposed_cumulative(worksheet, df_cumulative, style_args):
-    if df_cumulative.empty:
-        return
-
-    start_row = worksheet.max_row + 3
-
-    df_transposed = df_cumulative.set_index(df_cumulative.columns[0]).T
-    df_transposed.reset_index(inplace=True)
-    df_transposed.rename(columns={'index': '항목'}, inplace=True)
-
-    header_row = df_transposed.columns.tolist()
-    for c_idx, value in enumerate(header_row, 1):
-        cell = worksheet.cell(row=start_row, column=c_idx, value=value)
-        cell.font = style_args['font']
-        cell.fill = PatternFill(start_color='808080', end_color='808080', fill_type='solid') 
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = style_args['border']
-
-    for r_idx, row_data in enumerate(df_transposed.itertuples(index=False), start_row + 1):
-        for c_idx, value in enumerate(row_data, 1):
-            cell = worksheet.cell(row=r_idx, column=c_idx, value=value)
-            cell.font = style_args['bold_font'] if c_idx == 1 else style_args['font']
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = style_args['border']
-
-    worksheet.column_dimensions[openpyxl.utils.get_column_letter(1)].width = 11
-    for i in range(2, len(header_row) + 1):
-        worksheet.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 9
 
 def append_summary_table_to_excel(worksheet, summary_df, style_args):
     if summary_df.empty:
@@ -544,7 +537,6 @@ def replace_adjustments(df):
 
 st.header("🗓️ 스케줄 배정", divider='rainbow')
 st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
-
 if st.button("🔄 새로고침 (R)"):
     try:
         st.cache_data.clear()
@@ -570,6 +562,33 @@ if st.button("🔄 새로고침 (R)"):
     except Exception as e:
         st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
         st.stop()
+
+try:
+    gc = get_gspread_client()
+    if gc:
+        sheet = gc.open_by_url(url)
+        latest_schedule = find_latest_schedule_version(sheet, month_str)
+        
+        if latest_schedule:
+            version_str = latest_schedule.split(' 스케줄 ')[-1]
+            
+            # ▼▼▼ [수정] 버전 이름에 따라 다른 안내 메시지를 표시합니다. ▼▼▼
+            if version_str == '최종':
+                message = f"이미 '**{version_str}**' 스케줄이 존재합니다. '**{version_str}**'을 수정하시려면 **방배정 페이지**로 이동해주세요."
+            else:
+                message = f"이미 '**{version_str}**' 스케줄이 존재합니다. '**{version_str}**'를 수정하시려면 **스케줄 수정 페이지**로 이동해주세요."
+            
+            st.info(message)
+            # ▲▲▲ [수정] ▲▲▲
+            
+        st.session_state["latest_schedule_name"] = latest_schedule
+
+except Exception as e:
+    st.error(f"최종 스케줄 버전 확인 중 오류가 발생했습니다: {e}")
+    st.session_state["latest_schedule_name"] = None
+except Exception as e:
+    st.error(f"최종 스케줄 버전 확인 중 오류가 발생했습니다: {e}")
+    st.session_state["latest_schedule_name"] = None
 
 # get_adjustment 함수 정의 (이전 수정사항 유지)
 def get_adjustment(name, time_slot, df_final_unique=None):
@@ -616,7 +635,7 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
     row_labels = [
         "오전보충", "임시보충", "오전합계", "오전누적",
         "오후보충", "온콜검사", "오후합계", "오후누적",
-        "오전당직 (목표)", "오전당직 (배정)", "오후당직 (목표)"
+        "오전당직 (목표)", "오전당직 (배정)", "오후당직 (목표)", "오후당직 (목표)"
     ]
     df_summary.index = row_labels
 
@@ -653,7 +672,7 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
         df_summary.at["오후당직 (목표)", name] = pm_oncall_target
 
     df_summary.reset_index(inplace=True)
-    df_summary.rename(columns={'index': next_month_str}, inplace=True)
+    df_summary.rename(columns={'index': '항목'}, inplace=True)
     return df_summary
 
 def build_final_summary_table(df_cumulative, df_final_unique, all_names):
@@ -688,6 +707,9 @@ def build_final_summary_table(df_cumulative, df_final_unique, all_names):
     return pd.DataFrame(summary_data)
 
 df_master, df_request, df_cumulative, df_shift, df_supplement = load_data_page5()
+
+# 세션 상태에 데이터 저장 (기존 코드 유지)
+st.session_state["df_master"] = df_master
 
 # 세션 상태에 데이터 저장
 st.session_state["df_master"] = df_master
@@ -1015,6 +1037,7 @@ df_final = pd.DataFrame(columns=['날짜', '요일', '주차', '시간대', '근
 
 st.divider()
 st.subheader(f"✨ {month_str} 스케줄 배정 수행")
+st.write("- 본 페이지에서 배정된 스케줄은 ver1.0로 저장됩니다.")
 
 def parse_date_range(date_str):
     if pd.isna(date_str) or not isinstance(date_str, str) or date_str.strip() == '':
@@ -2438,7 +2461,7 @@ if st.session_state.get('assigned', False):
             with st.expander("🔍 배정 과정 상세 로그 보기", expanded=True):
                 st.markdown("**📋 요청사항 반영 로그**"); st.code("\n".join(results.get("request_logs", [])) if results.get("request_logs") else "반영된 요청사항(휴가/학회)이 없습니다.", language='text')
                 st.markdown("---"); st.markdown("**🔄 대체 보충/휴근 로그 (1:1 이동)**"); st.code("\n".join(results.get("swap_logs", [])) if results.get("swap_logs") else "일반 제외/보충이 발생하지 않았습니다.", language='text')
-                st.markdown("---"); st.markdown("**📞 오전당직(온콜) 배정 조정 로그**"); st.code("\n".join(results.get("oncall_logs", [])) if results.get("oncall_logs") else "모든 오전당직(온콜)이 누적 횟수에 맞게 정상 배정되었습니다.", language='text')
+                st.markdown("---"); st.markdown("**📞 오전당직(온콜) 배정 로그**"); st.code("\n".join(results.get("oncall_logs", [])) if results.get("oncall_logs") else "모든 오전당직(온콜)이 누적 횟수에 맞게 정상 배정되었습니다.", language='text')
             
 
             if results.get("df_excel") is not None and not results["df_excel"].empty:
