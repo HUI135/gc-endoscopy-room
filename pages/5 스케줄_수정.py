@@ -224,8 +224,14 @@ def delete_schedule_version(month_str, sheet_to_delete):
         st.success("선택한 버전이 성공적으로 삭제되었습니다.")
         time.sleep(2)
         st.cache_data.clear()
-        st.rerun()
 
+        if "selected_sheet_name" in st.session_state:
+            del st.session_state["selected_sheet_name"]
+        if "data_loaded" in st.session_state:
+            st.session_state["data_loaded"] = False
+        
+        st.rerun()
+        
     except Exception as e:
         st.error(f"버전 삭제 중 오류가 발생했습니다: {e}")
 
@@ -397,7 +403,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
         'header': PatternFill(start_color='E7E6E6', fill_type='solid'), 'yellow': PatternFill(start_color='FFF296', fill_type='solid'),
         'pink': PatternFill(start_color='FFC8CD', fill_type='solid'), 'green': PatternFill(start_color='C6E0B4', fill_type='solid'),
         'dark_green': PatternFill(start_color='82C4B5', fill_type='solid'), 'blue': PatternFill(start_color='B8CCE4', fill_type='solid'),
-        'orange': PatternFill(start_color='FCE4D6', fill_type='solid')
+        'orange': PatternFill(start_color='FCE4D6', fill_type='solid'), 'lightgray': PatternFill(start_color='F2F2F2', fill_type='solid')
     }
     
     start_row = worksheet.max_row + 3
@@ -424,6 +430,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             elif label == "오전당직 (목표)": fill_color = fills['green']
             elif label == "오전당직 (배정)": fill_color = fills['dark_green']
             elif label == "오후당직 (목표)": fill_color = fills['orange']
+            elif label == "오후당직 (배정)": fill_color = fills['lightgray']
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]: fill_color = fills['yellow']
             if fill_color: cell.fill = fill_color
 
@@ -434,7 +441,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
     apply_outer_border(worksheet, start_row, start_row + len(labels), start_col, start_col)
     if "오전보충" in labels and "오전누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전보충"), start_row + 1 + labels.index("오전누적"), start_col, end_col)
     if "오후보충" in labels and "오후누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오후보충"), start_row + 1 + labels.index("오후누적"), start_col, end_col)
-    if "오전당직 (목표)" in labels and "오후당직 (목표)" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전당직 (목표)"), start_row + 1 + labels.index("오후당직 (목표)"), start_col, end_col)
+    if "오전당직 (목표)" in labels and "오후당직 (배정)" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전당직 (목표)"), start_row + 1 + labels.index("오후당직 (배정)"), start_col, end_col)
 
     legend_start_row = worksheet.max_row + 3 
     legend_data = [('A9D08E', '대체 보충'), ('FFF28F', '보충'), ('95B3D7', '대체 휴근'), ('B1A0C7', '휴근'), ('DA9694', '휴가/학회')]
@@ -721,9 +728,6 @@ versions = find_schedule_versions(sheet, month_str)
 def on_version_change():
     st.session_state.data_loaded = False
 
-if not versions:
-    st.warning(f"'{month_str}'에 해당하는 스케줄 시트가 없습니다. 먼저 스케줄을 생성해주세요."); st.stop()
-
 # [핵심 추가] 전체 버전 목록을 다시 불러오기 위한 새로고침 버튼
 if st.button("🔄 새로고침 (R)", help="Google Sheets에서 시트 목록을 다시 불러옵니다."):
     # 모든 캐시를 지워 새로운 시트 목록을 가져오도록 합니다.
@@ -735,6 +739,9 @@ if st.button("🔄 새로고침 (R)", help="Google Sheets에서 시트 목록을
             del st.session_state[key]
     st.rerun()
 
+if not versions:
+    st.warning(f"'{month_str}'에 해당하는 스케줄 시트가 없습니다. 먼저 스케줄을 생성해주세요."); st.stop()
+
 version_list = list(versions.keys())
 st.write(" ")
 selected_sheet_name = st.selectbox("- 불러올 스케줄 버전을 선택하세요:", options=version_list, index=0, key="selected_sheet_name", on_change=on_version_change)
@@ -745,10 +752,10 @@ col_delete, none = st.columns([2, 4])
 with col_delete:
     # 삭제는 위험한 작업이므로 확인 절차를 거칩니다.
     with st.expander("🗑️ 현재 버전 데이터 완전 삭제"):
-        st.error("이 작업은 되돌릴 수 없습니다! Google Sheets에서 해당 버전의 스케줄과 누적 시트가 영구적으로 삭제됩니다.")
+        st.error("이 작업은 되돌릴 수 없습니다!\nGoogle Sheets에서 해당 버전의 스케줄과 누적 시트가 영구적으로 삭제됩니다.")
         
         # 최종 삭제 확인 버튼
-        if st.button("네, 선택한 버전을 영구적으로 삭제합니다.", type="primary", use_container_width=True):
+        if st.button("네, 삭제합니다.", type="primary", use_container_width=True):
             delete_schedule_version(month_str, selected_sheet_name)
 
 if not st.session_state.get("data_loaded", False):

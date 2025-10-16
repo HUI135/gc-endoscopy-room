@@ -545,7 +545,7 @@ with col_delete:
     exp_title = f"🗑️ 오래된 시트 정리하기"
 
     with st.expander(exp_title, expanded=st.session_state.confirm_delete):
-        st.error("이 작업은 되돌릴 수 없습니다!\nGoogle Sheets에서 해당 버전의 스케줄과 누적 시트가 영구적으로 삭제됩니다.")
+        st.error("Google Sheets에서 해당 버전의 스케줄과 누적 시트가 영구적으로 삭제됩니다.")
         st.warning(f"**{cutoff_date.strftime('%Y년 %m월 %d일')}** 이전(세 달 전)의 모든 월별 시트를 삭제하시겠습니까?")
 
         # 긴 기본(주요) 버튼 — 컨테이너 너비 가득 채움

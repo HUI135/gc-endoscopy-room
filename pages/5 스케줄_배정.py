@@ -358,7 +358,8 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
         'green': PatternFill(start_color='C6E0B4', end_color='C6E0B4', fill_type='solid'),
         'dark_green': PatternFill(start_color='82C4B5', end_color='82C4B5', fill_type='solid'),
         'blue': PatternFill(start_color='B8CCE4', end_color='B8CCE4', fill_type='solid'),
-        'orange': PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid')
+        'orange': PatternFill(start_color='FCE4D6', end_color='FCE4D6', fill_type='solid'),
+        'lightgray': PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
     }
     
     start_row = worksheet.max_row + 3
@@ -387,7 +388,8 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             elif label == "오전당직 (목표)": fill_color = fills['green']
             elif label == "오전당직 (배정)": fill_color = fills['dark_green']
             elif label == "오후당직 (목표)": fill_color = fills['orange']
-            
+            elif label == "오후당직 (배정)": fill_color = fills['lightgray']
+
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]:
                 fill_color = fills['yellow']
             
@@ -411,7 +413,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
     apply_outer_border(worksheet, block2_start, block2_end, start_col, end_col)
     
     block3_start = start_row + 1 + labels.index("오전당직 (목표)")
-    block3_end = start_row + 1 + labels.index("오후당직 (목표)")
+    block3_end = start_row + 1 + labels.index("오후당직 (배정)")
     apply_outer_border(worksheet, block3_start, block3_end, start_col, end_col)
 
     legend_start_row = worksheet.max_row + 3 
@@ -480,7 +482,7 @@ def append_final_summary_to_excel(worksheet, df_final_summary, style_args):
 
 def replace_adjustments(df):
     """
-    [수정됨] 동일 인물 + 동일 주차에서 추가보충/추가제외 -> 대체보충/대체제외로 변경합니다.
+    [수정됨] 동일 인물 + 동일 주차에서 추가보충/추가제외 -> 대체보충/대체휴근로 변경합니다.
     추가보충/추가제외가 1:N 또는 N:1일 경우, 날짜가 빠른 순서대로 1:1 매칭합니다.
     """
     color_priority = {'🟠 주황색': 0, '🟢 초록색': 1, '🟡 노란색': 2, '기본': 3, '🔴 빨간색': 4, '🔵 파란색': 5, '🟣 보라색': 6, '특수근무색': -1}
@@ -522,13 +524,13 @@ def replace_adjustments(df):
             df.loc[bochung_mask, '색상'] = '🟢 초록색'
             df.loc[bochung_mask, '메모'] = f"{pd.to_datetime(jeoe_date_str).strftime('%-m월 %-d일')}일과 대체"
 
-            # 대체제외로 변경 (추가제외였던 레코드)
+            # 대체휴근로 변경 (추가제외였던 레코드)
             jeoe_mask = (df['날짜'] == jeoe_date_str) & \
                         (df['시간대'] == shift) & \
                         (df['근무자'] == worker) & \
                         (df['상태'] == '휴근')
             
-            df.loc[jeoe_mask, '상태'] = '대체제외'
+            df.loc[jeoe_mask, '상태'] = '대체휴근'
             df.loc[jeoe_mask, '색상'] = '🔵 파란색'
             df.loc[jeoe_mask, '메모'] = f"{pd.to_datetime(bochung_date_str).strftime('%-m월 %-d일')}일과 대체"
             
@@ -629,13 +631,15 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
     [수정됨] 최종 요약 테이블을 생성합니다.
     누적 값을 직접 계산하여 합계가 항상 일치하도록 보장합니다.
     """
-    summary_data = {name: [""] * 11 for name in all_names}
+    # ✅ 1. 행의 개수를 11개에서 12개로 수정합니다.
+    summary_data = {name: [""] * 12 for name in all_names}
     df_summary = pd.DataFrame(summary_data)
 
+    # ✅ 2. row_labels 리스트의 마지막 항목을 "오후당직 (배정)"으로 올바르게 수정합니다.
     row_labels = [
         "오전보충", "임시보충", "오전합계", "오전누적",
         "오후보충", "온콜검사", "오후합계", "오후누적",
-        "오전당직 (목표)", "오전당직 (배정)", "오후당직 (목표)", "오후당직 (목표)"
+        "오전당직 (목표)", "오전당직 (배정)", "오후당직 (목표)", "오후당직 (배정)"
     ]
     df_summary.index = row_labels
 
@@ -661,15 +665,18 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
         # --- 테이블에 값 채우기 및 누적 값 직접 계산 ---
         df_summary.at["오전보충", name] = am_bochung
         df_summary.at["오전합계", name] = am_hapgye
-        df_summary.at["오전누적", name] = am_hapgye + am_bochung  # [핵심] 직접 계산
+        df_summary.at["오전누적", name] = am_hapgye + am_bochung
 
         df_summary.at["오후보충", name] = pm_bochung
         df_summary.at["오후합계", name] = pm_hapgye
-        df_summary.at["오후누적", name] = pm_hapgye + pm_bochung  # [핵심] 직접 계산
+        df_summary.at["오후누적", name] = pm_hapgye + pm_bochung
         
         df_summary.at["오전당직 (목표)", name] = oncall_target
         df_summary.at["오전당직 (배정)", name] = actual_oncall_counts.get(name, 0)
         df_summary.at["오후당직 (목표)", name] = pm_oncall_target
+        
+        # ✅ 3. 오후당직 (배정) 값을 0으로 채우는 코드를 추가합니다.
+        df_summary.at["오후당직 (배정)", name] = 0
 
     df_summary.reset_index(inplace=True)
     df_summary.rename(columns={'index': '항목'}, inplace=True)
@@ -755,9 +762,30 @@ with st.expander("📁 테이블 펼쳐보기"):
 
     st.markdown("**➕ 누적 테이블**")
     st.write("- 변동이 있는 경우, 수정 가능합니다.")
+    df_cumulative_full = st.session_state["df_cumulative"]
+
+    # --- ✅ 오류 해결 코드 시작 ---
+    # 1. '항목' 열이 있는지 확인합니다.
+    if '항목' not in df_cumulative_full.columns:
+        try:
+            # 2. '항목' 열이 없다면, 행/열이 뒤바뀐 것으로 간주하고 원래 형태로 되돌립니다.
+            #    첫 번째 열(직원 이름)을 인덱스로 설정 후 행/열 전환(transpose)
+            first_column_name = df_cumulative_full.columns[0]
+            df_cumulative_full = df_cumulative_full.set_index(first_column_name).transpose().reset_index()
+            
+            # 3. 복원된 데이터의 첫 열 이름을 '항목'으로 변경합니다.
+            df_cumulative_full.rename(columns={'index': '항목'}, inplace=True)
+            
+            # 4. 올바르게 변환된 데이터를 세션 상태에 다시 저장하여 문제를 영구적으로 해결합니다.
+            st.session_state["df_cumulative"] = df_cumulative_full.copy()
+            
+        except Exception as e:
+            st.error(f"누적 테이블 형식 자동 변환 중 오류가 발생했습니다: {e}")
+            st.stop()
+    # --- ✅ 오류 해결 코드 끝 ---
+
     # 1. 표시할 행 이름 정의 및 원본 데이터에서 필터링
     rows_to_display = ["오전누적", "오후누적", "오전당직 (목표)", "오후당직 (목표)"]
-    df_cumulative_full = st.session_state["df_cumulative"]
     df_to_edit = df_cumulative_full[df_cumulative_full['항목'].isin(rows_to_display)]
 
     # 2. 필터링된 데이터를 data_editor에 표시 (display_cumulative_table 호출 제거)
@@ -1900,7 +1928,7 @@ if st.session_state.get('assigned', False):
 
             # 대체 로그 생성
             df_replacements = df_final_unique_sorted[
-                df_final_unique_sorted['상태'].isin(['대체보충', '대체제외'])
+                df_final_unique_sorted['상태'].isin(['대체보충', '대체휴근'])
             ].copy()
             df_replacements['주차'] = df_replacements['날짜'].apply(
                 lambda x: week_numbers.get(pd.to_datetime(x).date())
@@ -1908,7 +1936,7 @@ if st.session_state.get('assigned', False):
 
             weekly_swap_dates = {}
             for (week, worker, time_slot), group in df_replacements.groupby(['주차', '근무자', '시간대']):
-                dates_excluded = sorted(group[group['상태'] == '대체제외']['날짜'].tolist())
+                dates_excluded = sorted(group[group['상태'] == '대체휴근']['날짜'].tolist())
                 dates_supplemented = sorted(group[group['상태'] == '대체보충']['날짜'].tolist())
 
                 if dates_excluded and dates_supplemented:
