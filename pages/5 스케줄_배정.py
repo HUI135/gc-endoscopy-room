@@ -1540,7 +1540,31 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
 
                 # ✨ [핵심 변경 2] '바로 이 순간'의 실시간 점수를 기준으로 정렬합니다.
                 # scores 딕셔너리는 외부에서 계속 업데이트되고 있으므로 항상 최신 상태입니다.
-                potential_removals.sort(key=lambda w: scores.get(w, 0), reverse=True) # 점수가 높은 순으로 정렬
+                if time_slot == '오전':
+                    # [오전 휴근 처리 시]
+                    # 1. 오늘(date_str) 오후에 "근무/보충" 상태인 인원 집합(set)을 가져옵니다.
+                    pm_workers_on_date = set(
+                        df_final[
+                            (df_final['날짜'] == date_str) & 
+                            (df_final['시간대'] == '오후') & 
+                            (df_final['상태'].isin(['근무', '대체보충', '보충']))
+                        ]['근무자']
+                    )
+
+                    # 2. 정렬 키를 2단계로 수정합니다.
+                    potential_removals.sort(
+                        key=lambda w: (
+                            # 1순위: 오후 근무가 있으면 후순위(1), 없으면 우선(0)
+                            1 if w in pm_workers_on_date else 0,  
+                            # 2순위: (1순위가 같다면) 누적 점수가 높은 사람 우선 (내림차순)
+                            -scores.get(w, 0)                     
+                        )
+                    )
+                
+                else: 
+                    # [오후 휴근 처리 시]
+                    # 기존 로직(단순 누적 횟수)을 그대로 사용합니다.
+                    potential_removals.sort(key=lambda w: scores.get(w, 0), reverse=True)
 
                 # 가장 점수가 높은 한 명을 선택하여 제외
                 worker_to_remove = potential_removals[0]
