@@ -566,7 +566,7 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
     output = io.BytesIO()
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "스케줄 (확인용)"
+    ws.title = "스케줄 (배정 확인용)"
 
     # --- 스타일 정의 ---
     font_name = "맑은 고딕" if platform.system() == "Windows" else "Arial"
@@ -781,9 +781,11 @@ if df_original is None or df_original.empty:
 is_final_version = st.session_state.get("is_final_version", False)
 
 if is_final_version:
-    # 수정 관련 UI를 비활성화하기 위한 플래그 설정
+    # [수정] 알림 문구를 이 블록으로 가져옵니다.
+    st.error("🚨 최종 버전의 수정은 '방배정' 페이지에서 진행 바랍니다. 이 페이지에서는 최종본 내용 확인 및 다운로드만 가능합니다.")
     st.session_state["disable_editing"] = True
 else:
+    # [수정] False일 때도 명확하게 세션 상태를 설정합니다.
     st.session_state["disable_editing"] = False
 
 # 2. 선택된 버전을 바로 다운로드하는 버튼 생성
@@ -803,7 +805,6 @@ if "df_display_initial" in st.session_state:
     with col1:
         st.download_button(
             label=f"📥 스케줄{display_version} 다운로드",
-            # create 함수에는 원본과 수정본 자리에 모두 원본 데이터를 넣어 변경사항 없음으로 처리
             data=create_final_schedule_excel(
                 st.session_state.df_display_initial, st.session_state.df_display_initial, 
                 st.session_state.df_cumulative_next_display, st.session_state.df_special, 
@@ -811,7 +812,8 @@ if "df_display_initial" in st.session_state:
             ),
             file_name=f"{month_str} 스케줄{display_version}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True, type="primary"
+            use_container_width=True, type="primary",
+            key="download_now_final"  # <-- 1. 이 키 추가
         )
     with col2:
         st.download_button(
@@ -823,115 +825,19 @@ if "df_display_initial" in st.session_state:
             ),
             file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True, type="secondary"
+            use_container_width=True, type="secondary",
+            key="download_now_checking"  # <-- 2. 이 키 추가
         )
-
-# # 근무자 명단 수정
-# st.divider()
-# st.subheader("📋 스케줄 변경 요청 목록")
-# if "df_schedule" not in st.session_state or st.session_state["df_schedule"].empty:
-#     st.warning("⚠️ 스케줄 데이터가 로드되지 않았습니다. 새로고침 버튼을 눌러 데이터를 다시 로드해주세요.")
-#     st.stop()
-
-# # --- 표시할 데이터프레임 결정 ---
-# # data_editor에 들어갈 데이터를 먼저 결정합니다. 이것이 현재 화면의 기준이 됩니다.
-# df_to_display = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial", pd.DataFrame()))
-
-# # --- '스케줄 변경 요청 목록' 섹션 ---
-# df_swaps_raw = st.session_state.get("df_swap_requests", pd.DataFrame())
-# if not df_swaps_raw.empty:
-#     cols_to_display = {'요청일시': '요청일시', '요청자': '요청자', '변경 요청': '변경 요청', '변경 요청한 스케줄': '변경 요청한 스케줄'}
-#     existing_cols = [col for col in cols_to_display.keys() if col in df_swaps_raw.columns]
-#     df_swaps_display = df_swaps_raw[existing_cols].rename(columns=cols_to_display)
-#     if '변경 요청한 스케줄' in df_swaps_display.columns:
-#         df_swaps_display['변경 요청한 스케줄'] = df_swaps_display['변경 요청한 스케줄'].apply(format_sheet_date_for_display)
-#     st.dataframe(df_swaps_display, use_container_width=True, hide_index=True)
-
-#     # >>>>>>>>> [핵심 수정] '일괄 적용' 전 상태일 때만 아래의 충돌 검사를 실행 <<<<<<<<<
-#     if "df_schedule_md_modified" not in st.session_state:
-#         # --- 충돌 경고 로직 ---
-#         request_sources = []
-#         request_destinations = []
-
-#         schedule_df_to_check = df_to_display
-#         target_year = int(month_str.split('년')[0])
-
-#         for index, row in df_swaps_raw.iterrows():
-#             change_request_str = str(row.get('변경 요청', '')).strip()
-#             schedule_info_str = str(row.get('변경 요청한 스케줄', '')).strip()
-            
-#             if '➡️' in change_request_str and schedule_info_str:
-#                 person_before, person_after = [p.strip() for p in change_request_str.split('➡️')]
-                
-#                 is_on_call_request = False
-#                 date_match = re.match(r'(\d{4}-\d{2}-\d{2}) \((.+)\)', schedule_info_str)
-#                 if date_match:
-#                     date_part, time_period = date_match.groups()
-#                     if time_period == '오전':
-#                         try:
-#                             date_obj = datetime.strptime(date_part, '%Y-%m-%d').date()
-#                             formatted_date_in_df = f"{date_obj.month}월 {date_obj.day}일"
-                            
-#                             target_row = schedule_df_to_check[schedule_df_to_check['날짜'] == formatted_date_in_df]
-                            
-#                             if not target_row.empty:
-#                                 on_call_person_of_the_day = str(target_row.iloc[0].get('오전당직(온콜)', '')).strip()
-#                                 if person_before == on_call_person_of_the_day:
-#                                     is_on_call_request = True
-#                         except Exception:
-#                             pass 
-                
-#                 if not is_on_call_request:
-#                     request_sources.append(f"{person_before} - {schedule_info_str}")
-                
-#                 if date_match:
-#                     date_part, time_period = date_match.groups()
-#                     request_destinations.append((date_part, time_period, person_after))
-
-#         # [검사 1: 출처 충돌]
-#         source_counts = Counter(request_sources)
-#         source_conflicts = [item for item, count in source_counts.items() if count > 1]
-#         if source_conflicts:
-#             st.warning(
-#                 "⚠️ **요청 출처 충돌**: 동일한 근무에 대한 변경 요청이 2개 이상 있습니다. "
-#                 "목록의 가장 위에 있는 요청이 먼저 반영되며, 이후 요청은 무시될 수 있습니다."
-#             )
-#             for conflict_item in source_conflicts:
-#                 person, schedule = conflict_item.split(' - ', 1)
-#                 formatted_schedule = format_sheet_date_for_display(schedule)
-#                 st.info(f"- **'{person}'** 님의 **{formatted_schedule}** 근무 요청이 중복되었습니다.")
-
-#         # [검사 2: 도착지 중복]
-#         dest_counts = Counter(request_destinations)
-#         dest_conflicts = [item for item, count in dest_counts.items() if count > 1]
-#         if dest_conflicts:
-#             st.warning(
-#                 "⚠️ **요청 도착지 중복**: 한 사람이 같은 날, 같은 시간대에 여러 근무를 받게 되는 요청이 있습니다. "
-#                 "이 경우, 먼저 처리되는 요청만 반영됩니다."
-#             )
-#             for date, period, person in dest_conflicts:
-#                 formatted_date = format_sheet_date_for_display(f"{date} ({period})")
-#                 st.info(f"- **'{person}'** 님이 **{formatted_date}** 근무에 중복으로 배정될 가능성이 있습니다.")
-# else:
-#     st.info("표시할 교환 요청 데이터가 없습니다.")
 
 st.divider(); st.subheader("📅 스케줄표 수정")
 df_to_display = st.session_state.get("df_display_modified", st.session_state.get("df_display_initial"))
-is_final_version = st.session_state.get("is_final_version", False)
-
-if is_final_version:
-    st.error("🚨 최종 버전의 수정은 '방배정' 페이지에서 진행 바랍니다. 이 페이지에서는 최종본 내용 확인 및 다운로드만 가능합니다.")
-    disable_editing = True
-else:
-    disable_editing = False
 
 # --- 데이터 에디터 ---
-df_to_display = st.session_state.get("df_display_modified", st.session_state.get("df_display_initial"))
 edited_df = st.data_editor(
-    df_to_display, 
-    use_container_width=True, 
-    key="schedule_editor", 
-    disabled=['날짜', '요일'] if not disable_editing else df_to_display.columns.tolist() # 최종본이면 모든 열 비활성화
+    df_to_display,
+    use_container_width=True,
+    key="schedule_editor",
+    disabled=['날짜', '요일'] if not st.session_state.get("disable_editing", False) else df_to_display.columns.tolist()
 )
 
 # --- 변경사항 미리보기 (기존과 동일) ---
@@ -942,12 +848,56 @@ if not edited_df.equals(df_to_display):
     for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
         date_str = edited_df.iloc[row_idx, 0]
         weekday = edited_df.iloc[row_idx, 1]
+        
+        # 변경된 셀의 컬럼 이름 가져오기
+        col_name = edited_df.columns[col_idx]
+        
         old_val = df_to_display.iloc[row_idx, col_idx]
         new_val = edited_df.iloc[row_idx, col_idx]
-        manual_change_log.append({'날짜': f"{date_str} ({weekday})", '변경 전': str(old_val), '변경 후': str(new_val)})
+
+        # --- [수정됨] '시간대' 로직 ---
+        time_period = col_name # 기본값은 컬럼명
+        if col_name.isdigit():
+            time_period = "오전"
+        elif col_name == "오전당직(온콜)":
+            time_period = "오전당직(온콜)"
+        elif col_name.startswith("오후"):
+            time_period = "오후"
+        # --- '시간대' 로직 끝 ---
+
+        manual_change_log.append({
+            '날짜': f"{date_str} ({weekday})", 
+            '시간대': time_period,  # 요청하신 '시간대' 열 추가
+            '변경 전': str(old_val), 
+            '변경 후': str(new_val)
+        })
+
+# '스케줄 변경 요청 목록' 섹션이 주석 처리되어 있으므로, 
+# st.session_state["change_log"]는 비어있을 것입니다.
 combined_log = st.session_state.get("change_log", []) + manual_change_log
+
 if combined_log:
-    st.dataframe(pd.DataFrame(combined_log), use_container_width=True, hide_index=True)
+    # --- [수정됨] 컬럼 순서 지정을 위해 DataFrame 생성 로직 변경 ---
+    df_log = pd.DataFrame(combined_log)
+    
+    # '시간대' 열이 존재하는지 확인 (manual_change_log가 비어있지 않다면 존재)
+    if '시간대' in df_log.columns:
+        # 원하는 컬럼 순서 정의
+        desired_columns = ['날짜', '시간대', '변경 전', '변경 후']
+        
+        # '시간대'가 아닌 다른 컬럼들 (혹시 모를 다른 로그데이터의 컬럼 순서 유지를 위해)
+        other_columns = [col for col in df_log.columns if col not in desired_columns]
+        
+        # 최종 컬럼 순서 (날짜, 시간대, 변경 전, 변경 후, [그 외])
+        final_columns = desired_columns + other_columns
+        
+        # df_log에 실제로 존재하는 컬럼들로만 필터링
+        final_columns_existing = [col for col in final_columns if col in df_log.columns]
+        
+        # 최종적으로 컬럼 순서가 재정렬된 DataFrame을 사용
+        df_log = df_log[final_columns_existing]
+
+    st.dataframe(df_log, use_container_width=True, hide_index=True)
 else:
     st.info("기록된 변경사항이 없습니다.")
 
@@ -966,12 +916,13 @@ if "df_cumulative_next_display" in st.session_state and not st.session_state.df_
         column_config[col] = st.column_config.NumberColumn()
     
     edited_cumulative_df = st.data_editor(
-        df_cum,  
+        df_cum, 
         hide_index=True,
         key="cumulative_editor",
         use_container_width=True,
         column_config=column_config,
-        disabled=disable_editing # [핵심] 비활성화 플래그 적용
+        # [수정] 'disable_editing' 로컬 변수 대신 세션 상태를 직접 사용합니다.
+        disabled=st.session_state.get("disable_editing", False) # [핵심] 비활성화 플래그 적용
     )
 else:
     st.info("표시할 익월 누적 데이터가 없습니다...")
@@ -1001,15 +952,15 @@ try:
         
         # 변경된 각 셀에 대한 로그를 생성합니다.
         for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
-            person_name = edited_numeric.iloc[row_idx, 0]
-            item_name = edited_numeric.columns[col_idx]
+            item_name = edited_numeric.iloc[row_idx, 0]
+            person_name = edited_numeric.columns[col_idx]
             # 변환된 데이터프레임에서 값을 가져와 로그를 기록합니다.
             old_val = base_numeric.iloc[row_idx, col_idx]
             new_val = edited_numeric.iloc[row_idx, col_idx]
 
             cumulative_change_log.append({
-                '이름': person_name,
                 '항목': item_name,
+                '이름': person_name,
                 '변경 전': old_val,
                 '변경 후': new_val
             })
@@ -1053,19 +1004,21 @@ if st.session_state.get("save_successful", False) and not has_unsaved_changes:
             ),
             file_name=f"{month_str} 스케줄{display_version}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True, type="primary"
+            use_container_width=True, type="primary",
+            key="download_saved_final"  # <-- 3. 이 키 추가
         )
     with col2:
         st.download_button(
-            label=f"📥 스케줄{display_version} 다운로드 (확인용)",
+            label=f"📥 스케줄{display_version} 다운로드 (배정 확인용)",
             data=create_checking_schedule_excel(
                 st.session_state.df_display_initial, edited_df, edited_cumulative_df,
                 st.session_state.df_special, st.session_state.df_requests,
                 st.session_state.get("closing_dates", []), month_str
             ),
-            file_name=f"{month_str} 스케줄{display_version} (확인용).xlsx",
+            file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True, type="secondary"
+            use_container_width=True, type="secondary",
+            key="download_saved_checking"  # <-- 4. 이 키 추가
         )
 
 # 2. 그 외 모든 경우 (변경사항이 있거나, 아직 아무 작업도 하지 않은 초기 상태)
@@ -1082,10 +1035,21 @@ else:
         st.write("수정한 스케줄표와 누적표를 저장하시려면 아래 옵션 중 선택해주세요.")
         st.warning("현재 버전 덮어쓰기를 선택하시면 이전 버전으로 돌아갈 수 없습니다.")
 
-        latest_version_name = list(versions.keys())[0]
-        latest_version_num = versions[latest_version_name]
+        # --- [수정] '다음 버전' 계산 로직 ---
+        # '최종' (999.0)을 제외한 실제 숫자 버전들만 필터링합니다.
+        numerical_versions = [v for v in versions.values() if v < 999.0]
+        
+        if not numerical_versions:
+            # 숫자 버전이 하나도 없으면 (예: '최종'만 있거나 base 시트만 있음) 0.0에서 시작
+            latest_version_num = 0.0
+        else:
+            # 숫자 버전 중 가장 높은 버전을 찾습니다.
+            latest_version_num = max(numerical_versions)
+
+        # 새 버전 번호는 (가장 높은 버전의 정수부 + 1)을 float으로 변환
         new_version_num = float(int(latest_version_num) + 1)
         new_sheet_name = f"{month_str} 스케줄 ver{new_version_num:.1f}"
+        # --- [수정] 로직 끝 ---
 
         save_option = st.radio(
             "저장 옵션 선택",

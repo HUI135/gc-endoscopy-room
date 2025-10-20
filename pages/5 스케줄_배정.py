@@ -29,8 +29,6 @@ st.session_state.current_page = os.path.basename(__file__)
 
 menu.menu()
 
-random.seed(42)
-
 def initialize_schedule_session_state():
     """스케줄 배정 페이지에서 사용할 모든 세션 상태 키를 초기화합니다."""
     keys_to_init = {
