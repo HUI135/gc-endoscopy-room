@@ -771,8 +771,12 @@ if not st.session_state.get("data_loaded", False):
     st.session_state["is_final_version"] = data["is_final_version"] # ✨ 세션 상태에 저장
     st.session_state.data_loaded = True
 
-if st.session_state["df_schedule_original"].empty:
-    st.info(f"'{selected_sheet_name}' 시트에 데이터가 없습니다."); st.stop()
+# 774번 줄 수정
+df_original = st.session_state.get("df_schedule_original")
+
+# df_original이 None (키 없음) 이거나 비어있는(empty) 경우를 모두 처리
+if df_original is None or df_original.empty:
+    st.info(f"'{selected_sheet_name}' 시트에 데이터가 없거나, 데이터를 불러오는 데 실패했습니다."); st.stop()
 
 is_final_version = st.session_state.get("is_final_version", False)
 
