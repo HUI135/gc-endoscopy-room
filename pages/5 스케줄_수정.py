@@ -776,7 +776,7 @@ df_original = st.session_state.get("df_schedule_original")
 
 # df_original이 None (키 없음) 이거나 비어있는(empty) 경우를 모두 처리
 if df_original is None or df_original.empty:
-    st.info(f"'{selected_sheet_name}' 시트에 데이터가 없거나, 데이터를 불러오는 데 실패했습니다."); st.stop()
+    st.info(f"'{selected_sheet_name}' 시트에 데이터가 없거나, 데이터를 불러오는 데 실패했습니다."); st.stop()
 
 is_final_version = st.session_state.get("is_final_version", False)
 
