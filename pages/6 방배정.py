@@ -189,7 +189,6 @@ def load_data_page6_no_cache(month_str):
         st.session_state["latest_cumulative_name"] = latest_cumulative_name
 
         # 다음 달 누적 시트를 성공적으로 찾은 경우에만 아래 로직 실행
-        st.info(f"'{latest_cumulative_name}' 시트에서 누적 데이터를 불러옵니다.")
         worksheet_cumulative = sheet.worksheet(latest_cumulative_name)
         all_values = worksheet_cumulative.get_all_values()
         if not all_values or len(all_values) < 2 or all_values[0][0] != '항목':
@@ -438,6 +437,7 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df, special_df):
                 swapped_assignments.add((formatted_date_in_df, '오전', person_after))
                 swapped_assignments.add((formatted_date_in_df, '오후', person_after))
                 swapped_assignments.add((formatted_date_in_df, '오전당직(온콜)', person_after))
+
                 batch_change_log.append({
                     '날짜': f"{formatted_date_in_df} ({'월화수목금토일'[date_obj.weekday()]}) - 당직 변경",
                     '변경 전 인원': person_before, '변경 후 인원': person_after,
@@ -578,6 +578,9 @@ if st.button("🔄 새로고침 (R)"):
     if "batch_apply_messages" in st.session_state:
         st.session_state["batch_apply_messages"] = []
     
+    if "swapped_assignments" in st.session_state:
+        st.session_state["swapped_assignments"] = set()
+
     # 수정된 스케줄 및 결과 초기화
     if "df_schedule_md_modified" in st.session_state:
         del st.session_state["df_schedule_md_modified"]
@@ -606,6 +609,85 @@ else:
             st.info(f"현재 표시되는 스케줄 버전은 '**{version_str}**' 입니다.")
         else:
             st.info(f"현재 표시되는 스케줄 버전은 **기본 버전**입니다.")
+        
+        # ▼▼▼ [사용자 요청] '최종' 버전일 때만 초기화 익스팬더 표시 ▼▼▼
+        if version_str == "최종":
+            # {next_month_str} 계산 (시트 삭제에 필요)
+            try:
+                target_month_dt = datetime.strptime(month_str, "%Y년 %m월")
+                next_month_dt = target_month_dt + relativedelta(months=1)
+                # (예: '2025년 1월')
+                next_month_str = next_month_dt.strftime("%Y년 %-m월") 
+            except Exception as e:
+                st.error(f"다음 달 문자열 생성 중 오류: {e}")
+                next_month_str = "[날짜 계산 오류]"
+
+            col_delete, none = st.columns([2, 4])
+
+            with col_delete:
+                # 삭제는 위험한 작업이므로 확인 절차를 거칩니다.
+                with st.expander("🗑️ 스케줄 최종 버전 초기화"):    
+                    st.error(
+                        "이 작업은 되돌릴 수 없습니다!\n 기존 '스케줄 최종' 버전 시트를 삭제하고 스케줄 변경을 다시 수행하시겠습니까?"
+                    )
+                
+                    if st.button("네, 삭제합니다.", type="primary", use_container_width=True, key="delete_final_confirm"):
+                        if next_month_str == "[날짜 계산 오류]":
+                            st.error("날짜 계산 오류로 인해 삭제를 진행할 수 없습니다.")
+                        else:
+                            with st.spinner("최종 버전 시트를 삭제하는 중입니다..."):
+                                try:
+                                    gc = get_gspread_client()
+                                    if gc is None:
+                                        raise Exception("Google Sheets 클라이언트를 초기화할 수 없습니다.")
+                                    
+                                    sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+                                    
+                                    sheets_to_delete = [
+                                        f"{month_str} 스케줄 최종",
+                                        f"{next_month_str} 누적 최종", 
+                                    ]
+                                    
+                                    deleted_count = 0
+                                    for sheet_name in sheets_to_delete:
+                                        try:
+                                            worksheet = sheet.worksheet(sheet_name)
+                                            sheet.del_worksheet(worksheet)
+                                            st.success(f"✅ '{sheet_name}' 시트를 삭제했습니다.")
+                                            deleted_count += 1
+                                        except gspread.exceptions.WorksheetNotFound:
+                                            st.info(f"ℹ️ '{sheet_name}' 시트가 이미 존재하지 않습니다.")
+                                    
+                                    if deleted_count > 0:
+                                        st.info("초기화가 완료되었습니다. 페이지를 새로고침합니다.")
+                                        
+                                        # ▼▼▼ [사용자 요청 수정] 세션 상태 초기화 추가 ▼▼▼
+                                        st.session_state["data_loaded"] = False
+                                        st.cache_data.clear()
+                                        
+                                        # 스케줄 수정 관련 상태 초기화
+                                        if "df_schedule_md_modified" in st.session_state:
+                                            del st.session_state["df_schedule_md_modified"]
+                                        if "final_change_log" in st.session_state:
+                                            st.session_state["final_change_log"] = []
+                                        if "swapped_assignments_log" in st.session_state:
+                                            st.session_state["swapped_assignments_log"] = []
+                                        if "batch_apply_messages" in st.session_state:
+                                            st.session_state["batch_apply_messages"] = []
+                                        if "changed_cells_set" in st.session_state: # 하이라이트 정보도 초기화
+                                            del st.session_state["changed_cells_set"]
+
+                                        # 방배정 결과 초기화
+                                        if "assignment_results" in st.session_state:
+                                                del st.session_state["assignment_results"]
+                                        st.session_state.show_assignment_results = False
+                                        time.sleep(2)
+                                        st.rerun()
+                                    else:
+                                        st.warning("삭제할 '최종' 시트가 없습니다.")
+
+                                except Exception as e:
+                                    st.error(f"시트 삭제 중 오류 발생: {e}")
 
 # 데이터 로드 (페이지 첫 로드 시에만 실행)
 if not st.session_state.get("data_loaded", False):
@@ -801,7 +883,11 @@ with col2:
     if st.button("⏪ 적용 취소", disabled="df_schedule_md_modified" not in st.session_state):
         if "df_schedule_md_modified" in st.session_state:
             del st.session_state["df_schedule_md_modified"]
-        
+
+        # ▼▼▼ [핵심 수정] 하이라이트 기록을 초기화합니다. ▼▼▼
+        st.session_state["swapped_assignments"] = set()
+        # ▲▲▲ [핵심 수정] ▲▲▲
+
         st.session_state["swapped_assignments_log"] = []
         st.session_state["final_change_log"] = []
         st.session_state["batch_apply_messages"] = [('info', "변경사항이 취소되고 원본 스케줄로 돌아갑니다.")]
@@ -916,114 +1002,162 @@ else:
     # 기본 시트에서 작업한 경우, 다음 버전은 2.0
     next_major_version = 2
 
-# --- 2. [수정] 동적 버튼 레이블 생성 ---
-button_label = f"✍️ 스케줄 최종 버전으로 저장"
+st.write(" ") # 여백
 
-if st.button(button_label, type="primary", use_container_width=True):
-    is_manually_edited = not edited_df_md.equals(st.session_state["df_schedule_md_initial"])
-    if not is_manually_edited:
-        st.info("ℹ️ 변경사항이 없어 저장할 내용이 없습니다.")
-        st.stop()
+# --- 동적 버튼 레이블 생성 (현재 '최종'으로 고정) ---
+# button_label = f"✍️ 스케줄 최종 버전으로 저장"
 
-    # (로그 기록 및 swapped_set 구성 로직은 동일)
-    manual_change_log = []
-    swapped_set = st.session_state.get("swapped_assignments", set())
-    diff_indices = np.where(edited_df_md.ne(st.session_state["df_schedule_md_initial"]))
-    for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
-        date_str_raw = edited_df_md.iloc[row_idx, 0]
-        col_name = edited_df_md.columns[col_idx]
-        old_value = st.session_state["df_schedule_md_initial"].iloc[row_idx, col_idx]
-        new_value = edited_df_md.iloc[row_idx, col_idx]
-        try:
-            original_row = st.session_state["df_schedule_original"][st.session_state["df_schedule_original"]['날짜'] == date_str_raw].iloc[0]
-            weekday = original_row['요일']
-        except IndexError:
-            weekday = ''
-        time_period = '오후' if col_name.startswith('오후') else '오전'
-        formatted_date_str = f"{date_str_raw} ({weekday.replace('요일', '')}) - {time_period}"
-        manual_change_log.append({'날짜': formatted_date_str, '변경 전 인원': str(old_value), '변경 후 인원': str(new_value)})
-        if str(new_value).strip():
-            swapped_set.add((date_str_raw.strip(), time_period, str(new_value).strip()))
-    st.session_state["final_change_log"] = manual_change_log
-    st.session_state["swapped_assignments"] = swapped_set
+# if st.button(button_label, type="primary", use_container_width=True):
+#     original_parsed_df = create_df_schedule_md(st.session_state["df_schedule_original"])
+#     if original_parsed_df.equals(edited_df_md):
+#         st.info("ℹ️ 변경사항이 없어 저장할 내용이 없습니다.")
+#         st.stop()
 
-    # --- [핵심 수정] 저장할 DataFrame 재구성 로직 변경 ---
-    df_schedule_to_save = st.session_state["df_schedule_original"].copy()
-    target_year = int(month_str.split('년')[0])
-    def robust_parse_date(date_str, year=target_year):
-        try:
-            if "월" in str(date_str): return datetime.strptime(str(date_str), '%m월 %d일').replace(year=year).date()
-            else: return pd.to_datetime(date_str).date()
-        except: return None
-    df_schedule_to_save['parsed_date'] = df_schedule_to_save['날짜'].apply(robust_parse_date)
+    # # (로그 기록 및 swapped_set 구성 로직은 동일)
+    # manual_change_log = []
+    # swapped_set = st.session_state.get("swapped_assignments", set())
 
-    for _, edited_row in edited_df_md.iterrows():
-        edited_date_obj = robust_parse_date(edited_row['날짜'])
-        if edited_date_obj is None: continue
-        target_indices = df_schedule_to_save[df_schedule_to_save['parsed_date'] == edited_date_obj].index
-        if target_indices.empty: continue
-        original_row_idx = target_indices[0]
+    # base_df_for_diff = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial"))
+    # diff_indices = np.where(edited_df_md.ne(base_df_for_diff))
 
-        # 1. 수정된 내용 가져오기
-        oncall_person = str(edited_row.get('오전당직(온콜)', '')).strip()
+    # for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
+    #     date_str_raw = edited_df_md.iloc[row_idx, 0]
+    #     col_name = edited_df_md.columns[col_idx]
+    #     old_value = base_df_for_diff.iloc[row_idx, col_idx]
+    #     new_value = edited_df_md.iloc[row_idx, col_idx]
+    #     try:
+    #         original_row = st.session_state["df_schedule_original"][st.session_state["df_schedule_original"]['날짜'] == date_str_raw].iloc[0]
+    #         weekday = original_row['요일']
+    #     except IndexError:
+    #         weekday = ''
+    #     time_period = '오후' if col_name.startswith('오후') else '오전'
+    #     formatted_date_str = f"{date_str_raw} ({weekday.replace('요일', '')}) - {time_period}"
+    #     manual_change_log.append({'날짜': formatted_date_str, '변경 전 인원': str(old_value), '변경 후 인원': str(new_value)})
+    #     if str(new_value).strip():
+    #         swapped_set.add((date_str_raw.strip(), time_period, str(new_value).strip()))
+    
+    # # "일괄 적용" 시 생성된 세트도 여기에 합쳐줍니다.
+    # batch_swapped_set = st.session_state.get("swapped_assignments", set())
+    # swapped_set.update(batch_swapped_set)
+    
+    # st.session_state["final_change_log"] = manual_change_log
+    # st.session_state["swapped_assignments"] = swapped_set
+
+    # # --- [핵심 수정] 저장할 DataFrame 재구성 로직 변경 ---
+    # df_schedule_to_save = st.session_state["df_schedule_original"].copy()
+    # target_year = int(month_str.split('년')[0])
+    # def robust_parse_date(date_str, year=target_year):
+    #     try:
+    #         if "월" in str(date_str): return datetime.strptime(str(date_str), '%m월 %d일').replace(year=year).date()
+    #         else: return pd.to_datetime(date_str).date()
+    #     except: return None
+    # df_schedule_to_save['parsed_date'] = df_schedule_to_save['날짜'].apply(robust_parse_date)
+
+    # for _, edited_row in edited_df_md.iterrows():
+    #     edited_date_obj = robust_parse_date(edited_row['날짜'])
+    #     if edited_date_obj is None: continue
+    #     target_indices = df_schedule_to_save[df_schedule_to_save['parsed_date'] == edited_date_obj].index
+    #     if target_indices.empty: continue
+    #     original_row_idx = target_indices[0]
+
+    #     # 1. 수정된 내용 가져오기 (편집기 기준 - 괄호 없음)
+    #     oncall_person = str(edited_row.get('오전당직(온콜)', '')).strip()
         
-        am_editor_cols = [str(i) for i in range(1, 12)]
-        am_personnel = [str(edited_row[col]).strip() for col in am_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
+    #     am_editor_cols = [str(i) for i in range(1, 12)] # 1 ~ 11
+    #     am_personnel = [str(edited_row[col]).strip() for col in am_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
         
-        pm_editor_cols = [f'오후{i}' for i in range(1, 5)]
-        pm_personnel = [str(edited_row[col]).strip() for col in pm_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
+    #     pm_editor_cols = [f'오후{i}' for i in range(1, 5)] # 오후1 ~ 오후4
+    #     pm_personnel = [str(edited_row[col]).strip() for col in pm_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
 
-        # 2. 저장할 DataFrame의 특정 열만 초기화 ('오후5' 이후는 건드리지 않음)
-        cols_to_clear_am = [str(i) for i in range(1, 13)]
-        for col in cols_to_clear_am:
-            if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
+    #     # --- ▼▼▼ [사용자 요청 수정] ▼▼▼ ---
+    #     # 원본 스케줄의 괄호를 포함한 '숨겨진' 근무자도 파싱(제거)합니다.
+    #     # 1. 원본(괄호포함) 데이터를 가져옵니다.
+    #     original_schedule_row = st.session_state["df_schedule_original"].loc[original_row_idx]
         
-        cols_to_clear_pm = [f'오후{i}' for i in range(1, 5)]
-        for col in cols_to_clear_pm:
-            if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
+    #     # 2. editor에 표시되지 않았던 '오후5' 이후의 근무자를 clean_name으로 파싱합니다.
+    #     pm_hidden_cols = [f'오후{i}' for i in range(5, 10)] # 오후5 ~ 오후9
+    #     pm_hidden_personnel = [
+    #         clean_name(original_schedule_row[col]) for col in pm_hidden_cols
+    #         if col in original_schedule_row and pd.notna(original_schedule_row[col]) and clean_name(original_schedule_row[col])
+    #     ]
+        
+    #     # 3. editor에 표시되지 않았던 '12' 이후의 근무자를 clean_name으로 파싱합니다.
+    #     am_hidden_cols = [str(i) for i in range(12, 18)] # 12 ~ 17
+    #     am_hidden_personnel = [
+    #         clean_name(original_schedule_row[col]) for col in am_hidden_cols
+    #         if col in original_schedule_row and pd.notna(original_schedule_row[col]) and clean_name(original_schedule_row[col])
+    #     ]
+    #     # --- [수정 끝] ---
 
-        # 3. 수정된 내용으로 다시 채워넣기
-        df_schedule_to_save.at[original_row_idx, '오전당직(온콜)'] = oncall_person
+    #     # 2. 저장할 DataFrame의 모든 관련 열 초기화 (전체 범위)
+    #     # --- ▼▼▼ [사용자 요청 수정] ▼▼▼ ---
+    #     cols_to_clear_am = [str(i) for i in range(1, 18)] # 1 ~ 17
+    #     for col in cols_to_clear_am:
+    #         if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
         
-        am_save_list = list(dict.fromkeys(am_personnel + ([oncall_person] if oncall_person else [])))
-        for i, person in enumerate(am_save_list, 1):
-            df_schedule_to_save.at[original_row_idx, str(i)] = person
+    #     cols_to_clear_pm = [f'오후{i}' for i in range(1, 10)] # 오후1 ~ 오후9
+    #     for col in cols_to_clear_pm:
+    #         if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
+    #     # --- [수정 끝] ---
+
+    #     # 3. 수정된 내용으로 다시 채워넣기
+    #     df_schedule_to_save.at[original_row_idx, '오전당직(온콜)'] = oncall_person
+        
+    #     # --- ▼▼▼ [사용자 요청 수정] ▼▼▼ ---
+    #     # am_personnel (편집된 1~11) + oncall + am_hidden_personnel (파싱된 12~17)
+    #     am_save_list = list(dict.fromkeys(am_personnel + ([oncall_person] if oncall_person else []) + am_hidden_personnel))
+    #     for i, person in enumerate(am_save_list, 1):
+    #         if str(i) in df_schedule_to_save.columns: # 17까지만 채우도록 방어
+    #             df_schedule_to_save.at[original_row_idx, str(i)] = person
+                
+    #     # [핵심] pm_personnel (편집된 오후1~4) + pm_hidden_personnel (파싱된 오후5~9)
+    #     pm_save_list = list(dict.fromkeys(pm_personnel + pm_hidden_personnel))
+    #     for i, person in enumerate(pm_save_list, 1):
+    #         if f'오후{i}' in df_schedule_to_save.columns: # 오후9까지만 채우도록 방어
+    #             df_schedule_to_save.at[original_row_idx, f'오후{i}'] = person
+    #     # --- [수정 끝] ---
+
+    # # --- Google Sheets에 저장 ---
+    # try:
+    #     st.info("ℹ️ 수정된 스케줄을 Google Sheets에 저장합니다...")
+    #     gc = get_gspread_client()
+    #     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        
+    #     df_schedule_to_save.drop(columns=['parsed_date'], inplace=True)
+        
+    #     sheet_name = f"{month_str} 스케줄 최종"
+
+    #     try:
+    #         # ▼▼▼ [수정] .workskey -> .worksheet 오타 수정 ▼▼▼
+    #         worksheet_schedule = sheet.worksheet(sheet_name)
+    #         st.warning(f"⚠️ '{sheet_name}' 시트가 이미 존재하여 덮어씁니다.")
+    #     except gspread.exceptions.WorksheetNotFound:
+    #         worksheet_schedule = sheet.add_worksheet(title=sheet_name, rows=100, cols=30)
+
+    #     columns_to_save_requested = [
+    #         '날짜', '요일', 
+    #         '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 
+    #         '오전당직(온콜)', 
+    #         '오후1', '오후2', '오후3', '오후4'
+    #     ]
+        
+    #     columns_to_save = [col for col in columns_to_save_requested if col in df_schedule_to_save.columns]
+        
+    #     schedule_data = [columns_to_save] + df_schedule_to_save[columns_to_save].fillna('').values.tolist()
+        
+    #     if update_sheet_with_retry(worksheet_schedule, schedule_data):
+    #         st.success(f"🎉 수정된 스케줄이 '{sheet_name}' 시트에 성공적으로 저장되었습니다.")
+    #         st.session_state["schedule_sheet_name"] = sheet_name
+    #         time.sleep(1.5)
             
-        # [핵심] 오후는 pm_personnel (오후1~4) 만 순서대로 저장
-        pm_save_list = list(dict.fromkeys(pm_personnel))
-        for i, person in enumerate(pm_save_list, 1):
-            if f'오후{i}' in df_schedule_to_save.columns: # 오후4까지만 채우도록 방어
-                df_schedule_to_save.at[original_row_idx, f'오후{i}'] = person
+    #         st.session_state['data_loaded'] = False 
+    #         st.cache_data.clear() # <--- 이 줄이 추가되었습니다.
+            
+    #         st.rerun()
 
-    # --- Google Sheets에 저장 ---
-    try:
-        st.info("ℹ️ 수정된 스케줄을 Google Sheets에 저장합니다...")
-        gc = get_gspread_client()
-        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-        
-        df_schedule_to_save.drop(columns=['parsed_date'], inplace=True)
-        
-        sheet_name = f"{month_str} 스케줄 최종"
-
-        try:
-            worksheet_schedule = sheet.worksheet(sheet_name)
-            st.warning(f"⚠️ '{sheet_name}' 시트가 이미 존재하여 덮어씁니다.")
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet_schedule = sheet.add_worksheet(title=sheet_name, rows=100, cols=30)
-        
-        columns_to_save = st.session_state["df_schedule_original"].columns.tolist()
-        schedule_data = [columns_to_save] + df_schedule_to_save[columns_to_save].fillna('').values.tolist()
-        
-        if update_sheet_with_retry(worksheet_schedule, schedule_data):
-            st.success(f"🎉 수정된 스케줄이 '{sheet_name}' 시트에 성공적으로 저장되었습니다.")
-            st.session_state["schedule_sheet_name"] = sheet_name
-            time.sleep(1.5)
-            st.session_state['data_loaded'] = False 
-            st.rerun()
-
-    except Exception as e:
-        st.error(f"Google Sheets 저장 중 오류 발생: {type(e).__name__} - {e}")
-        st.stop()
+    # except Exception as e:
+    #     st.error(f"Google Sheets 저장 중 오류 발생: {type(e).__name__} - {e}")
+    #     st.stop()
 
 # 방 설정 UI
 st.divider()
@@ -1857,6 +1991,40 @@ afternoon_duty_counts = {row['이름']: int(row['오후당직 (목표)']) for _,
 
 st.divider()
 if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
+    # base_df_for_diff 비교 대상 결정 (현재 화면 기준)
+    base_df_for_diff = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial"))
+    # edited_df_md는 data_editor 결과 변수
+
+    manual_change_log_for_save = []
+    swapped_set_for_save = st.session_state.get("swapped_assignments", set())
+
+    diff_indices = np.where(edited_df_md.ne(base_df_for_diff))
+    for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
+        date_str_raw = edited_df_md.iloc[row_idx, 0]
+        col_name = edited_df_md.columns[col_idx]
+        old_value = base_df_for_diff.iloc[row_idx, col_idx]
+        new_value = edited_df_md.iloc[row_idx, col_idx]
+        try:
+            original_row = st.session_state["df_schedule_original"][st.session_state["df_schedule_original"]['날짜'] == date_str_raw].iloc[0]
+            weekday = original_row['요일']
+        except IndexError:
+            weekday = ''
+        time_period = '오후' if col_name.startswith('오후') else '오전'
+        formatted_date_str = f"{date_str_raw} ({weekday.replace('요일', '')}) - {time_period}"
+
+        # 로그 기록 (기존과 동일)
+        manual_change_log_for_save.append({'날짜': formatted_date_str, '변경 전 인원': str(old_value), '변경 후 인원': str(new_value)})
+
+        swapped_set_for_save.add((date_str_raw.strip(), time_period, str(new_value).strip()))
+
+    # "일괄 적용" 시 생성된 세트도 여기에 합쳐줍니다.
+    batch_swapped_set = st.session_state.get("swapped_assignments", set()) # 이미 위에서 가져왔으므로 중복될 수 있으나 set이 처리
+    swapped_set_for_save.update(batch_swapped_set)
+
+    # 최종 변경 기록 세트를 세션에 저장 -> 엑셀 생성 시 사용됨
+    st.session_state["swapped_assignments"] = swapped_set_for_save
+    st.session_state["final_change_log_at_run"] = st.session_state.get("swapped_assignments_log", []) + manual_change_log_for_save
+
     # 버튼을 누를 때마다 항상 새로 계산하도록 이전 결과를 삭제합니다.
     if "assignment_results" in st.session_state:
         del st.session_state["assignment_results"]
@@ -2401,40 +2569,58 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 else:
                     worksheet_cumulative_next = sheet.worksheet(latest_cumulative_name_next)
                     all_data = worksheet_cumulative_next.get_all_values()
-                    headers, rows = all_data[0], all_data[1:]
-
-                    for r_idx, row_data in enumerate(rows):
-                        for c_idx, cell_value in enumerate(row_data):
-                            if c_idx == 0: continue
-                            try:
-                                rows[r_idx][c_idx] = int(cell_value)
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    target_row_found = False
-                    for i, row_data in enumerate(rows):
-                        if row_data[0] == '오후당직 (배정)':
-                            target_row_found = True
-                            for col_idx, name in enumerate(headers):
-                                if col_idx == 0: continue
-                                assigned_count = actual_duty_counts.get(name.strip(), 0)
-                                rows[i][col_idx] = assigned_count
-                            break
-                    
-                    if target_row_found:
-                        final_sheet_name = f"{next_month_str} 누적 최종"
-                        try:
-                            worksheet_final = sheet.worksheet(final_sheet_name)
-                            st.warning(f"⚠️ 기존 '{final_sheet_name}' 시트를 덮어씁니다.")
-                        except gspread.exceptions.WorksheetNotFound:
-                            worksheet_final = sheet.add_worksheet(title=final_sheet_name, rows=len(all_data), cols=len(headers))
-                        
-                        if update_sheet_with_retry(worksheet_final, [headers] + rows):
-                            st.success(f"✅ '{final_sheet_name}' 시트에 오후 당직 배정 횟수가 성공적으로 업데이트되었습니다.")
-                        else:
-                            st.error(f"❌ '{final_sheet_name}' 시트 업데이트에 실패했습니다.")
+                    if not all_data: # 시트가 비어있는 경우 처리
+                        save_errors.append(f"'{latest_cumulative_name_next}' 시트가 비어있어 업데이트 불가.")
                     else:
-                        st.error(f"❌ '{latest_cumulative_name_next}' 시트에서 '오후당직 (배정)' 항목을 찾을 수 없습니다.")
+                        headers, rows = all_data[0], all_data[1:]
+
+                        # 데이터 숫자형 변환 시도 (오류 발생 시 원본 유지)
+                        for r_idx, row_data in enumerate(rows):
+                            for c_idx, cell_value in enumerate(row_data):
+                                if c_idx == 0: continue # 첫 번째 열(항목)은 제외
+                                try:
+                                    # 빈 문자열이거나 숫자로 변환 안 되면 그대로 둠
+                                    if cell_value != '':
+                                        rows[r_idx][c_idx] = int(cell_value)
+                                except (ValueError, TypeError):
+                                    pass # 변환 실패 시 원본 값 유지
+
+                        target_row_found = False
+                        target_row_index = -1
+                        for i, row_data in enumerate(rows):
+                            if row_data[0] == '오후당직 (배정)':
+                                target_row_found = True
+                                target_row_index = i
+                                # 해당 행의 모든 셀을 0으로 초기화 (기존 값 제거)
+                                for col_idx in range(1, len(headers)):
+                                    rows[target_row_index][col_idx] = 0
+
+                                # 실제 배정 횟수(actual_duty_counts)로 업데이트
+                                for col_idx, name in enumerate(headers):
+                                    if col_idx == 0: continue
+                                    name_strip = name.strip() # 헤더 이름 공백 제거
+                                    if name_strip in actual_duty_counts:
+                                        rows[target_row_index][col_idx] = actual_duty_counts[name_strip]
+                                break # 행을 찾았으므로 루프 종료
+
+                        if target_row_found:
+                            final_cumulative_sheet_name = f"{next_month_str} 누적 최종"
+                            try:
+                                worksheet_final_cumulative = sheet.worksheet(final_cumulative_sheet_name)
+                                # st.warning(f"⚠️ 기존 '{final_cumulative_sheet_name}' 시트를 덮어씁니다.")
+                            except gspread.exceptions.WorksheetNotFound:
+                                # 새 시트 생성 시 행/열 크기 확인
+                                worksheet_final_cumulative = sheet.add_worksheet(title=final_cumulative_sheet_name,
+                                                                                rows=len(all_data) + 1, # 헤더 포함 + 여유분
+                                                                                cols=len(headers) + 1) # 헤더 포함 + 여유분
+
+                            if update_sheet_with_retry(worksheet_final_cumulative, [headers] + rows):
+                                # st.success(f"✅ '{final_cumulative_sheet_name}' 시트 업데이트 완료.")
+                                pass
+                            else:
+                                save_errors.append(f"'{final_cumulative_sheet_name}' 시트 업데이트에 실패하였습니다.")
+                        else:
+                            save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직 (배정)' 항목을 찾을 수 없습니다.")
             except Exception as e:
                 st.error(f"Google Sheets 저장 중 오류 발생: {type(e).__name__} - {e}")
 
@@ -2562,8 +2748,22 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                             cell_shift_type = '오전'
                         elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']):
                             cell_shift_type = '오후'
-                        
-                        if (current_date_str.strip(), cell_shift_type, str(value).strip()) in swapped_assignments:
+
+                        current_cell_date = str(current_date_str).strip()
+                        current_cell_shift = str(cell_shift_type).strip()
+                        current_cell_value = str(value).strip()
+
+                        # 변경 후 인원에 해당하는지 확인
+                        is_newly_assigned = False
+                        for swapped_date, swapped_shift, swapped_value in swapped_assignments:
+                            if (str(swapped_date).strip() == current_cell_date and
+                                str(swapped_shift).strip() == current_cell_shift and
+                                str(swapped_value).strip() == current_cell_value):
+                                is_newly_assigned = True
+                                break
+
+                        # 둘 중 하나라도 해당하면 하이라이트 적용
+                        if is_newly_assigned:
                             cell.fill = highlight_fill
 
                         # --- 폰트 적용 (가장 중요) ---
@@ -2586,12 +2786,12 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                             if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
                                 cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
                 
-                    slot_name = columns[col_idx-1]
-                    cell_shift_type = ''
-                    if '8:30' in slot_name or '9:00' in slot_name or '9:30' in slot_name or '10:00' in slot_name:
-                        cell_shift_type = '오전'
-                    elif '13:30' in slot_name or '온콜' in slot_name:
-                        cell_shift_type = '오후'
+                    # slot_name = columns[col_idx-1]
+                    # cell_shift_type = ''
+                    # if '8:30' in slot_name or '9:00' in slot_name or '9:30' in slot_name or '10:00' in slot_name:
+                    #     cell_shift_type = '오전'
+                    # elif '13:30' in slot_name or '온콜' in slot_name:
+                    #     cell_shift_type = '오후'
                     
                     # 셀의 배경색 적용 (변경 요청 하이라이트)
                     formatted_current_date = current_date_str.strip()
@@ -2663,6 +2863,180 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             wb.save(output)
             output.seek(0)
             
+            save_errors = [] # 저장 오류 기록용
+            try:
+                # st.info("ℹ️ 최종 스케줄 및 누적 데이터를 Google Sheets에 저장합니다...")
+                gc = get_gspread_client()
+                sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+
+                # 1. 스케줄 최종 저장 (이전 저장 버튼 로직 재활용)
+                df_schedule_to_save = st.session_state["df_schedule_original"].copy()
+                # --- robust_parse_date 함수 정의 (필요한 경우 여기에 추가) ---
+                target_year = int(month_str.split('년')[0]) # 함수 내에서 사용되므로 target_year 정의 필요
+                def robust_parse_date(date_str, year=target_year):
+                    try:
+                        if "월" in str(date_str): return datetime.strptime(str(date_str), '%m월 %d일').replace(year=year).date()
+                        else: return pd.to_datetime(date_str).date()
+                    except: return None
+                # --------------------------------------------------------
+
+                df_schedule_to_save['parsed_date'] = df_schedule_to_save['날짜'].apply(robust_parse_date)
+                for _, edited_row in edited_df_md.iterrows():
+                    edited_date_obj = robust_parse_date(edited_row['날짜'])
+                    if edited_date_obj is None: continue
+                    target_indices = df_schedule_to_save[df_schedule_to_save['parsed_date'] == edited_date_obj].index
+                    if target_indices.empty: continue
+                    original_row_idx = target_indices[0]
+
+                    # 1. 수정된 내용 가져오기 (편집기 기준 - 괄호 없음)
+                    oncall_person = str(edited_row.get('오전당직(온콜)', '')).strip()
+
+                    am_editor_cols = [str(i) for i in range(1, 12)] # 1 ~ 11
+                    am_personnel = [str(edited_row[col]).strip() for col in am_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
+
+                    pm_editor_cols = [f'오후{i}' for i in range(1, 5)] # 오후1 ~ 오후4
+                    pm_personnel = [str(edited_row[col]).strip() for col in pm_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
+
+                    # --- ▼▼▼ 원본 스케줄의 숨겨진 근무자 파싱 ▼▼▼ ---
+                    # 원본(괄호포함) 데이터 가져오기
+                    original_schedule_row = st.session_state["df_schedule_original"].loc[original_row_idx]
+
+                    # 오후5 이후 근무자 파싱
+                    pm_hidden_cols = [f'오후{i}' for i in range(5, 10)] # 오후5 ~ 오후9
+                    pm_hidden_personnel = [
+                        clean_name(original_schedule_row[col]) for col in pm_hidden_cols
+                        if col in original_schedule_row and pd.notna(original_schedule_row[col]) and clean_name(original_schedule_row[col])
+                    ]
+
+                    # 12 이후 근무자 파싱
+                    am_hidden_cols = [str(i) for i in range(12, 18)] # 12 ~ 17
+                    am_hidden_personnel = [
+                        clean_name(original_schedule_row[col]) for col in am_hidden_cols
+                        if col in original_schedule_row and pd.notna(original_schedule_row[col]) and clean_name(original_schedule_row[col])
+                    ]
+                    # --- [숨겨진 근무자 파싱 끝] ---
+
+                    # 2. 저장할 DataFrame의 모든 관련 열 초기화 (전체 범위)
+                    cols_to_clear_am = [str(i) for i in range(1, 18)] # 1 ~ 17
+                    for col in cols_to_clear_am:
+                        if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
+
+                    cols_to_clear_pm = [f'오후{i}' for i in range(1, 10)] # 오후1 ~ 오후9
+                    for col in cols_to_clear_pm:
+                        if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
+
+                    # 3. 수정된 내용으로 다시 채워넣기
+                    df_schedule_to_save.at[original_row_idx, '오전당직(온콜)'] = oncall_person
+
+                    # am_personnel (편집된 1~11) + oncall + am_hidden_personnel (파싱된 12~17)
+                    am_save_list = list(dict.fromkeys(am_personnel + ([oncall_person] if oncall_person else []) + am_hidden_personnel))
+                    for i, person in enumerate(am_save_list, 1):
+                        col_name_am = str(i)
+                        if col_name_am in df_schedule_to_save.columns: # 범위 확인
+                            df_schedule_to_save.at[original_row_idx, col_name_am] = person
+
+                    # pm_personnel (편집된 오후1~4) + pm_hidden_personnel (파싱된 오후5~9)
+                    pm_save_list = list(dict.fromkeys(pm_personnel + pm_hidden_personnel))
+                    for i, person in enumerate(pm_save_list, 1):
+                        col_name_pm = f'오후{i}'
+                        if col_name_pm in df_schedule_to_save.columns: # 범위 확인
+                            df_schedule_to_save.at[original_row_idx, col_name_pm] = person
+                df_schedule_to_save.drop(columns=['parsed_date'], inplace=True)
+
+                schedule_sheet_name = f"{month_str} 스케줄 최종"
+                try:
+                    worksheet_schedule = sheet.worksheet(schedule_sheet_name)
+                    # st.warning(f"⚠️ 기존 '{schedule_sheet_name}' 시트를 덮어씁니다.")
+                except gspread.exceptions.WorksheetNotFound:
+                    worksheet_schedule = sheet.add_worksheet(title=schedule_sheet_name, rows=100, cols=30) # 크기 적절히 조절
+
+                columns_to_save_requested = [ # 저장할 컬럼 명시 (원본 컬럼 기준)
+                    '날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12',
+                    '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4' # , '오후5', ... 원본에 있는 컬럼 추가
+                ]
+                columns_to_save = [col for col in columns_to_save_requested if col in df_schedule_to_save.columns]
+                schedule_data = [columns_to_save] + df_schedule_to_save[columns_to_save].fillna('').values.tolist()
+
+                if update_sheet_with_retry(worksheet_schedule, schedule_data):
+                    # st.success(f"✅ '{schedule_sheet_name}' 시트 저장을 완료하였습니다.")
+                    pass
+                else:
+                    save_errors.append(f"'{schedule_sheet_name}' 시트 저장에 실패하였습니다.")
+
+                # 2. 누적 최종 저장 (기존 로직 재활용)
+                target_month_dt = datetime.strptime(month_str, "%Y년 %m월")
+                next_month_dt = target_month_dt + relativedelta(months=1)
+                next_month_str = next_month_dt.strftime("%Y년 %-m월")
+                latest_cumulative_name_next = find_latest_version(sheet, next_month_str, "누적") # 최신 버전 찾기
+
+                if not latest_cumulative_name_next:
+                    save_errors.append(f"'{next_month_str} 누적' 시트를 찾을 수 없어 업데이트 불가.")
+                else:
+                    worksheet_cumulative_next = sheet.worksheet(latest_cumulative_name_next)
+                    all_data = worksheet_cumulative_next.get_all_values()
+                    if not all_data or len(all_data) < 2: # 헤더 포함 최소 2줄 필요
+                        save_errors.append(f"'{latest_cumulative_name_next}' 시트가 비어있거나 형식이 잘못되어 업데이트 불가.")
+                    else:
+                        headers, rows = all_data[0], all_data[1:]
+
+                        # 데이터 숫자형 변환 시도 (오류 발생 시 원본 유지)
+                        for r_idx, row_data in enumerate(rows):
+                            for c_idx, cell_value in enumerate(row_data):
+                                if c_idx == 0: continue # 첫 번째 열(항목)은 제외
+                                try:
+                                    # 빈 문자열이면 0으로 처리하거나 그대로 둘 수 있음 (현재는 그대로 둠)
+                                    if cell_value != '':
+                                        rows[r_idx][c_idx] = int(cell_value) # 숫자로 변환 시도
+                                except (ValueError, TypeError):
+                                    # 숫자로 변환 안 되는 값은 원본 유지 (예: 문자열 '-')
+                                    pass
+
+                        target_row_found = False
+                        target_row_index = -1
+                        # '오후당직 (배정)' 행 찾기
+                        for i, row_data in enumerate(rows):
+                            if row_data[0] == '오후당직 (배정)':
+                                target_row_found = True
+                                target_row_index = i
+                                # 해당 행의 모든 셀을 0으로 초기화 (기존 값 제거, 항목 열 제외)
+                                for col_idx in range(1, len(headers)):
+                                     rows[target_row_index][col_idx] = 0 # 0으로 초기화
+
+                                # 실제 배정 횟수(actual_duty_counts)로 업데이트
+                                for col_idx, name in enumerate(headers):
+                                    if col_idx == 0: continue # 항목 열 건너뛰기
+                                    name_strip = name.strip() # 헤더 이름 공백 제거
+                                    # 실제 배정 횟수가 있다면 해당 값으로 업데이트
+                                    if name_strip in actual_duty_counts:
+                                         rows[target_row_index][col_idx] = actual_duty_counts[name_strip]
+                                break # 행을 찾았으므로 루프 종료
+
+                        if target_row_found:
+                            final_cumulative_sheet_name = f"{next_month_str} 누적 최종"
+                            try:
+                                worksheet_final_cumulative = sheet.worksheet(final_cumulative_sheet_name)
+                                # st.warning(f"⚠️ 기존 '{final_cumulative_sheet_name}' 시트를 덮어씁니다.")
+                            except gspread.exceptions.WorksheetNotFound:
+                                # 새 시트 생성 시 행/열 크기 확인 및 적절히 설정
+                                worksheet_final_cumulative = sheet.add_worksheet(title=final_cumulative_sheet_name,
+                                                                                 rows=len(all_data) + 5, # 헤더 포함 + 여유분
+                                                                                 cols=len(headers) + 5) # 헤더 포함 + 여유분
+
+                            if update_sheet_with_retry(worksheet_final_cumulative, [headers] + rows):
+                                st.success(f"✅ '{final_cumulative_sheet_name}' 시트 업데이트 완료.") # 메시지 복원
+                            else:
+                                save_errors.append(f"'{final_cumulative_sheet_name}' 시트 업데이트 실패.")
+                        else:
+                            save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직 (배정)' 항목을 찾을 수 없습니다.")
+
+            except Exception as e:
+                save_errors.append(f"Google Sheets 저장 중 오류 발생: {e}")
+
+            # 저장 오류가 있으면 화면에 표시
+            if save_errors:
+                for error_msg in save_errors:
+                    st.error(f"❌ {error_msg}")
+
             st.session_state["assignment_results"] = {
                 "df_room": df_room,
                 "stats_df": stats_df,
@@ -2674,6 +3048,8 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         
         # 계산이 끝나면 스크립트를 재실행하여 아래의 '결과 표시' 로직을 타게 합니다.
         st.rerun()
+
+
 
 if "assignment_results" in st.session_state and st.session_state["assignment_results"] is not None:
     results = st.session_state["assignment_results"]
