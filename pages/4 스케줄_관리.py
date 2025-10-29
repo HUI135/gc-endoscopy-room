@@ -795,40 +795,93 @@ with st.expander("📅 월 단위로 일괄 설정"):
         except Exception as e:
             st.error(f"월 단위 저장 중 오류 발생: {e}")
 
-    # '주 단위 저장' 버튼의 if 블록을 아래 코드로 교체
+with st.expander("📅 주 단위로 설정"):
+    st.markdown("**주 단위로 근무 여부가 다른 경우 아래 내용들을 입력해주세요.**")
+    week_labels = [f"{i}주" for i in week_nums]
+    
+    # 최신 df_user_master 가져오기
+    df_user_master = df_master[df_master["이름"] == selected_employee_name].copy()
+    st.session_state["df_user_master"] = df_user_master
+    
+    # master_data 초기화: 요일별로 체크
+    master_data = {}
+    every_week_df = df_user_master[df_user_master["주차"] == "매주"]
+    for week in week_labels:
+        master_data[week] = {}
+        week_df = df_user_master[df_user_master["주차"] == week]
+        for day in 요일리스트:
+            # 해당 주의 해당 요일 확인
+            day_specific = week_df[week_df["요일"] == day]
+            if not day_specific.empty:
+                master_data[week][day] = day_specific.iloc[0]["근무여부"]
+            # 없으면 매주에서 가져옴
+            elif not every_week_df.empty:
+                day_every = every_week_df[every_week_df["요일"] == day]
+                if not day_every.empty:
+                    master_data[week][day] = day_every.iloc[0]["근무여부"]
+                else:
+                    master_data[week][day] = "근무없음"
+            else:
+                master_data[week][day] = "근무없음"
+
+    # UI: selectbox에 최신 데이터 반영
+    for week in week_labels:
+        st.markdown(f"**🗓 {week}**")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        master_data[week]["월"] = col1.selectbox(f"월", 근무옵션, index=근무옵션.index(master_data[week]["월"]), key=f"{week}_월_{selected_employee_name}")
+        master_data[week]["화"] = col2.selectbox(f"화", 근무옵션, index=근무옵션.index(master_data[week]["화"]), key=f"{week}_화_{selected_employee_name}")
+        master_data[week]["수"] = col3.selectbox(f"수", 근무옵션, index=근무옵션.index(master_data[week]["수"]), key=f"{week}_수_{selected_employee_name}")
+        master_data[week]["목"] = col4.selectbox(f"목", 근무옵션, index=근무옵션.index(master_data[week]["목"]), key=f"{week}_목_{selected_employee_name}")
+        master_data[week]["금"] = col5.selectbox(f"금", 근무옵션, index=근무옵션.index(master_data[week]["금"]), key=f"{week}_금_{selected_employee_name}")
+
+    # 나머지 저장 버튼 로직은 그대로
     if st.button("💾 주 단위 저장", key="save_weekly"):
         try:
-            with st.spinner("주 단위 마스터 스케줄을 저장하는 중입니다..."):
-                gc = get_gspread_client()
-                sheet = gc.open_by_url(url)
-                worksheet1 = sheet.worksheet("마스터")
-
-                # [수정] 1. 해당 직원의 기존 데이터를 모두 찾아서 삭제
-                cells_to_delete = worksheet1.findall(selected_employee_name)
-                if cells_to_delete:
-                    for cell in sorted(cells_to_delete, key=lambda x: x.row, reverse=True):
-                        worksheet1.delete_rows(cell.row)
-
-                # [수정] 2. 새로운 데이터를 계산하여 append_rows로 추가
-                rows_to_append = []
-                for 요일 in 요일리스트:
-                    week_shifts = [master_data[week][요일] for week in week_labels]
-                    if all(shift == week_shifts[0] for shift in week_shifts):
-                        rows_to_append.append([selected_employee_name, "매주", 요일, week_shifts[0]])
-                    else:
-                        for week in week_labels:
-                            rows_to_append.append([selected_employee_name, week, 요일, master_data[week][요일]])
+            gc = get_gspread_client()
+            sheet = gc.open_by_url(url)
+            worksheet1 = sheet.worksheet("마스터")
+            
+            rows = []
+            for 요일 in 요일리스트:
+                week_shifts = [master_data[week][요일] for week in week_labels]
+                if all(shift == week_shifts[0] for shift in week_shifts):
+                    rows.append({"이름": selected_employee_name, "주차": "매주", "요일": 요일, "근무여부": week_shifts[0]})
+                else:
+                    for week in week_labels:
+                        rows.append({"이름": selected_employee_name, "주차": week, "요일": 요일, "근무여부": master_data[week][요일]})
+            
+            df_master = df_master[df_master["이름"] != selected_employee_name]
+            updated_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["이름", "주차", "요일", "근무여부"])
+            updated_df["요일"] = pd.Categorical(updated_df["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            updated_df = updated_df.sort_values(by=["이름", "주차", "요일"])
+            
+            df_result = pd.concat([df_master, updated_df], ignore_index=True)
+            df_result["요일"] = pd.Categorical(df_result["요일"], categories=["월", "화", "수", "목", "금"], ordered=True)
+            df_result = df_result.sort_values(by=["이름", "주차", "요일"])
+            
+            if update_sheet_with_retry(worksheet1, [df_result.columns.tolist()] + df_result.values.tolist()):
+                st.session_state["df_master"] = df_result
+                st.session_state["worksheet1"] = worksheet1
+                st.session_state["df_user_master"] = df_result[df_result["이름"] == selected_employee_name].copy()
                 
-                if rows_to_append:
-                    worksheet1.append_rows(rows_to_append)
-
-            st.success("주 단위 수정사항이 저장되었습니다.")
-            time.sleep(1)
-            st.info("새로고침 버튼을 눌러 변경사항을 완전히 적용해주세요.")
-            time.sleep(1.5)
-            st.rerun()
+                with st.spinner("근무 및 보충 테이블 갱신 중..."):
+                    st.session_state["df_shift"] = generate_shift_table(df_result)
+                    st.session_state["df_supplement"] = generate_supplement_table(st.session_state["df_shift"], df_result["이름"].unique())
+                
+                st.success("주 단위 수정사항이 저장되었습니다.")
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.error("마스터 시트 저장 실패")
+                st.stop()
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (주 단위 저장): {str(e)}")
+            st.stop()
         except Exception as e:
-            st.error(f"주 단위 저장 중 오류 발생: {e}")
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"주 단위 저장 중 오류 발생: {str(e)}")
+            st.stop()
 
 st.divider()
 st.subheader(f"📅 {next_month.year}년 토요/휴일 스케줄 관리")
