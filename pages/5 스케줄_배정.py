@@ -36,17 +36,22 @@ def initialize_schedule_session_state():
         "output": None,
         "df_cumulative_next": pd.DataFrame(),
         "request_logs": [],
-        # ▼▼▼ 아래 줄을 추가하세요 (이미 있다면 OK) ▼▼▼
         "swap_logs": [],
         "adjustment_logs": [],
         "oncall_logs": [],
         "assignment_results": None,
         "show_confirmation_warning": False,
-        "latest_existing_version": None
+        "latest_existing_version": None,
+        # ▼▼▼ [핵심 추가] 편집 플래그 추가 ▼▼▼
+        "editor_has_changes": False 
     }
     for key, value in keys_to_init.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+def set_editor_changed_flag():
+    """data_editor에서 수정이 발생했음을 세션 상태에 기록합니다."""
+    st.session_state.editor_has_changes = True
 
 def get_sort_key(log_string):
     # '10월 1일'과 같은 패턴을 찾습니다.
@@ -2279,7 +2284,7 @@ def balance_final_cumulative_with_weekly_check(
                     if w_l not in am_workers: continue
 
                 # 11. 교체 실행!
-                st.warning(f"🔄 [{i+1}차/{time_slot}] 최종 균형 조정: {date.strftime('%-m/%d')} {w_h}({s_h:.0f}회) ➔ {w_l}({s_l:.0f}회)")
+                # st.warning(f"🔄 [{i+1}차/{time_slot}] 최종 균형 조정: {date.strftime('%-m/%d')} {w_h}({s_h:.0f}회) ➔ {w_l}({s_l:.0f}회)")
                 df_final = update_worker_status(df_final, date_str, time_slot, w_h, '휴근', '최종 누적 균형 조정', '🟣 보라색', day_map, week_numbers)
                 current_cumulative[time_slot][w_h] = current_cumulative[time_slot].get(w_h, 0) - 1
                 # 마스터 여부 확인 후 '근무'/'보충' 결정
@@ -3141,7 +3146,8 @@ if st.session_state.get('assigned', False):
                     key="edited_schedule_table",
                     use_container_width=True,
                     hide_index=True,
-                    disabled=['날짜', '요일']
+                    disabled=['날짜', '요일'],
+                    on_change=set_editor_changed_flag # <--- [수정] 콜백 추가
                 )
             else:
                 st.warning("⚠️ 배정 스케줄 테이블 데이터를 불러올 수 없습니다.")
@@ -3166,7 +3172,8 @@ if st.session_state.get('assigned', False):
                         **{col: st.column_config.NumberColumn(format="%d") 
                            for col in summary_df_input.columns[1:]}
                     },
-                    disabled=False # 전체 에디터 활성화
+                    disabled=False,
+                    on_change=set_editor_changed_flag # <--- [수정] 콜백 추가
                 )
             else:
                 st.warning("⚠️ 누적 테이블 데이터를 불러올 수 없습니다.")
@@ -3195,114 +3202,129 @@ if st.session_state.get('assigned', False):
                                 # 스케줄 시트 저장
                                 try: ws_sched = sheet.worksheet(schedule_sheet_name)
                                 except WorksheetNotFound: ws_sched = sheet.add_worksheet(title=schedule_sheet_name, rows=1000, cols=len(df_to_save_gsheet.columns)+5)
-                                update_sheet_with_retry(ws_sched, [df_to_save_gsheet.columns.tolist()] + df_to_save_gsheet.astype(str).fillna('').values.tolist())
+                                # update_sheet_with_retry가 성공하면 True 반환
+                                success_sched = update_sheet_with_retry(ws_sched, [df_to_save_gsheet.columns.tolist()] + df_to_save_gsheet.astype(str).fillna('').values.tolist())
 
                                 # 누적 시트 저장
                                 try: ws_summ = sheet.worksheet(summary_sheet_name)
                                 except WorksheetNotFound: ws_summ = sheet.add_worksheet(title=summary_sheet_name, rows=100, cols=len(edited_summary_df.columns)+5)
-                                update_sheet_with_retry(ws_summ, [edited_summary_df.columns.tolist()] + edited_summary_df.astype(str).fillna('').values.tolist())
+                                success_summ = update_sheet_with_retry(ws_summ, [edited_summary_df.columns.tolist()] + edited_summary_df.astype(str).fillna('').values.tolist())
 
-                                st.success(f"✅ '{schedule_sheet_name}' 및 '{summary_sheet_name}' 시트에 수정된 내용이 저장되었습니다.")
+                                if success_sched and success_summ:
+                                    st.success(f"✅ '{schedule_sheet_name}' 및 '{summary_sheet_name}' 시트에 수정된 내용이 저장되었습니다.")
 
-                                # 저장 후 초기 상태 업데이트
-                                st.session_state.assignment_results["df_excel_initial"] = edited_schedule_df.copy()
-                                st.session_state.assignment_results["summary_df_initial"] = edited_summary_df.copy()
-                                st.session_state.assignment_results["df_schedule_for_display"] = edited_schedule_df.copy()
-                                st.session_state.assignment_results["summary_df_for_display"] = edited_summary_df.copy()
-                                time.sleep(1)
-                                st.rerun() # 저장 후 새로고침
+                                    # 저장 성공 후 초기 상태 업데이트
+                                    st.session_state.assignment_results["df_excel_initial"] = edited_schedule_df.copy()
+                                    st.session_state.assignment_results["summary_df_initial"] = edited_summary_df.copy()
+                                    st.session_state.assignment_results["df_schedule_for_display"] = edited_schedule_df.copy()
+                                    st.session_state.assignment_results["summary_df_for_display"] = edited_summary_df.copy()
+                                    
+                                    # ▼▼▼ [핵심 수정] 플래그 리셋 및 리런 ▼▼▼
+                                    st.session_state.editor_has_changes = False 
+                                    time.sleep(1)
+                                    st.rerun()
+                                    # ▲▲▲ [핵심 수정] ▲▲▲
+                                
+                                else:
+                                    # update_sheet_with_retry가 False를 반환했지만 에러를 raise하지 않은 경우
+                                    st.error("Google Sheets 업데이트가 완료되지 않았습니다. API 오류 로그를 확인해주세요.")
 
                             except Exception as e:
                                 st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+                                # 에러 발생 시 플래그를 True로 유지 (다운로드 방지 상태)
+                                st.session_state.editor_has_changes = True
+
                     else:
                         st.error("편집된 데이터가 없습니다.")
 
             with col2:
                 # --- 2. Excel 다운로드 버튼 (두 종류) ---
-                # [수정] st.session_state 대신 위에서 할당받은 *변수* 사용
                 if not edited_schedule_df.empty and not edited_summary_df.empty:
                     try:
-                        edited_schedule_dl = edited_schedule_df
-                        edited_summary_dl = edited_summary_df 
-
+                        # --- 데이터 로드 (기존과 동일) ---
                         results = st.session_state.get('assignment_results', {})
                         initial_schedule_df = results.get("df_excel_initial")
+                        # initial_summary_df는 사용되지 않음 (콜백 플래그가 대체)
                         df_special_dl = results.get("df_special")
                         df_requests_dl = results.get("df_requests")
                         closing_dates_dl = results.get("closing_dates")
                         month_str_dl = results.get("month_str")
-                        
-                        # --- ▼▼▼ 오류 해결을 위해 스타일 변수 재정의 ▼▼▼ ---
                         df_final_unique_dl = results.get("df_final_unique_sorted")
                         df_schedule_dl = results.get("df_schedule")
 
-                        if platform.system() == "Windows": font_name = "맑은 고딕"
-                        else: font_name = "Arial"
+                        # --- ▼▼▼ [핵심 수정 v7] 플래그 확인 ▼▼▼
+                        # 이제 has_unsaved_changes는 오직 콜백 플래그의 상태만을 반영합니다.
+                        has_unsaved_changes = st.session_state.get("editor_has_changes", False)
+                        # --- ▲▲▲ [핵심 수정 v7] 완료 ▲▲▲ ---
 
-                        default_font = Font(name=font_name, size=9)
-                        bold_font = Font(name=font_name, size=9, bold=True)
-                        duty_font = Font(name=font_name, size=9, bold=True, color="FF69B4")
-                        border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-                        color_map = {
-								'🔴 빨간색': 'DA9694', '🟠 주황색': 'FABF8F', '🟢 초록색': 'A9D08E',
-								'🟡 노란색': 'FFF28F', '🔵 파란색': '95B3D7', '🟣 보라색': 'B1A0C7',
-								'기본': 'FFFFFF', '특수근무색': 'D0E0E3'
-							}
-                        special_day_fill = PatternFill(start_color='95B3D7', fill_type='solid')
-                        empty_day_fill = PatternFill(start_color='808080', fill_type='solid')
-                        default_day_fill = PatternFill(start_color='FFF2CC', fill_type='solid')
-                        # --- ▲▲▲ 스타일 변수 재정의 끝 ▲▲▲ ---
-
-                        if initial_schedule_df is None or month_str_dl is None or df_final_unique_dl is None or df_schedule_dl is None:
-                            st.error("Excel 생성에 필요한 초기 데이터가 없습니다. 페이지를 새로고침 해주세요.")
+                        if has_unsaved_changes:
+                            st.error("⚠️ 수정사항이 감지되었습니다. 먼저 '수정사항 Google Sheet에 저장' 버튼을 눌러주세요.")
                         else:
-                            # --- ▼ 1. 최종본(공유용) Excel 생성 (호출 인수 수정) ▼ ---
-                            excel_data_final = create_final_schedule_excel(
-                                initial_df=initial_schedule_df,
-                                edited_df=edited_schedule_dl,
-                                edited_cumulative_df=edited_summary_dl,
-                                df_special=df_special_dl if df_special_dl is not None else pd.DataFrame(),
-                                df_requests=df_requests_dl if df_requests_dl is not None else pd.DataFrame(),
-                                closing_dates=closing_dates_dl if closing_dates_dl is not None else [],
-                                month_str=month_str_dl,
-                                # ▼▼▼ 추가된 인수 전달 (세션 상태에서 가져옴) ▼▼▼
-                                df_final_unique=df_final_unique_dl, # results.get("df_final_unique_sorted")
-                                df_schedule=df_schedule_dl         # results.get("df_schedule")
-                                # ▲▲▲ 추가 인수 전달 완료 ▲▲▲
-                            )
-                            # (BytesIO 및 .save() 관련 코드는 이미 제거됨)
+                            # 변경 사항이 없거나 저장된 상태일 때만 다운로드 버튼 표시
+                            if initial_schedule_df is None or month_str_dl is None or df_final_unique_dl is None or df_schedule_dl is None:
+                                st.error("Excel 생성에 필요한 초기 데이터가 없습니다. 페이지를 새로고침 해주세요.")
+                            else:
+                                # --- 스타일 변수 재정의 (로직 유지) ---
+                                if platform.system() == "Windows": font_name = "맑은 고딕"
+                                else: font_name = "Arial"
+                                default_font = Font(name=font_name, size=9)
+                                bold_font = Font(name=font_name, size=9, bold=True)
+                                duty_font = Font(name=font_name, size=9, bold=True, color="FF69B4")
+                                border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+                                color_map = {
+                                        '🔴 빨간색': 'DA9694', '🟠 주황색': 'FABF8F', '🟢 초록색': 'A9D08E',
+                                        '🟡 노란색': 'FFF28F', '🔵 파란색': '95B3D7', '🟣 보라색': 'B1A0C7',
+                                        '기본': 'FFFFFF', '특수근무색': 'D0E0E3'
+                                    }
+                                special_day_fill = PatternFill(start_color='95B3D7', fill_type='solid')
+                                empty_day_fill = PatternFill(start_color='808080', fill_type='solid')
+                                default_day_fill = PatternFill(start_color='FFF2CC', fill_type='solid')
 
-                            st.download_button(
-                                label="📥 스케줄 ver1.0 다운로드",
-                                data=excel_data_final, # 함수가 반환한 bytes 데이터를 바로 사용
-                                file_name=f"{month_str_dl} 스케줄 ver1.0.xlsx",
-                                mime="application/vnd.openxmlformats.officedocument.sheet",
-                                use_container_width=True,
-                                type="primary",
-                                key="download_edited_final"
-                            )
+                                # --- 1. 최종본(공유용) Excel 생성 및 다운로드 버튼 ---
+                                excel_data_final = create_final_schedule_excel(
+                                    initial_df=initial_schedule_df,
+                                    edited_df=edited_schedule_df,
+                                    edited_cumulative_df=edited_summary_df,
+                                    df_special=df_special_dl if df_special_dl is not None else pd.DataFrame(),
+                                    df_requests=df_requests_dl if df_requests_dl is not None else pd.DataFrame(),
+                                    closing_dates=closing_dates_dl if closing_dates_dl is not None else [],
+                                    month_str=month_str_dl,
+                                    df_final_unique=df_final_unique_dl,
+                                    df_schedule=df_schedule_dl
+                                )
+                                st.download_button(
+                                    label="📥 스케줄 ver1.0 다운로드",
+                                    data=excel_data_final,
+                                    file_name=f"{month_str_dl} 스케줄 ver1.0.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.sheet",
+                                    use_container_width=True,
+                                    type="primary",
+                                    key="download_edited_final"
+                                )
 
-                            # --- ▼ 2. 배정 확인용 Excel 생성 (여기는 문제 없음) ▼ ---
-                            excel_data_checking = create_checking_schedule_excel(
-                                initial_df=initial_schedule_df,
-                                edited_df=edited_schedule_dl,
-                                edited_cumulative_df=edited_summary_dl,
-                                df_special=df_special_dl if df_special_dl is not None else pd.DataFrame(),
-                                df_requests=df_requests_dl if df_requests_dl is not None else pd.DataFrame(),
-                                closing_dates=closing_dates_dl if closing_dates_dl is not None else [],
-                                month_str=month_str_dl
-                            )
-                            st.download_button(
-                                label="📥 스케줄 ver1.0 다운로드 (배정 확인용)",
-                                data=excel_data_checking,
-                                file_name=f"{month_str_dl} 스케줄 ver1.0 (배정 확인용).xlsx",
-                                mime="application/vnd.openxmlformats.officedocument.sheet",
-                                use_container_width=True,
-                                type="secondary",
-                                key="download_edited_checking"
-                            )
+                                # --- 2. 배정 확인용 Excel 생성 및 다운로드 버튼 ---
+                                excel_data_checking = create_checking_schedule_excel(
+                                    initial_df=initial_schedule_df,
+                                    edited_df=edited_schedule_df,
+                                    edited_cumulative_df=edited_summary_df,
+                                    df_special=df_special_dl if df_special_dl is not None else pd.DataFrame(),
+                                    df_requests=df_requests_dl if df_requests_dl is not None else pd.DataFrame(),
+                                    closing_dates=closing_dates_dl if closing_dates_dl is not None else [],
+                                    month_str=month_str_dl
+                                )
+                                st.download_button(
+                                    label="📥 스케줄 ver1.0 다운로드 (배정 확인용)",
+                                    data=excel_data_checking,
+                                    file_name=f"{month_str_dl} 스케줄 ver1.0 (배정 확인용).xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.sheet",
+                                    use_container_width=True,
+                                    type="secondary",
+                                    key="download_edited_checking"
+                                )
+                        # --- ▲▲▲ 조건부 버튼 표시 완료 ▲▲▲ ---
+
                     except Exception as e:
-                        st.error(f"Excel 파일 생성 중 오류가 발생했습니다: {e}")
+                        st.error(f"Excel 파일 생성 또는 변경 사항 확인 중 오류가 발생했습니다: {e}")
                         st.exception(e)
                 else:
-                    st.info("🔄 스케줄을 편집하시면 다운로드 버튼이 활성화됩니다.")
+                    st.info("🔄 스케줄 데이터 로딩 중...")
