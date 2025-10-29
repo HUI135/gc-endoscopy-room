@@ -75,14 +75,18 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
                 st.error(f"Google Sheets API 오류: {e}"); st.stop()
     return False
 
-def find_schedule_versions(sheet, month_str):
+def find_schedule_versions(month_str): 
     """'ver X.X' 버전과 '최종' 버전을 모두 찾아 정렬된 딕셔너리로 반환합니다."""
+    
+    # ✨ [추가] 함수 내부에서 sheet 객체를 가져옵니다.
+    sheet = get_spreadsheet() 
+    
     versions = {}
     base_name = f"{month_str} 스케줄"
     
     # Google Sheets API에서 모든 워크시트 제목을 한 번에 가져옵니다.
     all_titles = [ws.title for ws in sheet.worksheets()]
-    
+
     for title in all_titles:
         # 1. "최종" 버전 확인
         if title == f"{base_name} 최종":
@@ -213,6 +217,7 @@ def delete_schedule_version(month_str, sheet_to_delete):
         with st.spinner(f"'{sheet_to_delete}' 버전 삭제 중..."):
             # gc = get_gspread_client()
             # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+            sheet = get_spreadsheet()
 
             # 1. 스케줄 시트 삭제
             try:
@@ -685,6 +690,7 @@ def save_schedule(sheet_name, df_to_save, df_cum_to_save):
         try:
             # gc = get_gspread_client()
             # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+            sheet = get_spreadsheet()
             
             # 1. 스케줄 시트 저장 (기존과 동일)
             try: 
@@ -750,7 +756,7 @@ month_str = "2025년 10월" # 테스트용 고정
 # gc = get_gspread_client()
 # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
 sheet = get_spreadsheet()
-versions = find_schedule_versions(sheet, month_str)
+versions = find_schedule_versions(month_str)
 
 def on_version_change():
     st.session_state.data_loaded = False
@@ -783,7 +789,7 @@ with col_delete:
         
         # 최종 삭제 확인 버튼
         if st.button("네, 삭제합니다.", type="primary", use_container_width=True):
-            delete_schedule_version(sheet, month_str, selected_sheet_name)
+            delete_schedule_version(month_str, selected_sheet_name)
 
 needs_load = False
 if not st.session_state.get("data_loaded", False):
@@ -794,8 +800,8 @@ elif st.session_state.get("loaded_sheet_name") != selected_sheet_name:
     needs_load = True
 
 if needs_load:
-    data = load_data(sheet, month_str, selected_sheet_name)    
-    
+    data = load_data(month_str, selected_sheet_name)
+
     st.session_state["df_schedule_original"] = data["schedule"]
     st.session_state["df_cumulative_next_display"] = data["cumulative_display"]
     st.session_state["df_display_initial"] = data["schedule"].copy()
@@ -1110,7 +1116,7 @@ else:
         if st.button("저장하기", use_container_width=True, type="primary"):
             df_to_save = edited_df.copy()
             sheet_name_to_save = selected_sheet_name if "덮어쓰기" in save_option else new_sheet_name
-            save_schedule(sheet, month_str, sheet_name_to_save, df_to_save, edited_cumulative_df)
+            save_schedule(month_str, sheet_name_to_save, df_to_save, edited_cumulative_df)
 
     else:
         if st.session_state.get("disable_editing", False):
