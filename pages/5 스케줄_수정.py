@@ -50,6 +50,20 @@ def get_gspread_client():
     except Exception as e:
         st.error(f"⚠️ Google Sheets 클라이언트 초기화 또는 인증에 실패했습니다: {e}"); st.stop()
 
+# ✨ [새로 추가] 스프레드시트 객체를 캐시하는 함수
+@st.cache_resource
+def get_spreadsheet():
+    """
+    스프레드시트 객체를 한 번만 열어서 캐시합니다.
+    """
+    try:
+        gc = get_gspread_client()
+        sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+        return sheet
+    except Exception as e:
+        st.error(f"⚠️ Google Spreadsheet를 여는 데 실패했습니다: {e}")
+        st.stop()
+
 def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
     for attempt in range(retries):
         try:
@@ -92,8 +106,8 @@ def find_schedule_versions(sheet, month_str):
     
 @st.cache_data(ttl=600, show_spinner="최신 데이터를 구글 시트에서 불러오는 중...")
 def load_data(month_str, schedule_sheet_name): # version_str 인자 제거
-    gc = get_gspread_client()
-    sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+    # gc = get_gspread_client()
+    # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
     target_year = month_str.split('년')[0]
     
     current_month_dt = datetime.strptime(month_str, "%Y년 %m월")
@@ -197,8 +211,8 @@ def delete_schedule_version(month_str, sheet_to_delete):
     """선택된 스케줄 버전과 해당 누적 시트를 Google Sheets에서 삭제합니다."""
     try:
         with st.spinner(f"'{sheet_to_delete}' 버전 삭제 중..."):
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+            # gc = get_gspread_client()
+            # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
 
             # 1. 스케줄 시트 삭제
             try:
@@ -232,7 +246,9 @@ def delete_schedule_version(month_str, sheet_to_delete):
         
         st.success("선택한 버전이 성공적으로 삭제되었습니다.")
         time.sleep(2)
+        
         st.cache_data.clear()
+        st.cache_resource.clear()
 
         if "selected_sheet_name" in st.session_state:
             del st.session_state["selected_sheet_name"]
@@ -667,8 +683,8 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
 def save_schedule(sheet_name, df_to_save, df_cum_to_save):
     with st.spinner(f"'{sheet_name}' 시트에 저장 중입니다..."):
         try:
-            gc = get_gspread_client()
-            sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+            # gc = get_gspread_client()
+            # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
             
             # 1. 스케줄 시트 저장 (기존과 동일)
             try: 
@@ -718,6 +734,7 @@ def save_schedule(sheet_name, df_to_save, df_cum_to_save):
             st.success(f"🎉 스케줄과 익월 누적 데이터가 '{sheet_name}' 버전에 맞게 저장되었습니다.")
             time.sleep(1)
             st.cache_data.clear()
+            st.cache_resource.clear()
             st.rerun()
 
         except Exception as e: 
@@ -730,8 +747,9 @@ month_dt_now = datetime.now(kst).replace(day=1) + relativedelta(months=1)
 month_str = month_dt_now.strftime("%Y년 %-m월")
 month_str = "2025년 10월" # 테스트용 고정
 
-gc = get_gspread_client()
-sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+# gc = get_gspread_client()
+# sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+sheet = get_spreadsheet()
 versions = find_schedule_versions(sheet, month_str)
 
 def on_version_change():
@@ -765,7 +783,7 @@ with col_delete:
         
         # 최종 삭제 확인 버튼
         if st.button("네, 삭제합니다.", type="primary", use_container_width=True):
-            delete_schedule_version(month_str, selected_sheet_name)
+            delete_schedule_version(sheet, month_str, selected_sheet_name)
 
 needs_load = False
 if not st.session_state.get("data_loaded", False):
@@ -776,7 +794,7 @@ elif st.session_state.get("loaded_sheet_name") != selected_sheet_name:
     needs_load = True
 
 if needs_load:
-    data = load_data(month_str, selected_sheet_name)    
+    data = load_data(sheet, month_str, selected_sheet_name)    
     
     st.session_state["df_schedule_original"] = data["schedule"]
     st.session_state["df_cumulative_next_display"] = data["cumulative_display"]
@@ -1092,8 +1110,8 @@ else:
         if st.button("저장하기", use_container_width=True, type="primary"):
             df_to_save = edited_df.copy()
             sheet_name_to_save = selected_sheet_name if "덮어쓰기" in save_option else new_sheet_name
-            save_schedule(sheet_name_to_save, df_to_save, edited_cumulative_df)
-    
+            save_schedule(sheet, month_str, sheet_name_to_save, df_to_save, edited_cumulative_df)
+
     else:
         if st.session_state.get("disable_editing", False):
             st.error("🚨 스케줄 최종본은 수정할 수 없습니다.")
