@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 from zoneinfo import ZoneInfo
 from collections import Counter
 import platform
+import calendar
 
 # Google Sheets 관련 라이브러리
 from google.oauth2.service_account import Credentials
@@ -107,24 +108,54 @@ def find_schedule_versions(month_str):
 
     # 버전을 기준으로 내림차순 정렬하여 반환
     return dict(sorted(versions.items(), key=lambda item: item[1], reverse=True))
+
+# --- ▼▼▼ [신규] '베이스 누적 시트' 로드용 함수 추가 ▼▼▼ ---
+def find_latest_cumulative_version(sheet, month_str):
+    """
+    [★복사됨★]
+    주어진 월에 해당하는 누적 시트 중 가장 최신 버전을 찾습니다.
+    '최종' 버전을 최우선으로 간주합니다. (공백 차이 무시)
+    """
+    versions = {}
     
+    # 1. '최종' 시트가 있는지 먼저 확인 (공백(s+)을 허용하는 정규식 사용)
+    final_pattern = re.compile(f"^{re.escape(month_str)}\s+누적\s+최종$")
+    for ws in sheet.worksheets():
+        if final_pattern.match(ws.title.strip()): # .strip() 추가로 앞뒤 공백 제거
+            return ws.title # '최종' 버전을 찾으면 즉시 반환
+    
+    # 2. '최종'이 없으면 'ver X.X' 및 기본 버전('누적')을 찾음
+    pattern = re.compile(f"^{re.escape(month_str)} 누적(?: ver\s*(\d+\.\d+))?$")
+
+    for ws in sheet.worksheets():
+        match = pattern.match(ws.title)
+        if match:
+            version_num_str = match.group(1) # ver 뒤의 숫자 부분 (예: '1.0')
+            version_num = float(version_num_str) if version_num_str else 1.0
+            versions[ws.title] = version_num
+
+    if not versions:
+        return None # 어떠한 버전의 시트도 찾지 못하면 None 반환
+
+    return max(versions, key=versions.get)
+
+# --- ▼▼▼ [교체] L108 ~ L179의 기존 load_data 함수 전체를 교체 ▼▼▼ ---
 @st.cache_data(ttl=600, show_spinner="최신 데이터를 구글 시트에서 불러오는 중...")
-def load_data(month_str, schedule_sheet_name): # version_str 인자 제거
-    # gc = get_gspread_client()
-    # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
+def load_data(month_str, schedule_sheet_name):
+    sheet = get_spreadsheet() 
     target_year = month_str.split('년')[0]
     
     current_month_dt = datetime.strptime(month_str, "%Y년 %m월")
     next_month_str = (current_month_dt + relativedelta(months=1)).strftime("%Y년 %-m월")
 
-    # 스케줄 시트 로드
+    # 1. 스케줄 시트 로드 (기존과 동일)
     try:
         ws_schedule = sheet.worksheet(schedule_sheet_name)
         df_schedule = pd.DataFrame(ws_schedule.get_all_records())
     except WorksheetNotFound:
         st.error(f"'{schedule_sheet_name}' 시트를 찾을 수 없습니다."); st.stop()
     
-    # 익월 누적 시트 로드
+    # 2. 익월(결과) 누적 시트 로드 (기존과 동일)
     version_suffix = ""
     if " ver" in schedule_sheet_name:
         version_suffix = " " + schedule_sheet_name.split(" 스케줄 ")[1]
@@ -135,19 +166,69 @@ def load_data(month_str, schedule_sheet_name): # version_str 인자 제거
     try:
         ws_display_cum = sheet.worksheet(display_cum_sheet_name)
         all_values = ws_display_cum.get_all_values()
-        
         if not all_values or len(all_values) < 2:
             df_display_cum = pd.DataFrame()
         else:
             headers = all_values[0]
             data = all_values[1:]
             df_display_cum = pd.DataFrame(data, columns=headers)
-            for col in df_display_cum.columns[1:]:
-                df_display_cum[col] = pd.to_numeric(df_display_cum[col], errors='coerce').fillna(0)
+            # (데이터 클리닝)
+            for col in df_display_cum.columns:
+                if col != '항목':
+                    df_display_cum[col] = pd.to_numeric(df_display_cum[col], errors='coerce').fillna(0).astype(int)
     except WorksheetNotFound:
         df_display_cum = pd.DataFrame()
+        st.warning(f"⚠️ '{display_cum_sheet_name}' 시트를 찾을 수 없습니다. 누적 테이블이 비어있을 수 있습니다.")
 
-    # (토요/휴일, 휴관일 로드 로직은 동일)
+    # --- ▼▼▼ [신규] 3. 당월(지난달의 누적) 베이스 누적 시트 로드 ▼▼▼ ---
+    df_cumulative_base = pd.DataFrame()
+    worksheet_to_load_base = None
+    latest_base_cum_name = find_latest_cumulative_version(sheet, month_str) # month_str (10월)
+    
+    if latest_base_cum_name:
+        try:
+            worksheet_to_load_base = sheet.worksheet(latest_base_cum_name)
+        except WorksheetNotFound:
+            st.warning(f"⚠️ '{latest_base_cum_name}' 시트를 찾았지만 열 수 없습니다.")
+    else:
+        st.warning(f"⚠️ '{month_str} 누적' (베이스) 시트를 찾을 수 없습니다.")
+
+    if worksheet_to_load_base:
+        all_values_base = worksheet_to_load_base.get_all_values()
+        if all_values_base and len(all_values_base) > 1:
+            headers_base = all_values_base[0]
+            data_base = [row for row in all_values_base[1:] if any(cell.strip() for cell in row)]
+            df_cumulative_base = pd.DataFrame(data_base, columns=headers_base)
+    
+    # (데이터 클리닝)
+    if df_cumulative_base.empty or '항목' not in df_cumulative_base.columns:
+            # (이름 목록을 df_display_cum에서 가져오는 것으로 대체)
+            master_names_list = df_display_cum.columns[1:].tolist() if not df_display_cum.empty else []
+            default_cols = ["항목"] + master_names_list
+            default_data = [
+                ["오전누적"] + [0] * len(master_names_list), ["오후누적"] + [0] * len(master_names_list),
+                ["오전당직누적"] + [0] * len(master_names_list), ["오후당직누적"] + [0] * len(master_names_list)
+            ]
+            df_cumulative_base = pd.DataFrame(default_data, columns=default_cols)
+    
+    for col in df_cumulative_base.columns:
+        if col != '항목':
+            df_cumulative_base[col] = pd.to_numeric(df_cumulative_base[col], errors='coerce').fillna(0).astype(int)
+    # --- ▲▲▲ [신규] 3. 베이스 누적 시트 로드 끝 ▲▲▲ ---
+
+    # --- ▼▼▼ [신규] 4. 날짜 매핑 테이블 생성 ▼▼▼ ---
+    # (ISO 날짜와 '10월 1일' 표시 형식을 매핑하기 위해)
+    day_map_schedule = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+    _, last_day_schedule = calendar.monthrange(current_month_dt.year, current_month_dt.month)
+    all_month_dates_schedule = pd.date_range(start=current_month_dt, end=current_month_dt.replace(day=last_day_schedule))
+    df_schedule_mapping = pd.DataFrame({
+        '날짜': [d.strftime('%Y-%m-%d') for d in all_month_dates_schedule],
+        '요일': [day_map_schedule.get(d.weekday()) for d in all_month_dates_schedule],
+        '날짜_표시': [f"{d.month}월 {d.day}일" for d in all_month_dates_schedule]
+    })
+    # --- ▲▲▲ [신규] 4. 날짜 매핑 테이블 생성 끝 ▲▲▲ ---
+
+    # 5. 토요/휴일, 휴관일 로드 (기존과 동일)
     try:
         ws_special = sheet.worksheet(f"{target_year}년 토요/휴일 스케줄")
         df_yearly = pd.DataFrame(ws_special.get_all_records()); df_yearly['날짜_dt'] = pd.to_datetime(df_yearly['날짜'])
@@ -160,14 +241,21 @@ def load_data(month_str, schedule_sheet_name): # version_str 인자 제거
         closing_dates = pd.to_datetime(df_closing['날짜']).dt.strftime('%Y-%m-%d').tolist() if '날짜' in df_closing.columns and not df_closing.empty else []
     except WorksheetNotFound: closing_dates = []
 
-    # [핵심 추가] 현재 버전이 '최종'인지 여부를 확인하는 플래그
     is_final_version = "최종" in schedule_sheet_name
-
+    
+    # [수정] 반환 딕셔너리에 'base_cumulative'와 'schedule_mapping' 추가
     return {
-        "schedule": df_schedule, "cumulative_display": df_display_cum, "swaps": pd.DataFrame(),
-        "special": df_special, "requests": pd.DataFrame(), "closing_dates": closing_dates,
+        "schedule": df_schedule, 
+        "cumulative_display": df_display_cum, 
+        "base_cumulative": df_cumulative_base, # (신규)
+        "schedule_mapping": df_schedule_mapping, # (신규)
+        "swaps": pd.DataFrame(),
+        "special": df_special, 
+        "requests": pd.DataFrame(), 
+        "closing_dates": closing_dates,
         "is_final_version": is_final_version
     }
+# --- ▲▲▲ [교체] load_data 함수 교체 끝 ▲▲▲ ---
 
 def apply_schedule_swaps(original_schedule_df, swap_requests_df):
     df_modified = original_schedule_df.copy(); change_log = []; messages = []; applied_count = 0
@@ -457,10 +545,10 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             fill_color = None
             if label in ["오전누적", "오후누적"]: fill_color = fills['pink']
             elif label in ["오전합계", "오후합계"]: fill_color = fills['blue']
-            elif label == "오전당직 (목표)": fill_color = fills['green']
-            elif label == "오전당직 (배정)": fill_color = fills['dark_green']
-            elif label == "오후당직 (목표)": fill_color = fills['orange']
-            elif label == "오후당직 (배정)": fill_color = fills['lightgray']
+            elif label == "오전당직합계": fill_color = fills['green']
+            elif label == "오전당직누적": fill_color = fills['dark_green']
+            elif label == "오후당직합게": fill_color = fills['orange']
+            elif label == "오후당직누적": fill_color = fills['lightgray']
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]: fill_color = fills['yellow']
             if fill_color: cell.fill = fill_color
 
@@ -471,7 +559,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
     apply_outer_border(worksheet, start_row, start_row + len(labels), start_col, start_col)
     if "오전보충" in labels and "오전누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전보충"), start_row + 1 + labels.index("오전누적"), start_col, end_col)
     if "오후보충" in labels and "오후누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오후보충"), start_row + 1 + labels.index("오후누적"), start_col, end_col)
-    if "오전당직 (목표)" in labels and "오후당직 (배정)" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전당직 (목표)"), start_row + 1 + labels.index("오후당직 (배정)"), start_col, end_col)
+    if "오전당직합계" in labels and "오후당직누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전당직합계"), start_row + 1 + labels.index("오후당직누적"), start_col, end_col)
 
     legend_start_row = worksheet.max_row + 3 
     legend_data = [('A9D08E', '대체 보충'), ('FFF28F', '보충'), ('95B3D7', '대체 휴근'), ('B1A0C7', '휴근'), ('DA9694', '휴가/학회')]
@@ -685,20 +773,118 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
     wb.save(output)
     return output.getvalue()
 
-def save_schedule(sheet_name, df_to_save, df_cum_to_save):
+def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial, all_names, df_schedule_mapping):
+    """
+    [★복사됨★]
+    수정된 스케줄 data_editor 내용을 실시간으로 파싱하여,
+    '보충', '당직' 횟수를 재계산하고 누적 테이블 DataFrame을 반환합니다.
+    """
+    
+    am_bochong_counts = Counter()
+    pm_bochong_counts = Counter()
+    oncall_counts = Counter()
+
+    # (버그 수정) '날짜_표시' 컬럼 기준으로 매핑을 생성합니다.
+    date_display_to_iso_map = pd.Series(df_schedule_mapping['날짜'].values, index=df_schedule_mapping['날짜_표시']).to_dict()
+
+    for idx, row in edited_schedule_df.iterrows():
+        try:
+            # (버그 수정) '10월 1일'을 '2025-10-01'로 변환
+            date_display = row['날짜']
+            date_iso = date_display_to_iso_map.get(date_display)
+            if date_iso is None:
+                continue # 매핑 실패 시 (토/휴일 등) 건너뛰기
+        except Exception:
+            continue 
+
+        for col_name in edited_schedule_df.columns:
+            raw_value = str(row[col_name] or '').strip()
+            if not raw_value: continue
+
+            worker_name = re.sub(r'\(.+\)', '', raw_value).strip()
+            status_match = re.search(r'\((.+)\)', raw_value)
+            status = status_match.group(1).strip() if status_match else '기본'
+            
+            time_slot = None
+            if col_name.isdigit(): time_slot = '오전'
+            elif col_name.startswith("오후"): time_slot = '오후'
+            elif col_name == '오전당직(온콜)': time_slot = '오전당직'
+            
+            if not time_slot or not worker_name: continue
+
+            if time_slot == '오전당직':
+                oncall_counts[worker_name] += 1
+            elif time_slot == '오전':
+                if status in ['보충', '대체보충']: am_bochong_counts[worker_name] += 1
+                elif status in ['휴근', '대체휴근']: am_bochong_counts[worker_name] -= 1
+            elif time_slot == '오후':
+                if status in ['보충', '대체보충']: pm_bochong_counts[worker_name] += 1
+                elif status in ['휴근', '대체휴근']: pm_bochong_counts[worker_name] -= 1
+    
+    recalculated_summary_df = df_cumulative_initial.copy()
+    if '항목' not in recalculated_summary_df.columns:
+        try:
+            first_col = recalculated_summary_df.columns[0]
+            recalculated_summary_df = recalculated_summary_df.set_index(first_col).transpose().reset_index().rename(columns={'index':'항목'})
+        except Exception:
+            return df_cumulative_initial 
+    
+    recalculated_summary_df = recalculated_summary_df.set_index('항목')
+
+    for name in all_names:
+        if name not in recalculated_summary_df.columns:
+            recalculated_summary_df[name] = 0
+        
+        # (오류 방지) 누락된 항목이 있으면 0으로 채움
+        for item in ["오전누적", "오후누적", "오전당직누적", "오후당직누적"]:
+            if item not in recalculated_summary_df.index:
+                recalculated_summary_df.loc[item] = 0
+        
+        base_am = int(recalculated_summary_df.loc['오전누적', name])
+        base_pm = int(recalculated_summary_df.loc['오후누적', name])
+        base_am_oncall = int(recalculated_summary_df.loc['오전당직누적', name])
+        base_pm_oncall = int(recalculated_summary_df.loc['오후당직누적', name])
+
+        am_bochong = am_bochong_counts.get(name, 0)
+        pm_bochong = pm_bochong_counts.get(name, 0)
+        am_oncall_total = oncall_counts.get(name, 0)
+
+        # (오류 방지) 계산용 항목이 없으면 0으로 채움
+        for item in ["오전보충", "오전합계", "오후보충", "오후합계", "오전당직합계", "오후당직합계"]:
+            if item not in recalculated_summary_df.index:
+                recalculated_summary_df.loc[item] = 0
+
+        recalculated_summary_df.at["오전보충", name] = am_bochong
+        recalculated_summary_df.at["오전합계", name] = base_am
+        recalculated_summary_df.at["오전누적", name] = base_am + am_bochong
+        recalculated_summary_df.at["오후보충", name] = pm_bochong
+        recalculated_summary_df.at["오후합계", name] = base_pm
+        recalculated_summary_df.at["오후누적", name] = base_pm + pm_bochong
+        recalculated_summary_df.at["오전당직합계", name] = am_oncall_total
+        recalculated_summary_df.at["오전당직누적", name] = base_am_oncall + am_oncall_total
+        recalculated_summary_df.at["오후당직합계", name] = 0
+        recalculated_summary_df.at["오후당직누적", name] = base_pm_oncall
+
+    return recalculated_summary_df.reset_index()
+
+# --- ▼▼▼ [교체] L702 ~ L786의 기존 save_schedule 함수 전체를 교체 ▼▼▼ ---
+def save_schedule(month_str, sheet_name, df_to_save, df_cum_to_save):
     with st.spinner(f"'{sheet_name}' 시트에 저장 중입니다..."):
         try:
-            # gc = get_gspread_client()
-            # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
             sheet = get_spreadsheet()
             
-            # 1. 스케줄 시트 저장 (기존과 동일)
+            # 1. 스케줄 시트 저장
             try: 
                 worksheet = sheet.worksheet(sheet_name)
             except WorksheetNotFound: 
                 worksheet = sheet.add_worksheet(title=sheet_name, rows=100, cols=50)
             
-            columns_to_save = st.session_state["df_schedule_original"].columns.tolist()
+            original_cols_df = st.session_state.get("df_schedule_original")
+            if original_cols_df is None:
+                st.error("원본 스케줄 컬럼 정보를 찾을 수 없습니다.")
+                st.stop()
+
+            columns_to_save = original_cols_df.columns.tolist()
             df_to_save_final = pd.DataFrame(columns=columns_to_save)
             for col in columns_to_save:
                 if col in df_to_save.columns:
@@ -708,11 +894,17 @@ def save_schedule(sheet_name, df_to_save, df_cum_to_save):
             final_data = [columns_to_save] + df_to_save_final.fillna('').values.tolist()
             update_sheet_with_retry(worksheet, final_data)
 
-            # 2. 익월 누적 시트 저장 (기존과 동일)
+            # 2. 익월 누적 시트 저장
             if not df_cum_to_save.empty:
                 current_month_dt_save = datetime.strptime(month_str, "%Y년 %m월")
                 next_month_str_save = (current_month_dt_save + relativedelta(months=1)).strftime("%Y년 %-m월")
-                version_s_save = " " + sheet_name.split(" 스케줄 ")[1] if " ver" in sheet_name else ""
+                
+                version_s_save = ""
+                if " ver" in sheet_name:
+                    version_s_save = " " + sheet_name.split(" 스케줄 ")[1]
+                elif "최종" in sheet_name:
+                     version_s_save = " 최종"
+                
                 cum_sheet_name = f"{next_month_str_save} 누적{version_s_save}"
 
                 try: 
@@ -727,15 +919,13 @@ def save_schedule(sheet_name, df_to_save, df_cum_to_save):
                 cum_data = [df_to_save_int.columns.tolist()] + df_to_save_int.astype(str).values.tolist()
                 update_sheet_with_retry(ws_cum, cum_data)
 
-            # --- ▼▼▼ 여기가 핵심 수정 사항입니다 ▼▼▼ ---
-            # 저장이 성공했으므로, 현재 앱의 '기준 데이터'를 방금 저장한 데이터로 업데이트합니다.
-            # 이렇게 해야 다음번 rerun에서 변경사항이 없다고 올바르게 판단합니다.
-            st.session_state.df_display_initial = df_to_save.copy()
-            st.session_state.df_cumulative_next_display = df_cum_to_save.copy()
-            # --- ▲▲▲ 여기까지 수정 ---
-
-            st.session_state.save_successful = True
-            st.session_state.last_saved_sheet_name = sheet_name
+            # --- ▼▼▼ [핵심 수정] 저장 성공 시 세션 상태 및 플래그 리셋 ▼▼▼ ---
+            st.session_state.df_display_initial = df_to_save.copy() # (스케줄 원본)
+            st.session_state.df_cumulative_next_display = df_cum_to_save.copy() # (누적 결과)
+            st.session_state.df_cumulative_next_initial = df_cum_to_save.copy() # (누적 원본)
+            
+            st.session_state.save_successful = True # (기존)
+            st.session_state.last_saved_sheet_name = sheet_name # (기존)
             
             st.success(f"🎉 스케줄과 익월 누적 데이터가 '{sheet_name}' 버전에 맞게 저장되었습니다.")
             time.sleep(1)
@@ -745,6 +935,7 @@ def save_schedule(sheet_name, df_to_save, df_cum_to_save):
 
         except Exception as e: 
             st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+# --- ▲▲▲ [교체] save_schedule 함수 교체 끝 ▲▲▲ ---
 
 # --- 메인 UI ---
 st.header("✍️ 스케줄 수정", divider='rainbow')
@@ -762,14 +953,38 @@ def on_version_change():
     st.session_state.data_loaded = False
 
 # [핵심 추가] 전체 버전 목록을 다시 불러오기 위한 새로고침 버튼
+# [기존 코드] (L843)
 if st.button("🔄 새로고침 (R)", help="Google Sheets에서 시트 목록을 다시 불러옵니다."):
     # 모든 캐시를 지워 새로운 시트 목록을 가져오도록 합니다.
     st.cache_data.clear()
     st.cache_resource.clear()
-    # 관련 세션 상태 초기화 (데이터 로딩 관련)
-    for key in list(st.session_state.keys()):
-        if key.startswith("df_") or key in ["data_loaded", "apply_messages", "change_log", "is_final_version"]:
+    
+    # --- ▼▼▼ [수정] 기존 for 루프 대신 명시적 삭제로 변경 ▼▼▼ ---
+    
+    # 새로고침 시 반드시 삭제해야 하는 핵심 상태 키 목록
+    keys_to_delete = [
+        "data_loaded", 
+        "apply_messages", 
+        "change_log", 
+        "is_final_version",
+        "selected_sheet_name",      # (필수) 선택된 시트 이름
+        "loaded_sheet_name",        # (필수) 로드된 시트 이름
+        "editor_has_changes",       # (필수) 수정 플래그
+        "save_successful",          # (권장) 저장 상태
+        "last_saved_sheet_name"     # (권장) 저장 이름
+    ]
+    
+    # df_로 시작하는 모든 데이터프레임 키도 삭제 목록에 추가
+    df_keys = [key for key in st.session_state.keys() if key.startswith("df_")]
+    keys_to_delete.extend(df_keys)
+
+    # 세션 상태에서 해당 키들 삭제
+    for key in keys_to_delete:
+        if key in st.session_state:
             del st.session_state[key]
+            
+    # --- ▲▲▲ [수정] 코드 교체 완료 ▲▲▲ ---
+    
     st.rerun()
 
 if not versions:
@@ -799,9 +1014,11 @@ elif st.session_state.get("loaded_sheet_name") != selected_sheet_name:
     # 현재 선택된 버전(selected_sheet_name)과 세션에 저장된 버전(loaded_sheet_name)이 다름
     needs_load = True
 
+# --- ▼▼▼ [교체] L942 ~ L960의 needs_load 블록 교체 ▼▼▼ ---
 if needs_load:
     data = load_data(month_str, selected_sheet_name)
 
+    # (기존)
     st.session_state["df_schedule_original"] = data["schedule"]
     st.session_state["df_cumulative_next_display"] = data["cumulative_display"]
     st.session_state["df_display_initial"] = data["schedule"].copy()
@@ -810,10 +1027,30 @@ if needs_load:
     st.session_state["df_requests"] = data["requests"]
     st.session_state["closing_dates"] = data["closing_dates"]
     st.session_state["is_final_version"] = data["is_final_version"] # ✨ '최종' 여부 저장
-    st.session_state.data_loaded = True
     
-    # [핵심 추가] 현재 로드된 시트 이름을 세션에 저장
+    # --- ▼▼▼ [신규] 로드를 위한 추가 세션 상태 저장 ▼▼▼ ---
+    st.session_state["df_cumulative_base_initial"] = data["base_cumulative"]
+    st.session_state["df_schedule_mapping"] = data["schedule_mapping"]
+    
+    # (버그 방지) 누적 테이블(결과)이 비어있으면, 베이스 테이블(입력) 기준으로 새로 생성
+    if st.session_state.df_cumulative_next_display.empty and not data["base_cumulative"].empty:
+        st.info("로드된 익월 누적 테이블이 없어, '당월(전월 누적)' 데이터를 기준으로 새로 생성합니다.")
+        all_names_list = data["base_cumulative"].columns[1:].tolist()
+        
+        st.session_state.df_cumulative_next_display = recalculate_summary_from_schedule(
+            data["schedule"], # 스케줄
+            data["base_cumulative"], # 베이스
+            all_names_list, # 이름
+            data["schedule_mapping"] # 매핑
+        )
+
+    # (버그 방지) df_display_initial(수정 전)과 df_cumulative_next_display(수정 후)를 동일하게 초기화
+    st.session_state["df_cumulative_next_initial"] = st.session_state.df_cumulative_next_display.copy()
+    # --- ▲▲▲ [신규] 로드 끝 ---
+    
+    st.session_state.data_loaded = True
     st.session_state["loaded_sheet_name"] = selected_sheet_name
+# --- ▲▲▲ [교체] needs_load 블록 교체 끝 ▲▲▲ ---
 
 # [수정] 'is_final_version' 확인 로직은 이 블록 *바깥*에 둡니다.
 is_final_version = st.session_state.get("is_final_version", False)
@@ -884,149 +1121,135 @@ if "df_display_initial" in st.session_state:
                 key="download_now_checking"
             )
 
-st.divider(); st.subheader("📅 스케줄표 수정")
-df_to_display = st.session_state.get("df_display_modified", st.session_state.get("df_display_initial"))
 
-# --- 데이터 에디터 ---
-edited_df = st.data_editor(
-    df_to_display,
-    use_container_width=True,
-    key="schedule_editor",
-    disabled=['날짜', '요일'] if not st.session_state.get("disable_editing", False) else df_to_display.columns.tolist()
-)
-
-# --- 변경사항 미리보기 (기존과 동일) ---
-st.caption("📝 스케줄표 변경사항 미리보기")
-manual_change_log = []
-if not edited_df.equals(df_to_display):
-    diff_indices = np.where(edited_df.ne(df_to_display))
-    for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
-        date_str = edited_df.iloc[row_idx, 0]
-        weekday = edited_df.iloc[row_idx, 1]
-        
-        # 변경된 셀의 컬럼 이름 가져오기
-        col_name = edited_df.columns[col_idx]
-        
-        old_val = df_to_display.iloc[row_idx, col_idx]
-        new_val = edited_df.iloc[row_idx, col_idx]
-
-        # --- [수정됨] '시간대' 로직 ---
-        time_period = col_name # 기본값은 컬럼명
-        if col_name.isdigit():
-            time_period = "오전"
-        elif col_name == "오전당직(온콜)":
-            time_period = "오전당직(온콜)"
-        elif col_name.startswith("오후"):
-            time_period = "오후"
-        # --- '시간대' 로직 끝 ---
-
-        manual_change_log.append({
-            '날짜': f"{date_str} ({weekday})", 
-            '시간대': time_period,  # 요청하신 '시간대' 열 추가
-            '변경 전': str(old_val), 
-            '변경 후': str(new_val)
-        })
-
-# '스케줄 변경 요청 목록' 섹션이 주석 처리되어 있으므로, 
-# st.session_state["change_log"]는 비어있을 것입니다.
-combined_log = st.session_state.get("change_log", []) + manual_change_log
-
-if combined_log:
-    # --- [수정됨] 컬럼 순서 지정을 위해 DataFrame 생성 로직 변경 ---
-    df_log = pd.DataFrame(combined_log)
-    
-    # '시간대' 열이 존재하는지 확인 (manual_change_log가 비어있지 않다면 존재)
-    if '시간대' in df_log.columns:
-        # 원하는 컬럼 순서 정의
-        desired_columns = ['날짜', '시간대', '변경 전', '변경 후']
-        
-        # '시간대'가 아닌 다른 컬럼들 (혹시 모를 다른 로그데이터의 컬럼 순서 유지를 위해)
-        other_columns = [col for col in df_log.columns if col not in desired_columns]
-        
-        # 최종 컬럼 순서 (날짜, 시간대, 변경 전, 변경 후, [그 외])
-        final_columns = desired_columns + other_columns
-        
-        # df_log에 실제로 존재하는 컬럼들로만 필터링
-        final_columns_existing = [col for col in final_columns if col in df_log.columns]
-        
-        # 최종적으로 컬럼 순서가 재정렬된 DataFrame을 사용
-        df_log = df_log[final_columns_existing]
-
-    st.dataframe(df_log, use_container_width=True, hide_index=True)
-else:
-    st.info("기록된 변경사항이 없습니다.")
+# --- ▼▼▼ [교체] L1031 ~ L1194의 기존 UI 코드 전체를 교체 ▼▼▼ ---
 
 st.divider()
-st.subheader("📊 익월 누적표 수정")
+st.subheader("📅 배정 스케줄 수정")
 
-if "df_cumulative_next_display" in st.session_state and not st.session_state.df_cumulative_next_display.empty:
-    df_cum = st.session_state.df_cumulative_next_display
+# --- ▼▼▼ [신규] '스케줄 배정' 페이지의 수정/연동/로깅 로직 적용 ▼▼▼ ---
 
-    column_config = {
-        # 첫 번째 열(이름)은 편집 불가
-        df_cum.columns[0]: st.column_config.Column(disabled=True)
-    }
-    # 나머지 모든 열에 대해 음수를 허용하는 숫자 형식으로 지정
-    for col in df_cum.columns[1:]:
-        column_config[col] = st.column_config.NumberColumn()
-    
-    edited_cumulative_df = st.data_editor(
-        df_cum, 
-        hide_index=True,
-        key="cumulative_editor",
-        use_container_width=True,
-        column_config=column_config,
-        # [수정] 'disable_editing' 로컬 변수 대신 세션 상태를 직접 사용합니다.
-        disabled=st.session_state.get("disable_editing", False) # [핵심] 비활성화 플래그 적용
-    )
-else:
-    st.info("표시할 익월 누적 데이터가 없습니다...")
-    edited_cumulative_df = pd.DataFrame()
+# 1. 세션에서 원본 데이터 불러오기
+df_schedule_initial = st.session_state.get("df_display_initial")
+df_cumulative_base = st.session_state.get("df_cumulative_base_initial")
+df_schedule_mapping = st.session_state.get("df_schedule_mapping")
+df_cumulative_next_initial = st.session_state.get("df_cumulative_next_initial")
+all_names_list = df_cumulative_base.columns[1:].tolist() if df_cumulative_base is not None else []
 
-# --- 누적표 변경사항 미리보기 (기존과 동일) ---
-st.caption("📝 누적표 변경사항 미리보기")
+# (수정 비활성화 플래그)
+disable_editing = st.session_state.get("disable_editing", False)
 
-base_cumulative_df = st.session_state.df_cumulative_next_display
-cumulative_change_log = []
+# 2. 상단 (스케줄) data_editor
+if df_schedule_initial is None or df_schedule_mapping is None or df_cumulative_next_initial is None:
+    st.error("스케줄 원본, 날짜 매핑, 또는 누적 원본 데이터를 로드하지 못했습니다. 새로고침 해주세요.")
+    st.stop()
 
-try:
-    # 비교를 위한 임시 데이터프레임 생성
-    base_numeric = base_cumulative_df.copy()
-    edited_numeric = edited_cumulative_df.copy()
+# '스케줄 수정' 페이지는 GSheet에 이미 (괄호)가 포함된 텍스트를 저장하므로,
+# '스케줄 배정' 페이지와 달리 별도의 (괄호) 추가 로직이 필요 없습니다.
+df_to_edit_schedule = df_schedule_initial.copy()
 
-    # ✨ [핵심 수정] 첫 번째 열을 제외한 모든 열을 숫자(정수) 형식으로 통일합니다.
-    cols_to_convert = base_numeric.columns[1:]
-    for col in cols_to_convert:
-        base_numeric[col] = pd.to_numeric(base_numeric[col], errors='coerce').fillna(0).astype(int)
-        edited_numeric[col] = pd.to_numeric(edited_numeric[col], errors='coerce').fillna(0).astype(int)
+edited_df = st.data_editor(
+    df_to_edit_schedule,
+    use_container_width=True,
+    key="schedule_editor",
+    disabled=['날짜', '요일'] if not disable_editing else df_to_edit_schedule.columns.tolist(),
+)
 
-    # 이제 숫자 형식으로 변환된 데이터프레임을 비교합니다.
-    if not edited_numeric.equals(base_numeric):
-        # numpy를 사용하여 차이가 나는 셀의 인덱스를 찾습니다.
-        diff_indices = np.where(edited_numeric.ne(base_numeric))
+# 3. 상단 (스케줄) 수정 로그
+st.markdown("📝 **스케줄 수정사항**")
+schedule_change_log = []
+original_schedule_df = df_to_edit_schedule # 에디터에 렌더링된 초기값
+
+if original_schedule_df is not None and not edited_df.equals(original_schedule_df):
+    try:
+        import numpy as np 
+        diff_indices = np.where(edited_df.astype(str).ne(original_schedule_df.astype(str)))
+        changed_cells = set(zip(diff_indices[0], diff_indices[1])) # 중복 로그 방지
         
-        # 변경된 각 셀에 대한 로그를 생성합니다.
-        for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
-            item_name = edited_numeric.iloc[row_idx, 0]
-            person_name = edited_numeric.columns[col_idx]
-            # 변환된 데이터프레임에서 값을 가져와 로그를 기록합니다.
-            old_val = base_numeric.iloc[row_idx, col_idx]
-            new_val = edited_numeric.iloc[row_idx, col_idx]
-
-            cumulative_change_log.append({
-                '항목': item_name,
-                '이름': person_name,
-                '변경 전': old_val,
-                '변경 후': new_val
-            })
-except Exception as e:
-    st.error(f"변경사항 비교 중 오류가 발생했습니다: {e}")
-
-# 변경사항이 있으면 데이터프레임으로 표시하고, 없으면 메시지를 표시합니다.
-if cumulative_change_log:
-    st.dataframe(pd.DataFrame(cumulative_change_log), use_container_width=True, hide_index=True)
+        for row_idx, col_idx in changed_cells:
+            date_str = edited_df.iloc[row_idx, 0] # '날짜' 열 (예: "10월 1일")
+            slot_name = edited_df.columns[col_idx] # 변경된 열 이름 (예: "1")
+            old_value = original_schedule_df.iloc[row_idx, col_idx]
+            new_value = edited_df.iloc[row_idx, col_idx]
+            log_msg = f"{date_str} '{slot_name}' 변경: '{old_value or '빈 값'}' → '{new_value or '빈 값'}'"
+            schedule_change_log.append(log_msg)
+    except Exception as e:
+        schedule_change_log.append(f"[로그 오류] 스케줄 변경사항 비교 중 오류: {e}")
+        
+if schedule_change_log:
+    st.code("\n".join(f"• {msg}" for msg in sorted(schedule_change_log)), language='text')
 else:
-    st.info("기록된 변경사항이 없습니다.")
+    st.info("수정된 사항이 없습니다.")
+
+st.divider()
+st.subheader("📊 누적 테이블 수정")
+st.write("- 누적 테이블은 '스케줄표 수정' 편집기에 반영된 내용을 바탕으로 자동 재계산됩니다.")
+
+# 4. 하단 (누적) data_editor
+if df_cumulative_base is None or not all_names_list:
+    st.error("누적 테이블 베이스 데이터 또는 이름 목록을 로드하지 못했습니다. 새로고침 해주세요.")
+    st.stop()
+
+# [실시간 재계산]
+try:
+    summary_df_input = recalculate_summary_from_schedule(
+        edited_df,               # (상단) 에디터의 최종 결과
+        df_cumulative_base,      # (로드된) 지난달 누적 원본
+        all_names_list,          # (로드된) 이름 목록
+        df_schedule_mapping      # (생성된) 날짜 매핑
+    )
+except Exception as e_recalc:
+    st.error(f"누적 테이블 자동 재계산 중 오류 발생: {e_recalc}")
+    st.exception(e_recalc)
+    summary_df_input = df_cumulative_next_initial # 오류 시, 로드했던 초기값으로 복구
+
+column_config = {
+    summary_df_input.columns[0]: st.column_config.Column(disabled=True),
+    **{col: st.column_config.NumberColumn(format="%d") 
+        for col in summary_df_input.columns[1:]}
+}
+
+edited_cumulative_df = st.data_editor(
+    summary_df_input, # 자동 재계산된 결과를 입력
+    hide_index=True,
+    key="cumulative_editor",
+    use_container_width=True,
+    column_config=column_config,
+    disabled=disable_editing, # '최종' 버전일 경우 비활성화
+)
+
+# 5. 하단 (누적) 수정 로그
+st.markdown("📝 **누적 테이블 변경 로그**")
+summary_change_log = []
+original_summary_df = df_cumulative_next_initial # '로드' 시점의 원본과 비교
+
+if original_summary_df is not None and not edited_cumulative_df.equals(original_summary_df):
+    try:
+        import numpy as np 
+        # (데이터 타입 불일치 오류 방지를 위해 str로 변환 후 비교)
+        stats_orig_str = original_summary_df.astype(str)
+        stats_edit_str = edited_cumulative_df.astype(str)
+        
+        diff_indices_stats = np.where(stats_edit_str.ne(stats_orig_str))
+        changed_cells_stats = set(zip(diff_indices_stats[0], diff_indices_stats[1]))
+
+        for row_idx, col_idx in changed_cells_stats:
+            item_name = edited_cumulative_df.iloc[row_idx, 0] 
+            person_name = edited_cumulative_df.columns[col_idx]
+            old_value = original_summary_df.iloc[row_idx, col_idx]
+            new_value = edited_cumulative_df.iloc[row_idx, col_idx]
+            log_msg = f"'{person_name}'의 '{item_name}' 변경: {old_value} → {new_value}"
+            summary_change_log.append(log_msg)
+    except Exception as e:
+        summary_change_log.append(f"[로그 오류] 누적 테이블 변경사항 비교 중 오류: {e}")
+
+if summary_change_log:
+    log_text_stats = "\n".join(f"• {msg}" for msg in sorted(summary_change_log))
+    st.code(log_text_stats, language='text')
+else:
+    st.info("수정된 사항이 없습니다.")
+
+# --- ▲▲▲ [신규] 교체 완료 ---
 
 st.divider()
 
@@ -1076,36 +1299,50 @@ if st.session_state.get("save_successful", False) and not has_unsaved_changes:
             key="download_saved_checking"  # <-- 4. 이 키 추가
         )
 
-# 2. 그 외 모든 경우 (변경사항이 있거나, 아직 아무 작업도 하지 않은 초기 상태)
-else:
-    # '변경사항 저장' 헤더를 항상 표시
-    st.subheader("💾 변경사항 저장")
+# --- [핵심 수정] 1. 'has_unsaved_changes'를 플래그가 아닌 '실제 비교'로 정의 ---
+try:
+    # 스케줄 비교: (에디터 최종본) vs (로드 시점의 원본)
+    # (L1062에서 사용된 비교 대상과 동일하게 설정)
+    original_schedule_for_compare = df_to_edit_schedule
+    schedule_changed = not edited_df.equals(original_schedule_for_compare)
 
-    # 변경사항이 있을 때만 저장 옵션을 보여줍니다.
-    if has_unsaved_changes and not st.session_state.get("disable_editing", False): # ✨ 비활성화 조건 추가
-        # 만약 '저장 완료' 상태였다면, 새로운 수정이 발생했으므로 해당 상태를 제거합니다.
-        if "save_successful" in st.session_state:
-            del st.session_state["save_successful"]
+    # 누적 비교: (에디터 최종본) vs (로드 시점의 원본)
+    # (L1129에서 사용된 비교 대상과 동일하게 설정)
+    original_cumulative_for_compare = df_cumulative_next_initial
+    
+    # (edited_cumulative_df가 수동 덮어쓰기 + 자동 재계산 모두 반영된 최종본임)
+    # (L1127의 로그 비교와 동일한 비교 수행)
+    cumulative_changed = not edited_cumulative_df.equals(original_cumulative_for_compare)
+    
+    # 둘 중 하나라도 바뀌었으면, 저장할 변경사항이 있는 것임.
+    has_unsaved_changes = schedule_changed or cumulative_changed
 
-        st.write("수정한 스케줄표와 누적표를 저장하시려면 아래 옵션 중 선택해주세요.")
-        st.warning("현재 버전 덮어쓰기를 선택하시면 이전 버전으로 돌아갈 수 없습니다.")
+except Exception as e:
+    st.error(f"변경 사항 비교 중 오류: {e}")
+    has_unsaved_changes = False # 오류 시 안전하게 비활성화
 
-        # --- [수정] '다음 버전' 계산 로직 ---
-        # '최종' (999.0)을 제외한 실제 숫자 버전들만 필터링합니다.
-        numerical_versions = [v for v in versions.values() if v < 999.0]
+# --- [핵심 수정] 2. 나머지 로직은 이 'has_unsaved_changes' 변수를 사용 ---
+
+col1_save, col2_save = st.columns(2)
+
+with col1_save:
+    # [수정] 'editor_has_changes' 대신 'has_unsaved_changes' 변수 사용
+    disable_save_button = st.session_state.get("disable_editing", False) or not has_unsaved_changes
+    
+    if st.button("💾 수정사항 Google Sheet에 저장", type="primary", use_container_width=True, disabled=disable_save_button):
         
-        if not numerical_versions:
-            # 숫자 버전이 하나도 없으면 (예: '최종'만 있거나 base 시트만 있음) 0.0에서 시작
-            latest_version_num = 0.0
-        else:
-            # 숫자 버전 중 가장 높은 버전을 찾습니다.
-            latest_version_num = max(numerical_versions)
-
-        # 새 버전 번호는 (가장 높은 버전의 정수부 + 1)을 float으로 변환
+        df_to_save = edited_df.copy()
+        df_cum_to_save = edited_cumulative_df.copy()
+        
+        st.warning("현재 버전 덮어쓰기를 선택하시면 이전 버전으로 돌아갈 수 없습니다.")
+        
+        numerical_versions = [v for v in versions.values() if v < 999.0]
+        if not numerical_versions: latest_version_num = 0.0
+        else: latest_version_num = max(numerical_versions)
+        
         new_version_num = float(int(latest_version_num) + 1)
         new_sheet_name = f"{month_str} 스케줄 ver{new_version_num:.1f}"
-        # --- [수정] 로직 끝 ---
-
+        
         save_option = st.radio(
             "저장 옵션 선택",
             (f"현재 버전 - '{selected_sheet_name}' 덮어쓰기", f"다음 버전 - '{new_sheet_name}'으로 새로 저장하기"),
@@ -1113,13 +1350,47 @@ else:
             label_visibility="collapsed"
         )
 
-        if st.button("저장하기", use_container_width=True, type="primary"):
-            df_to_save = edited_df.copy()
+        if st.button("저장 실행", use_container_width=True, type="secondary"):
             sheet_name_to_save = selected_sheet_name if "덮어쓰기" in save_option else new_sheet_name
-            save_schedule(month_str, sheet_name_to_save, df_to_save, edited_cumulative_df)
+            save_schedule(month_str, sheet_name_to_save, df_to_save, df_cum_to_save)
 
+    if disable_save_button and not st.session_state.get("disable_editing", False):
+        # st.info("ℹ️ 저장할 변경사항이 없습니다.")
+        pass
+    elif st.session_state.get("disable_editing", False):
+        st.error("🚨 스케줄 최종본은 수정할 수 없습니다.")
+
+with col2_save:
+    # [수정] 'editor_has_changes' 대신 'has_unsaved_changes' 변수 사용
+    if has_unsaved_changes and not st.session_state.get("disable_editing", False):
+        st.error("⚠️ 수정사항이 감지되었습니다. 먼저 '수정사항 Google Sheet에 저장' 버튼을 눌러주세요.")
     else:
-        if st.session_state.get("disable_editing", False):
-            st.error("🚨 스케줄 최종본은 수정할 수 없습니다.")
-        else:
-            st.info("ℹ️ 저장할 변경사항이 없습니다.")
+        # 변경 사항이 없거나, 저장되었거나, '최종' 버전이라 수정이 막혔을 때 다운로드 버튼 표시
+        
+        st.download_button(
+            label=f"📥 스케줄{display_version} 다운로드",
+            data=create_final_schedule_excel(
+                st.session_state.df_display_initial, edited_df, edited_cumulative_df,
+                st.session_state.df_special, st.session_state.df_requests,
+                st.session_state.get("closing_dates", []), month_str
+            ),
+            file_name=f"{month_str} 스케줄{display_version}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True, type="primary",
+            key="download_edited_final"
+        )
+
+        # '최종' 버전이 아닐 때만 '배정 확인용' 버튼 표시
+        if not st.session_state.get("disable_editing", False):
+            st.download_button(
+                label=f"📥 스케줄{display_version} 다운로드 (배정 확인용)",
+                data=create_checking_schedule_excel(
+                    st.session_state.df_display_initial, edited_df, edited_cumulative_df,
+                    st.session_state.df_special, st.session_state.df_requests,
+                    st.session_state.get("closing_dates", []), month_str
+                ),
+                file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
+                mime="application/vnd.openxmlformats-officedocument.sheet",
+                use_container_width=True, type="secondary",
+                key="download_edited_checking"
+            )

@@ -321,8 +321,8 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
             '인원': p,
             '이른방 합계': total_stats['early'][p],
             '늦은방 합계': total_stats['late'][p],
-            '오전 당직 합계': total_stats['morning_duty'][p],
-            '오후 당직 합계': total_stats['afternoon_duty'][p],
+            '오전당직 누적': total_stats['morning_duty'][p],
+            '오후당직 누적': total_stats['afternoon_duty'][p],
         }
         # 시간대(방) 합계 추가 (당직 제외)
         for slot in total_stats['time_room_slots']:
@@ -331,7 +331,7 @@ def calculate_statistics(result_df: pd.DataFrame, df_special: pd.DataFrame) -> p
         stats_data.append(stats_entry)
     
     # 컬럼 정렬
-    sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전 당직 합계', '오후 당직 합계']
+    sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직 누적', '오후당직 누적']
     time_slots = sorted(
         [slot for slot in total_stats['time_room_slots'].keys() if not slot.endswith('_당직')],
         key=lambda x: (

@@ -13,7 +13,7 @@ from datetime import date
 
 # set_page_config는 가장 먼저 호출
 st.set_page_config(page_title="GC 내시경 마스터", page_icon="🏥", layout="wide")
-st.error("10/03 ~ 10/15 : 웹페이지 업데이트로 접속이 원할하지 않을 수 있습니다", icon="📢")
+st.error("웹페이지 업데이트로 접속이 원할하지 않을 수 있습니다", icon="📢")
 st.session_state.current_page = os.path.basename(__file__)
 menu.menu()
 
@@ -141,7 +141,7 @@ st.markdown(f"""
         <img src="{image_url}" width="130" alt="SNUH Logo">
         <div style="margin-left: 20px;">
             <h1 style="margin-bottom: 0;">🏥 강남센터 내시경실 시스템</h1>
-            <div style='font-size: 14px; color: grey;'>오류 문의: 헬스케어연구소 데이터 연구원 김희연 (hui135@snu.ac.kr)</div>
+            <div style='font-size: 14px; color: grey;'>오류 문의: 헬스케어연구소 데이터 연구원 김희연 (hui135@snu.ac.kr)<br>내시경실 메인: 02-2112-5651</div>
         </div>
     </div>
 """, unsafe_allow_html=True)

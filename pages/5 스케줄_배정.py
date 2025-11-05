@@ -22,8 +22,6 @@ import re
 
 st.set_page_config(page_title="스케줄 배정", page_icon="🗓️", layout="wide")
 
-st.error("test 시트로 저장되며 실제 스케줄로 저장되지 않습니다.")
-
 import os
 st.session_state.current_page = os.path.basename(__file__)
 
@@ -88,6 +86,16 @@ month_str = "2025년 10월"
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
 month_start = month_dt
 month_end = month_dt.replace(day=last_day)
+
+# ▼▼▼ [추가] month_str을 기준으로 지난달 생성 ▼▼▼
+# 1. month_str을 datetime 객체로 변환
+current_target_dt = datetime.strptime(month_str, "%Y년 %m월")
+
+# 2. 한 달을 빼서 '지난달' datetime 객체를 만듦
+prev_month_dt = current_target_dt - relativedelta(months=1)
+
+# 3. '지난달'을 month_str과 동일한 형식의 문자열로 만듦
+prev_month_str = prev_month_dt.strftime("%Y년 %-m월")
 
 # Google Sheets 클라이언트 초기화
 @st.cache_resource
@@ -171,33 +179,35 @@ def find_latest_schedule_version(sheet, month_str):
 
 def find_latest_cumulative_version(sheet, month_str):
     """
+    [★수정됨★]
     주어진 월에 해당하는 누적 시트 중 가장 최신 버전을 찾습니다.
-    '최종' 버전을 최우선으로 간주합니다.
+    '최종' 버전을 최우선으로 간주합니다. (공백 차이 무시)
     """
     versions = {}
-    final_version_name = f"{month_str} 누적 최종"
     
-    # 1. '최종' 시트가 있는지 먼저 확인 (가장 높은 우선순위)
+    # 1. '최종' 시트가 있는지 먼저 확인 (공백(s+)을 허용하는 정규식 사용)
+    # 예: "2025년 10월 누적 최종", "2025년 10월  누적  최종" 둘 다 찾음
+    final_pattern = re.compile(f"^{re.escape(month_str)}\s+누적\s+최종$")
+    final_version_name = None
+
     for ws in sheet.worksheets():
-        if ws.title == final_version_name:
-            return final_version_name # '최종' 버전을 찾으면 즉시 반환
+        if final_pattern.match(ws.title.strip()): # .strip() 추가로 앞뒤 공백 제거
+            final_version_name = ws.title # '최종' 버전을 찾으면 즉시 반환
+            return final_version_name 
     
     # 2. '최종'이 없으면 'ver X.X' 및 기본 버전('누적')을 찾음
-    # 'ver 1.0', 'ver1.0' 등 다양한 형식을 모두 찾도록 정규식 수정
     pattern = re.compile(f"^{re.escape(month_str)} 누적(?: ver\s*(\d+\.\d+))?$")
 
     for ws in sheet.worksheets():
         match = pattern.match(ws.title)
         if match:
             version_num_str = match.group(1) # ver 뒤의 숫자 부분 (예: '1.0')
-            # 버전 넘버가 있으면 float으로 변환, 없으면(기본 '누적' 시트) 1.0으로 처리
             version_num = float(version_num_str) if version_num_str else 1.0
             versions[ws.title] = version_num
 
     if not versions:
         return None # 어떠한 버전의 시트도 찾지 못하면 None 반환
 
-    # 'ver'가 붙은 시트 중 가장 높은 버전 번호를 가진 시트의 이름을 반환
     return max(versions, key=versions.get)
 
 @st.cache_data(ttl=600, show_spinner="최신 데이터를 구글 시트에서 불러오는 중...")
@@ -236,18 +246,31 @@ def load_data_page5():
     df_cumulative = pd.DataFrame()
     worksheet_to_load = None
 
+    # --- [핵심 수정] 누적 시트 로드 로직을 단순하고 명확하게 변경 ---
+    df_cumulative = pd.DataFrame()
+    worksheet_to_load = None
+
     # 1. month_str에 해당하는 가장 최신 버전('최종' 우선)의 누적 시트 이름을 찾습니다.
     latest_cum_version_name = find_latest_cumulative_version(sheet, month_str)
-    
+
     if latest_cum_version_name:
         try:
             worksheet_to_load = sheet.worksheet(latest_cum_version_name)
+            # ▼▼▼ [핵심 수정] 불러올 시트 이름을 세션에 저장합니다. ▼▼▼
+            st.session_state["target_cumulative_sheet_name"] = latest_cum_version_name
+            # ▲▲▲ [수정 완료] ▲▲▲
         except WorksheetNotFound:
             # 시트 이름은 찾았으나 gspread에서 못 여는 예외적인 경우
             st.warning(f"⚠️ '{latest_cum_version_name}' 시트를 찾았지만 열 수 없습니다. 빈 테이블로 시작합니다.")
+            # ▼▼▼ [핵심 수정] 이 경우 기본 시트 이름을 저장합니다. ▼▼▼
+            st.session_state["target_cumulative_sheet_name"] = f"{month_str} 누적"
+            # ▲▲▲ [수정 완료] ▲▲▲
     else:
         # month_str에 해당하는 누적 시트가 아예 없는 경우
         st.warning(f"⚠️ '{month_str} 누적' 시트를 찾을 수 없어, 빈 누적 테이블로 시작합니다.")
+        # ▼▼▼ [핵심 수정] 새로 생성할 기본 시트 이름을 세션에 저장합니다. ▼▼▼
+        st.session_state["target_cumulative_sheet_name"] = f"{month_str} 누적"
+        # ▲▲▲ [수정 완료] ▲▲▲
 
     # 2. 찾은 시트에서 데이터 로드
     if worksheet_to_load:
@@ -264,7 +287,7 @@ def load_data_page5():
         default_cols = ["항목"] + master_names_list
         default_data = [
             ["오전누적"] + [0] * len(master_names_list), ["오후누적"] + [0] * len(master_names_list),
-            ["오전당직 (목표)"] + [0] * len(master_names_list), ["오후당직 (목표)"] + [0] * len(master_names_list)
+            ["오전당직누적"] + [0] * len(master_names_list), ["오후당직누적"] + [0] * len(master_names_list)
         ]
         df_cumulative = pd.DataFrame(default_data, columns=default_cols)
 
@@ -388,10 +411,10 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             fill_color = None
             if label in ["오전누적", "오후누적"]: fill_color = fills['pink']
             elif label in ["오전합계", "오후합계"]: fill_color = fills['blue']
-            elif label == "오전당직 (목표)": fill_color = fills['green']
-            elif label == "오전당직 (배정)": fill_color = fills['dark_green']
-            elif label == "오후당직 (목표)": fill_color = fills['orange']
-            elif label == "오후당직 (배정)": fill_color = fills['lightgray']
+            elif label == "오전당직합계": fill_color = fills['green']
+            elif label == "오전당직누적": fill_color = fills['dark_green']
+            elif label == "오후당직합계": fill_color = fills['orange']
+            elif label == "오후당직누적": fill_color = fills['lightgray']
 
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]:
                 fill_color = fills['yellow']
@@ -415,8 +438,8 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
     block2_end = start_row + 1 + labels.index("오후누적")
     apply_outer_border(worksheet, block2_start, block2_end, start_col, end_col)
     
-    block3_start = start_row + 1 + labels.index("오전당직 (목표)")
-    block3_end = start_row + 1 + labels.index("오후당직 (배정)")
+    block3_start = start_row + 1 + labels.index("오전당직합계")
+    block3_end = start_row + 1 + labels.index("오후당직누적")
     apply_outer_border(worksheet, block3_start, block3_end, start_col, end_col)
 
     legend_start_row = worksheet.max_row + 3 
@@ -846,6 +869,7 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
 
     wb.save(output)
     return output.getvalue()
+
 def create_formatted_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_special, df_requests, closing_dates, month_str):
     """
     [관리자 확인용 구버전 - create_checking_schedule_excel 로 대체 가능]
@@ -1003,6 +1027,119 @@ def create_formatted_schedule_excel(initial_df, edited_df, edited_cumulative_df,
     wb.save(output)
     return output.getvalue()
 
+# [★ L800 부근의 이 함수 전체를 교체하세요 ★]
+
+def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial, all_names, df_schedule_mapping):
+    """
+    (신규 함수)
+    수정된 스케줄 data_editor 내용을 실시간으로 파싱하여,
+    '보충', '당직' 횟수를 재계산하고 누적 테이블 DataFrame을 반환합니다.
+    """
+    
+    # 1. 이름별로 (보충/휴근) 횟수, (당직) 횟수를 집계할 카운터 초기화
+    # (예: {'홍길동': 1, '이순신': -1})
+    am_bochong_counts = Counter()
+    pm_bochong_counts = Counter()
+    oncall_counts = Counter()
+
+    # 2. 스케줄 data_editor (edited_schedule_df)의 모든 셀을 순회
+    for idx, row in edited_schedule_df.iterrows():
+        
+        # 2-1. data_editor의 날짜(예: "10월 1일")를 ISO 날짜(예: "2025-10-01")로 변환
+        # date_display = row['날짜'] # "10월 1일"
+        try:
+            # ▼▼▼ [핵심 버그 수정] ▼▼▼
+            # .str.contains는 날짜 형식이 달라 항상 실패합니다.
+            # edited_schedule_df와 df_schedule_mapping은 동일한 정수 인덱스(idx)를 공유하므로,
+            # idx를 사용해 매핑 테이블에서 정확한 ISO 날짜를 직접 조회합니다.
+            date_iso = df_schedule_mapping.loc[idx, '날짜']
+            # ▲▲▲ [수정 완료] ▲▲▲
+
+        except Exception:
+            # 매핑 실패 시 (예: 토/휴일이 아닌, 인덱스가 맞지 않는 예외적 오류) 해당 행은 건너뜀
+            continue 
+
+        for col_name in edited_schedule_df.columns:
+            raw_value = str(row[col_name] or '').strip()
+            if not raw_value:
+                continue
+
+            # 2-2. 셀 텍스트에서 이름과 상태 파싱
+            worker_name = re.sub(r'\(.+\)', '', raw_value).strip()
+            status_match = re.search(r'\((.+)\)', raw_value)
+            status = status_match.group(1).strip() if status_match else '기본'
+            
+            # 2-3. 열 이름(col_name)에 따라 시간대 결정
+            time_slot = None
+            if col_name.isdigit(): time_slot = '오전'
+            elif col_name.startswith("오후"): time_slot = '오후'
+            elif col_name == '오전당직(온콜)': time_slot = '오전당직'
+            
+            if not time_slot or not worker_name:
+                continue
+
+            # 2-4. 카운터 집계
+            if time_slot == '오전당직':
+                oncall_counts[worker_name] += 1
+            
+            elif time_slot == '오전':
+                if status in ['보충', '대체보충']:
+                    am_bochong_counts[worker_name] += 1
+                elif status in ['휴근', '대체휴근']:
+                    am_bochong_counts[worker_name] -= 1
+            
+            elif time_slot == '오후':
+                if status in ['보충', '대체보충']:
+                    pm_bochong_counts[worker_name] += 1
+                elif status in ['휴근', '대체휴근']:
+                    pm_bochong_counts[worker_name] -= 1
+
+    # 3. GSheet에서 로드한 *원본* 누적 테이블을 기반으로 최종 테이블 재구성
+    recalculated_summary_df = df_cumulative_initial.copy()
+    if '항목' not in recalculated_summary_df.columns:
+        # (호환성) df_cumulative가 행/열 전환된 상태일 경우
+        try:
+            first_col = recalculated_summary_df.columns[0]
+            recalculated_summary_df = recalculated_summary_df.set_index(first_col).transpose().reset_index().rename(columns={'index':'항목'})
+        except Exception:
+            return df_cumulative_initial # 오류 시 원본 반환
+            
+    recalculated_summary_df = recalculated_summary_df.set_index('항목')
+
+    # 4. 모든 근무자 목록(all_names)을 순회하며 값 채우기
+    for name in all_names:
+        if name not in recalculated_summary_df.columns:
+            recalculated_summary_df[name] = 0 # 새 이름이 있으면 열 추가
+        
+        # 4-1. GSheet 원본 값 가져오기
+        base_am = int(recalculated_summary_df.loc['오전누적', name])
+        base_pm = int(recalculated_summary_df.loc['오후누적', name])
+        base_am_oncall = int(recalculated_summary_df.loc['오전당직누적', name])
+        base_pm_oncall = int(recalculated_summary_df.loc['오후당직누적', name])
+
+        # 4-2. 실시간 집계 값 가져오기
+        am_bochong = am_bochong_counts.get(name, 0)
+        pm_bochong = pm_bochong_counts.get(name, 0)
+        am_oncall_total = oncall_counts.get(name, 0)
+
+        # 4-3. 최종 값 계산 및 덮어쓰기
+        recalculated_summary_df.at["오전보충", name] = am_bochong
+        recalculated_summary_df.at["오전합계", name] = base_am  # '합계'는 원본 누적값을 의미
+        recalculated_summary_df.at["오전누적", name] = base_am + am_bochong
+
+        recalculated_summary_df.at["오후보충", name] = pm_bochong
+        recalculated_summary_df.at["오후합계", name] = base_pm
+        recalculated_summary_df.at["오후누적", name] = base_pm + pm_bochong
+
+        recalculated_summary_df.at["오전당직합계", name] = am_oncall_total
+        recalculated_summary_df.at["오전당직누적", name] = base_am_oncall + am_oncall_total
+        
+        recalculated_summary_df.at["오후당직합계", name] = 0 # 오후 당직은 이 시트에서 배정 안 함
+        recalculated_summary_df.at["오후당직누적", name] = base_pm_oncall
+
+    # '항목' 열을 다시 복원하여 반환
+    return recalculated_summary_df.reset_index()
+
 st.header("🗓️ 스케줄 배정", divider='rainbow')
 st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
 if st.button("🔄 새로고침 (R)"):
@@ -1101,22 +1238,19 @@ def display_pivoted_summary_table(df_summary):
         return
     st.dataframe(df_summary, use_container_width=True, hide_index=True)
 
-# 기존 build_summary_table 함수를 아래 코드로 전체 교체하세요.
-
 def build_summary_table(df_cumulative, all_names, next_month_str, df_final_unique=None):
     """
     [수정됨] 최종 요약 테이블을 생성합니다.
-    누적 값을 직접 계산하여 합계가 항상 일치하도록 보장합니다.
+    - 합계 = 이번 달 배정 횟수
+    - 누적 = (GSheet에서 읽은 누적 값) + (이번 달 배정 횟수)
     """
-    # ✅ 1. 행의 개수를 11개에서 12개로 수정합니다.
     summary_data = {name: [""] * 12 for name in all_names}
     df_summary = pd.DataFrame(summary_data)
 
-    # ✅ 2. row_labels 리스트의 마지막 항목을 "오후당직 (배정)"으로 올바르게 수정합니다.
     row_labels = [
         "오전보충", "임시보충", "오전합계", "오전누적",
         "오후보충", "온콜검사", "오후합계", "오후누적",
-        "오전당직 (목표)", "오전당직 (배정)", "오후당직 (목표)", "오후당직 (배정)"
+        "오전당직합계", "오전당직누적", "오후당직합계", "오후당직누적"
     ]
     df_summary.index = row_labels
 
@@ -1127,19 +1261,14 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
 
     for name in all_names:
         if name not in df_cum_indexed.columns:
-            # 누적 테이블에 없는 신규 인원이면 모든 값을 0으로 초기화
             df_cum_indexed[name] = 0
 
-        # --- 합계 및 변동 값 가져오기 ---
+        # --- 오전/오후 근무 (기존과 동일) ---
         am_hapgye = int(df_cum_indexed.loc['오전누적', name])
         pm_hapgye = int(df_cum_indexed.loc['오후누적', name])
         am_bochung = get_adjustment(name, '오전', df_final_unique)
         pm_bochung = get_adjustment(name, '오후', df_final_unique)
         
-        oncall_target = int(df_cum_indexed.loc['오전당직 (목표)', name])
-        pm_oncall_target = int(df_cum_indexed.loc['오후당직 (목표)', name])
-
-        # --- 테이블에 값 채우기 및 누적 값 직접 계산 ---
         df_summary.at["오전보충", name] = am_bochung
         df_summary.at["오전합계", name] = am_hapgye
         df_summary.at["오전누적", name] = am_hapgye + am_bochung
@@ -1147,22 +1276,35 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
         df_summary.at["오후보충", name] = pm_bochung
         df_summary.at["오후합계", name] = pm_hapgye
         df_summary.at["오후누적", name] = pm_hapgye + pm_bochung
+
+        # --- ▼▼▼ [로직 수정] 당직 파트 (요청하신 로직) ▼▼▼ ---
         
-        df_summary.at["오전당직 (목표)", name] = oncall_target
-        df_summary.at["오전당직 (배정)", name] = actual_oncall_counts.get(name, 0)
-        df_summary.at["오후당직 (목표)", name] = pm_oncall_target
+        # 1. '오전당직누적' (시작 값)을 GSheet에서 가져옴
+        oncall_start_total = int(df_cum_indexed.loc['오전당직누적', name]) 
+        # 2. '오후당직누적' (시작 값)을 GSheet에서 가져옴
+        pm_oncall_start_total = int(df_cum_indexed.loc['오후당직누적', name])
+        # 3. '이번 달 배정 횟수'를 가져옴
+        oncall_this_month = actual_oncall_counts.get(name, 0)
         
-        # ✅ 3. 오후당직 (배정) 값을 0으로 채우는 코드를 추가합니다.
-        df_summary.at["오후당직 (배정)", name] = 0
+        # 4. '오전당직합계' (이번 달 횟수) 행에 '이번 달 횟수'를 넣습니다.
+        df_summary.at["오전당직합계", name] = oncall_this_month
+        
+        # 5. '오전당직누적' (최종) 행에 '시작 값 + 이번 달 횟수'를 넣습니다.
+        df_summary.at["오전당직누적", name] = oncall_start_total + oncall_this_month
+        
+        # 6. 오후 당직 (이번 달 0회)
+        df_summary.at["오후당직합계", name] = 0
+        df_summary.at["오후당직누적", name] = pm_oncall_start_total # 시작 값 = 최종 값
+        
+        # ▲▲▲ [수정 완료] ▲▲▲
 
     df_summary.reset_index(inplace=True)
     df_summary.rename(columns={'index': '항목'}, inplace=True)
 
-    # --- ▼▼▼ 이 코드가 있는지 다시 확인! ▼▼▼ ---
+    # (유지) 모든 열을 숫자로 변환
     for col in df_summary.columns:
         if col != '항목':
             df_summary[col] = pd.to_numeric(df_summary[col], errors='coerce').fillna(0).astype(int)
-    # --- ▲▲▲ ---
 
     return df_summary
 
@@ -1190,9 +1332,9 @@ def build_final_summary_table(df_cumulative, df_final_unique, all_names):
             '오후누적 (시작)': b.get('오후누적', 0),
             '오후누적 (변동)': pm_change,
             '오후누적 (최종)': b.get('오후누적', 0) + pm_change,
-            '오전당직 (목표)': b.get('오전당직 (목표)', 0),
+            '오전당직합계': b.get('오전당직합계', 0),
             '오전당직 (최종)': oncall_counts.get(name, 0),
-            '오후당직 (목표)': b.get('오후당직 (목표)', 0),
+            '오후당직합계': b.get('오후당직합계', 0),
         })
         
     return pd.DataFrame(summary_data)
@@ -1244,8 +1386,9 @@ with st.expander("📁 테이블 펼쳐보기"):
     st.markdown("**☑️ 보충 테이블**")
     st.dataframe(df_supplement, use_container_width=True, hide_index=True)
 
-    st.markdown("**➕ 누적 테이블**")
-    st.write("- 변동이 있는 경우, 수정 가능합니다.")
+    st.markdown(f"**➕ 전월({prev_month_str}) 배정 완료된 누적 테이블**")
+    st.write("- 해당 수치를 반영하여 보충/휴근/오전당직 배정이 이뤄집니다.")
+    st.write("- 변동이 있는 경우, 직접 수치를 수정 가능합니다.\n- 해당 수치를 기반으로 스케줄 배정이 이뤄집니다.")
     df_cumulative_full = st.session_state["df_cumulative"]
 
     # --- ✅ 오류 해결 코드 시작 ---
@@ -1269,7 +1412,7 @@ with st.expander("📁 테이블 펼쳐보기"):
     # --- ✅ 오류 해결 코드 끝 ---
 
     # 1. 표시할 행 이름 정의 및 원본 데이터에서 필터링
-    rows_to_display = ["오전누적", "오후누적", "오전당직 (목표)", "오후당직 (목표)"]
+    rows_to_display = ["오전누적", "오후누적", "오전당직누적", "오후당직누적"]
     df_to_edit = df_cumulative_full[df_cumulative_full['항목'].isin(rows_to_display)]
 
     # 2. 필터링된 데이터를 data_editor에 표시 (display_cumulative_table 호출 제거)
@@ -1301,11 +1444,20 @@ with st.expander("📁 테이블 펼쳐보기"):
             
             gc = get_gspread_client()
             sheet = gc.open_by_url(url)
-            worksheet4 = sheet.worksheet(f"{month_str} 누적") # 주의: 이 로직은 최신 버전을 찾지 않음
+
+            # ▼▼▼ [핵심 수정] 고정된 이름 대신 세션에 저장된 시트 이름을 사용합니다. ▼▼▼
+            target_sheet_name = st.session_state.get("target_cumulative_sheet_name", f"{month_str} 누적")
+            try:
+                worksheet4 = sheet.worksheet(target_sheet_name)
+            except WorksheetNotFound:
+                st.info(f"'{target_sheet_name}' 시트가 없어 새로 생성합니다.")
+                worksheet4 = sheet.add_worksheet(title=target_sheet_name, rows=100, cols=len(df_updated_full.columns) + 5)
+            # ▲▲▲ [수정 완료] ▲▲▲
+            
             update_data = [df_updated_full.columns.tolist()] + df_updated_full.values.tolist()
             
             if update_sheet_with_retry(worksheet4, update_data):
-                st.success(f"{month_str} 누적 테이블이 성공적으로 저장되었습니다.")
+                st.success(f"'{target_sheet_name}' 테이블이 성공적으로 저장되었습니다.")
                 time.sleep(1.5)
                 st.rerun()
             else:
@@ -1614,16 +1766,18 @@ def update_worker_status(df, date_str, time_slot, worker, status, memo, color, d
     return df
 
 # 아래 코드로 함수 전체를 교체하세요.
-def sync_am_to_pm_exclusions(df_final, active_weekdays, day_map, week_numbers, initial_master_assignments, current_cumulative): # <-- [수정] current_cumulative 인수 추가
+def sync_am_to_pm_exclusions(df_final, active_weekdays, day_map, week_numbers, initial_master_assignments, current_cumulative, weekly_counts):
     """
-    [v13 수정]
+    [v14 수정]
     오전 근무에서 제외된 근무자를 오후 근무에서도 제외 처리하여 동기화합니다.
-    - df_final 과 current_cumulative 딕셔너리를 모두 업데이트합니다.
+    - df_final, current_cumulative, weekly_counts 딕셔너리를 모두 업데이트합니다.
     """
     changed = False
     for date in active_weekdays:
         date_str = date.strftime('%Y-%m-%d')
-        # 오전 근무에서 제외된 근무자 찾기
+        date_obj = date.date() # 날짜 객체
+        current_week = week_numbers.get(date_obj) # 현재 주차
+        
         excluded_am_workers = df_final[
             (df_final['날짜'] == date_str) &
             (df_final['시간대'] == '오전') &
@@ -1631,47 +1785,48 @@ def sync_am_to_pm_exclusions(df_final, active_weekdays, day_map, week_numbers, i
         ]['근무자'].unique()
 
         for worker in excluded_am_workers:
-            # 해당 날짜, 오후 시간대에 해당 근무자의 기록이 있는지 확인
             pm_record = df_final[
                 (df_final['날짜'] == date_str) &
                 (df_final['시간대'] == '오후') &
                 (df_final['근무자'] == worker)
             ]
 
-            # [수정] 로직 시작
             # CASE 1: 기록이 이미 있는 경우
             if not pm_record.empty:
-                # 상태가 '근무', '대체보충', '보충'인 경우에만 '휴근'로 변경
                 if pm_record.iloc[0]['상태'] in ['근무', '대체보충', '보충']:
                     df_final = update_worker_status(
                         df_final, date_str, '오후', worker,
                         '휴근', '오전 제외로 인한 오후 제외',
                         '🟣 보라색', day_map, week_numbers
                     )
-                    # --- ▼▼▼ [핵심 수정] ▼▼▼ ---
-                    # '보충'/'대체보충'/'근무' 였던 것을 -> '휴근'으로 바꾸므로 -1
                     current_cumulative['오후'][worker] = current_cumulative['오후'].get(worker, 0) - 1
-                    # --- ▲▲▲ [핵심 수정] ▲▲▲ ---
+                    
+                    # ▼▼▼ [핵심 수정] weekly_counts 실시간 업데이트 ▼▼▼
+                    if current_week:
+                        weekly_counts[worker]['오후'][current_week] = weekly_counts[worker]['오후'].get(current_week, 0) - 1
+                    # ▲▲▲ [수정 완료] ▲▲▲
+                    
                     changed = True
             # CASE 2: 기록이 없는 경우
             else:
-                # 마스터 스케줄에 오후 근무자로 지정되었는지 확인
                 pm_master_workers = initial_master_assignments.get((date_str, '오후'), set())
                 if worker in pm_master_workers:
-                    # 마스터에는 있었으므로 '휴근' 상태로 새로 추가
                     df_final = update_worker_status(
                         df_final, date_str, '오후', worker,
                         '휴근', '오전 제외로 인한 오후 제외',
                         '🟣 보라색', day_map, week_numbers
                     )
-                    # --- ▼▼▼ [핵심 수정] ▼▼V ---
-                    # '없음'(0)이었던 것을 -> '휴근'(-1)으로 새로 추가하므로 -1
                     current_cumulative['오후'][worker] = current_cumulative['오후'].get(worker, 0) - 1
-                    # --- ▲▲▲ [핵심 수정] ▲▲▲ ---
+                    
+                    # ▼▼▼ [핵심 수정] weekly_counts 실시간 업데이트 ▼▼▼
+                    if current_week:
+                         weekly_counts[worker]['오후'][current_week] = weekly_counts[worker]['오후'].get(current_week, 0) - 1
+                    # ▲▲▲ [수정 완료] ▲▲▲
+                    
                     changed = True
-            # [수정] 로직 끝
 
-    return df_final, changed, current_cumulative # <-- [수정] current_cumulative 반환
+    # [수정] weekly_counts 반환
+    return df_final, changed, current_cumulative, weekly_counts
 
 def is_worker_already_excluded_with_memo(df_data, date_s, time_s, worker_s):
     worker_records = df_data[
@@ -1971,7 +2126,7 @@ def find_afternoon_swap_possibility(worker_to_check, original_date_str, df_final
 
 # 기존 execute_adjustment_pass 함수의 내용을 아래 코드로 전체 교체하세요.
 
-def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names):
+def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, initial_master_assignments, df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names, weekly_counts):
     from collections import defaultdict
 
     active_weekdays = [pd.to_datetime(date) if isinstance(date, str) else date for date in active_weekdays]
@@ -1983,6 +2138,8 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
     # 추가 제외 / 보충 로직
     for date in active_weekdays:
         date_str = date.strftime('%Y-%m-%d')
+        date_obj = date.date() # 날짜 객체
+        current_week = week_numbers.get(date_obj)
         
         # --- ▼▼▼ [핵심 수정 1] '꼭 근무' 포함 ▼▼▼ ---
         current_workers_df = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]
@@ -2006,10 +2163,14 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
             difficult_supp = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'보충 어려움({time_slot})'}
             candidates = [w for w in candidates if w not in unavailable and w not in no_supp]
             
-            if time_slot == '오후':
-                # --- ▼▼▼ [핵심 수정 2] '꼭 근무' 포함 ▼▼▼ ---
-                am_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]['근무자'])
-                candidates = [w for w in candidates if w in am_workers]
+            if time_slot == '오후' and current_week:
+                candidates_filtered = []
+                for w in candidates:
+                    # 현재 주차의 오후 근무 횟수 확인
+                    pm_shifts_this_week = weekly_counts.get(w, {}).get('오후', {}).get(current_week, 0)
+                    if pm_shifts_this_week < 2:
+                        candidates_filtered.append(w)
+                candidates = candidates_filtered
             
             if not candidates: continue
 
@@ -2018,7 +2179,13 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
             for worker_to_add in candidates[:needed]:
                 df_final = update_worker_status(df_final, date_str, time_slot, worker_to_add, '보충', '인원 부족 (균형 조정)', '🟡 노란색', day_map, week_numbers)
                 current_cumulative[time_slot][worker_to_add] = current_cumulative[time_slot].get(worker_to_add, 0) + 1
-                scores[worker_to_add] = scores.get(worker_to_add, 0) + 1 # scores 실시간 업데이트
+                
+                # ▼▼▼ [수정 3] weekly_counts 실시간 업데이트 ▼▼▼
+                if current_week:
+                    weekly_counts[worker_to_add][time_slot][current_week] = weekly_counts[worker_to_add][time_slot].get(current_week, 0) + 1
+                # ▲▲▲ [수정 3] ▲▲▲
+                
+                scores[worker_to_add] = scores.get(worker_to_add, 0) + 1
 
         # [인원 초과 시 제외]
         elif count_diff > 0:
@@ -2056,9 +2223,13 @@ def execute_adjustment_pass(df_final, active_weekdays, time_slot, target_count, 
                 df_final = update_worker_status(df_final, date_str, time_slot, worker_to_remove, '휴근', '인원 초과 (실시간 균형 조정)', '🟣 보라색', day_map, week_numbers)
 
                 current_cumulative[time_slot][worker_to_remove] = current_cumulative[time_slot].get(worker_to_remove, 0) - 1
+                
+                if current_week:
+                     weekly_counts[worker_to_remove][time_slot][current_week] = weekly_counts[worker_to_remove][time_slot].get(current_week, 0) - 1
+
                 scores[worker_to_remove] = scores.get(worker_to_remove, 0) - 1
 
-    return df_final, current_cumulative
+    return df_final, current_cumulative, weekly_counts
 
 from collections import defaultdict
 
@@ -2079,9 +2250,10 @@ def calculate_weekly_counts(df_final, all_names, week_numbers):
 
 def balance_weekly_and_cumulative(
     df_final, 
-    active_weekdays_am_sorted, active_weekdays_pm_sorted, # <-- [수정됨]
+    active_weekdays_am_sorted, active_weekdays_pm_sorted,
     initial_master_assignments, df_supplement_processed, 
-    df_request, day_map, week_numbers, current_cumulative, all_names, df_cumulative
+    df_request, day_map, week_numbers, current_cumulative, all_names, df_cumulative,
+    weekly_counts 
 ):
     df_cum_indexed = df_cumulative.set_index('항목').T
     
@@ -2092,6 +2264,9 @@ def balance_weekly_and_cumulative(
         # --- ▲▲▲ [핵심 수정] ▲▲▲ ---
 
         for i in range(50):
+            # [수정] 함수 시작 시 weekly_counts를 계산하는 라인 '삭제'
+            # (최신 weekly_counts를 인자로 받음)
+
             scores = {w: (df_cum_indexed.loc[w, f'{time_slot}누적'] + current_cumulative[time_slot].get(w, 0)) for w in all_names if w in df_cum_indexed.index}
             if not scores: break
             
@@ -2102,8 +2277,10 @@ def balance_weekly_and_cumulative(
             
             swap_found_in_iteration = False
             
-            for date in active_weekdays:
+            for date in active_weekdays: # [수정] active_weekdays_to_use -> active_weekdays
                 date_str = date.strftime('%Y-%m-%d')
+                date_obj = date.date() # 날짜 객체
+                current_week = week_numbers.get(date_obj) # 현재 주차
                 
                 must_work = {r['이름'] for _, r in df_request.iterrows() if date_str in parse_date_range(str(r.get('날짜정보'))) and r.get('분류') == f'꼭 근무({time_slot})'}
                 if w_h in must_work: continue
@@ -2121,33 +2298,42 @@ def balance_weekly_and_cumulative(
                 if w_l in no_supp: continue
 
                 if time_slot == '오후':
-                    # --- ▼▼▼ [핵심 수정] '꼭 근무' 포함하여 확인 ▼▼▼ ---
-                    am_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]['근무자']) # <-- '꼭 근무' 추가
-                    # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+                    am_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]['근무자'])
                     if w_l not in am_workers: continue
-                
+
+                    # ▼▼▼ [핵심 수정] w_l (받는 사람)의 주간 2회 초과 금지 ▼▼▼
+                    if current_week:
+                        pm_shifts_this_week_for_wl = weekly_counts.get(w_l, {}).get('오후', {}).get(current_week, 0)
+                        if pm_shifts_this_week_for_wl >= 2:
+                            continue
+                            
                 is_master = w_l in initial_master_assignments.get((date_str, time_slot), set())
                 status, color, memo = ('근무', '기본', '마스터 복귀') if is_master else ('보충', '🟡 노란색', '최종 균형 조정')
                 
+                # [수정] w_h (주는 사람) 업데이트
                 df_final = update_worker_status(df_final, date_str, time_slot, w_h, '휴근', '최종 균형 조정', '🟣 보라색', day_map, week_numbers)
                 current_cumulative[time_slot][w_h] = current_cumulative[time_slot].get(w_h, 0) - 1
+                if current_week:
+                    weekly_counts[w_h][time_slot][current_week] = weekly_counts[w_h][time_slot].get(current_week, 0) - 1
+                
+                # [수정] w_l (받는 사람) 업데이트
                 df_final = update_worker_status(df_final, date_str, time_slot, w_l, status, memo, color, day_map, week_numbers)
                 current_cumulative[time_slot][w_l] = current_cumulative[time_slot].get(w_l, 0) + 1
-                
+                if current_week:
+                    weekly_counts[w_l][time_slot][current_week] = weekly_counts[w_l][time_slot].get(current_week, 0) + 1
+
                 swap_found_in_iteration = True
                 break
 
             if swap_found_in_iteration:
                 continue
-            
             else:
-                max_workers = ", ".join([worker for worker, score in scores.items() if score == max_s])
-                min_workers = ", ".join([worker for worker, score in scores.items() if score == min_s])
                 break
         
         else:
             st.warning(f"⚠️ {time_slot} 균형 조정이 최대 반복 횟수({i+1}회)에 도달했습니다.")
-
+    
+    # [수정] weekly_counts는 상위에서 관리하므로 반환값에서 제거
     return df_final, current_cumulative
 
 import pandas as pd # <-- 함수 상단에 추가 (혹시 없다면)
@@ -2159,7 +2345,8 @@ def balance_final_cumulative_with_weekly_check(
     active_weekdays_am_sorted, active_weekdays_pm_sorted,
     df_supplement_processed, df_request, day_map, week_numbers,
     current_cumulative, all_names, df_cumulative, initial_master_assignments,
-    df_master # <-- 인자 확인
+    df_master,
+    weekly_counts 
 ):
     """
     [진짜 최종 수정본 v12]
@@ -2258,6 +2445,8 @@ def balance_final_cumulative_with_weekly_check(
             swap_found_this_pair = False
             for date in active_weekdays_to_use:
                 date_str = date.strftime('%Y-%m-%d')
+                date_obj = date.date() # 날짜 객체
+                current_week = week_numbers.get(date_obj) # 현재 주차
 
                 # (조건 1) w_h가 이 날 근무 중인가?
                 is_working_df = df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == time_slot) & (df_final['근무자'] == w_h) & (df_final['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]
@@ -2283,19 +2472,31 @@ def balance_final_cumulative_with_weekly_check(
                     am_workers = set(df_final[(df_final['날짜'] == date_str) & (df_final['시간대'] == '오전') & (df_final['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]['근무자'])
                     if w_l not in am_workers: continue
 
+                    # ▼▼▼ [핵심 수정] w_l (받는 사람)의 주간 2회 초과 금지 ▼▼▼
+                    if current_week:
+                        pm_shifts_this_week_for_wl = weekly_counts.get(w_l, {}).get('오후', {}).get(current_week, 0)
+                        if pm_shifts_this_week_for_wl >= 2:
+                            continue
+                    
                 # 11. 교체 실행!
-                # st.warning(f"🔄 [{i+1}차/{time_slot}] 최종 균형 조정: {date.strftime('%-m/%d')} {w_h}({s_h:.0f}회) ➔ {w_l}({s_l:.0f}회)")
+                # [수정] w_h (주는 사람) 업데이트
                 df_final = update_worker_status(df_final, date_str, time_slot, w_h, '휴근', '최종 누적 균형 조정', '🟣 보라색', day_map, week_numbers)
                 current_cumulative[time_slot][w_h] = current_cumulative[time_slot].get(w_h, 0) - 1
-                # 마스터 여부 확인 후 '근무'/'보충' 결정
+                if current_week:
+                    weekly_counts[w_h][time_slot][current_week] = weekly_counts[w_h][time_slot].get(current_week, 0) - 1
+
+                # [수정] w_l (받는 사람) 업데이트
                 master_workers_on_date = initial_master_assignments.get((date_str, time_slot), set())
                 status_for_wl = '근무' if w_l in master_workers_on_date else '보충'
                 color_for_wl = '기본' if status_for_wl == '근무' else '🟡 노란색'
                 memo_for_wl = '마스터 복귀 (균형 조정)' if status_for_wl == '근무' else '최종 누적 균형 조정'
                 df_final = update_worker_status(df_final, date_str, time_slot, w_l, status_for_wl, memo_for_wl, color_for_wl, day_map, week_numbers)
                 current_cumulative[time_slot][w_l] = current_cumulative[time_slot].get(w_l, 0) + 1
+                if current_week:
+                    weekly_counts[w_l][time_slot][current_week] = weekly_counts[w_l][time_slot].get(current_week, 0) + 1
+
                 swap_found_this_pair = True
-                break # '날짜' 루프 탈출 (교체 성공!)
+                break
 
             # 12. 교체 대상을 못 찾았다면, 최종 중단
             if not swap_found_this_pair:
@@ -2449,6 +2650,7 @@ if st.session_state.get('assigned', False):
             # --- ▲▲▲ [핵심 수정 완료] ▲▲▲ ---
 
             current_cumulative = {'오전': {}, '오후': {}}
+            weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
 
             time_slot_am = '오전'
             target_count_am = 12
@@ -2482,18 +2684,23 @@ if st.session_state.get('assigned', False):
                     st.session_state.request_logs.append(f"• {log_date} {vac} - {reason}로 인한 제외")
                     df_final = update_worker_status(df_final, date_str, time_slot_am, vac, reason, f'{reason}로 인한 제외', '🔴 빨간색', day_map, week_numbers)
 
+            weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
             # 오전 배정 후 동기화
-            df_final, changed, current_cumulative = sync_am_to_pm_exclusions(df_final, active_weekdays_am_sorted, day_map, week_numbers, initial_master_assignments, current_cumulative) # <-- [유지] 오전 정렬 리스트 사용
+            # [수정] weekly_counts 전달 및 반환
+            df_final, changed, current_cumulative, weekly_counts = sync_am_to_pm_exclusions(df_final, active_weekdays_am_sorted, day_map, week_numbers, initial_master_assignments, current_cumulative, weekly_counts) 
             
             # 오전 균형 맞추기 (execute_adjustment_pass)
             df_before_pass = df_final.copy()
-            df_final, current_cumulative = execute_adjustment_pass(
-                df_final, active_weekdays_am_sorted, time_slot_am, target_count_am, initial_master_assignments,  # <-- [유지] 오전 정렬 리스트 사용
-                df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names
+            # [수정] weekly_counts 전달 및 반환
+            df_final, current_cumulative, weekly_counts = execute_adjustment_pass(
+                df_final, active_weekdays_am_sorted, time_slot_am, target_count_am, initial_master_assignments,
+                df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names,
+                weekly_counts 
             )
+            
             # 오전 조정 후 동기화
-            # [수정] current_cumulative를 전달하고 반환받도록 변경
-            df_final, changed, current_cumulative = sync_am_to_pm_exclusions(df_final, active_weekdays_am_sorted, day_map, week_numbers, initial_master_assignments, current_cumulative) 
+            # [수정] weekly_counts 전달 및 반환
+            df_final, changed, current_cumulative, weekly_counts = sync_am_to_pm_exclusions(df_final, active_weekdays_am_sorted, day_map, week_numbers, initial_master_assignments, current_cumulative, weekly_counts) 
 
             time_slot_pm = '오후'
             target_count_pm = 4
@@ -2530,22 +2737,37 @@ if st.session_state.get('assigned', False):
                     
                     df_final = update_worker_status(df_final, date_str, time_slot_pm, vac, reason, f'{reason}로 제외', '🔴 빨간색', day_map, week_numbers)
 
+            # ▼▼▼ [핵심 수정] 오후 초기 배정 후, 주간 횟수를 즉시 재계산 ▼▼▼
+            # (이 코드가 없으면, execute_adjustment_pass가 마스터 횟수를 0으로 착각함)
+            weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
+            # ▲▲▲ [수정 완료] ▲▲▲
+
             # 오후 배정 후 동기화
-            df_final, changed, current_cumulative = sync_am_to_pm_exclusions(df_final, active_weekdays_pm_sorted, day_map, week_numbers, initial_master_assignments, current_cumulative)
+            # [수정] weekly_counts 전달 및 반환
+            df_final, changed, current_cumulative, weekly_counts = sync_am_to_pm_exclusions(df_final, active_weekdays_pm_sorted, day_map, week_numbers, initial_master_assignments, current_cumulative, weekly_counts)
             
             # 오후 조정 패스
-            df_final, current_cumulative = execute_adjustment_pass(
-                df_final, active_weekdays_pm_sorted, time_slot_pm, target_count_pm, initial_master_assignments, # <-- [유지] 오후 정렬 리스트 사용
-                df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names
+            # [수정] weekly_counts 전달 및 반환
+            df_final, current_cumulative, weekly_counts = execute_adjustment_pass(
+                df_final, active_weekdays_pm_sorted, time_slot_pm, target_count_pm, initial_master_assignments,
+                df_supplement_processed, df_request, day_map, week_numbers, current_cumulative, df_cumulative, all_names,
+                weekly_counts 
             )
+
+            # [수정] 최종 균형 맞추기 전, weekly_counts를 한 번 더 최신화
+            weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
 
             df_final, current_cumulative = balance_weekly_and_cumulative(
                 df_final, 
-                active_weekdays_am_sorted, active_weekdays_pm_sorted, # <-- [수정됨]
+                active_weekdays_am_sorted, active_weekdays_pm_sorted, 
                 initial_master_assignments, df_supplement_processed,
                 df_request, day_map, week_numbers, current_cumulative, all_names,
-                df_cumulative
+                df_cumulative,
+                weekly_counts # [수정] weekly_counts 전달
             )
+
+            # [수정] 진짜 최종 균형 맞추기 전, weekly_counts를 한 번 더 최신화
+            weekly_counts = calculate_weekly_counts(df_final, all_names, week_numbers)
 
             df_final, current_cumulative = balance_final_cumulative_with_weekly_check(
                 df_final,
@@ -2553,7 +2775,8 @@ if st.session_state.get('assigned', False):
                 df_supplement_processed, df_request,
                 day_map, week_numbers, current_cumulative, all_names, df_cumulative,
                 initial_master_assignments,
-                df_master # <-- 이 인수를 추가해주세요!
+                df_master,
+                weekly_counts # [수정] weekly_counts 전달
             )
 
             df_final = replace_adjustments(df_final)
@@ -2699,45 +2922,62 @@ if st.session_state.get('assigned', False):
             # --- ▼▼▼ [핵심 수정 1] 'oncall_targets'가 0회 목표자도 포함하도록 수정 ▼▼▼ ---
             all_workers_in_cum = [col for col in df_cumulative.columns if col != '항목']
             oncall_targets = {}
-            if '오전당직 (목표)' in df_cum_indexed.index:
+            oncall_live_counts = {}
+            if '오전당직누적' in df_cum_indexed.index: # "합계" -> "누적"
                 for w in all_workers_in_cum:
-                    # .get(w)를 사용해 누락된 사람도 0으로 처리
-                    target_val = df_cum_indexed.loc['오전당직 (목표)'].get(w)
-                    oncall_targets[w] = int(target_val) if pd.notna(target_val) else 0
-            else:
-                # '오전당직 (목표)' 행 자체가 없는 경우
+                    target_val = df_cum_indexed.loc['오전당직누적'].get(w) # "합계" -> "누적"            else:
+                # '오전당직합계' 행 자체가 없는 경우
                 oncall_targets = {w: 0 for w in all_workers_in_cum}
             # --- ▲▲▲ [수정 완료] ▲▲▲ ---
 
-            assignable_dates = sorted([d for d in df_final_unique['날짜'].unique() if d not in {s[0] for s in special_schedules}])
-            oncall = {}
+            ### 시작: 오전당직 배정 로직 ###
             
-            actual_oncall_counts = Counter()
-
-            # --- 1단계: (준비) 날짜별 후보자 목록 생성 (기존 수정사항 유지) ---
+            # 1. (유지) 배정 가능한 날짜 목록을 시간순으로 정렬
+            assignable_dates = sorted([d for d in df_final_unique['날짜'].unique() if d not in {s[0] for s in special_schedules}])
+            
+            # 2. [신규] 날짜별 후보자 목록 및 '총 당직 가능 횟수' 집계
             daily_candidates = {}
+            total_eligibility_counts = Counter() # <--- [신규] 총 가능 횟수
+            
             for date in assignable_dates:
-                # '꼭 근무' 상태 포함
                 morning_workers = set(df_final_unique[(df_final_unique['날짜'] == date) & (df_final_unique['시간대'] == '오전') & (df_final_unique['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]['근무자'])
                 afternoon_workers = set(df_final_unique[(df_final_unique['날짜'] == date) & (df_final_unique['시간대'] == '오후') & (df_final_unique['상태'].isin(['근무', '대체보충', '보충', '꼭 근무']))]['근무자'])
+                
                 candidates = list(morning_workers - afternoon_workers)
                 daily_candidates[date] = candidates
+                
+                # [신규] 총 당직 가능 횟수 집계
+                for worker in candidates:
+                    total_eligibility_counts[worker] += 1
 
-            # --- ▼▼▼ [핵심 수정 2] "날짜 우선" 균등 분배 + "목표 0회" 제외 ▼▼▼ ---
+            # 3. [수정] 실시간 누적 횟수(oncall_live_counts)를 '전월' 누적치로 초기화
+            df_cum_indexed = df_cumulative.set_index('항목')
+            all_workers_in_cum = [col for col in df_cumulative.columns if col != '항목']
             
-            shuffled_dates = assignable_dates.copy()
-            random.shuffle(shuffled_dates)
-            
-            assigned_workers_by_date = {} 
+            oncall_live_counts = {}
+            if '오전당직누적' in df_cum_indexed.index:
+                for w in all_workers_in_cum:
+                    target_val = df_cum_indexed.loc['오전당직누적'].get(w)
+                    
+                    # ▼▼▼ [핵심 버그 수정] 누락된 할당 코드 추가 ▼▼▼
+                    oncall_live_counts[w] = int(target_val) if pd.notna(target_val) else 0
+                    # ▲▲▲ [수정 완료] ▲▲▲
+            else:
+                oncall_live_counts = {w: 0 for w in all_workers_in_cum}
 
-            for date in shuffled_dates:
-                date_str = date 
+            oncall = {} # 최종 배정 결과 (날짜 -> 근무자)
+            actual_oncall_counts_this_month = Counter() # 이번 달 배정 횟수 (로그용)
+            assigned_workers_by_date = {} # 연속 근무 체크용
+
+            # 4. (유지) 날짜를 순차적으로(sequentially) 반복
+            for date in assignable_dates: 
+                date_str = date
                 candidates_on_date = daily_candidates.get(date, [])
                 
                 if not candidates_on_date:
-                    continue
+                    continue 
 
-                # 1. 연속 근무자 제외
+                # 5. (유지) 연속 근무자 제외 로직
                 date_index = assignable_dates.index(date)
                 previous_oncall_person = None
                 if date_index > 0:
@@ -2745,72 +2985,56 @@ if st.session_state.get('assigned', False):
                     previous_oncall_person = assigned_workers_by_date.get(previous_date)
 
                 if previous_oncall_person and len(candidates_on_date) > 1:
-                    eligible_candidates_step1 = [p for p in candidates_on_date if p != previous_oncall_person]
-                    if not eligible_candidates_step1:
-                        eligible_candidates_step1 = candidates_on_date
+                    eligible_candidates = [p for p in candidates_on_date if p != previous_oncall_person]
+                    if not eligible_candidates: 
+                        eligible_candidates = candidates_on_date
                 else:
-                    eligible_candidates_step1 = candidates_on_date
+                    eligible_candidates = candidates_on_date
                 
-                # --- ▼▼▼ [핵심 수정 3] 목표치 0인 사람 제외 ▼▼▼ ---
-                # 2. 목표치가 0이 아닌 사람(>0)만 최종 후보로 필터링
-                final_candidates_list = [p for p in eligible_candidates_step1 if oncall_targets.get(p, 0) > 0]
-                
-                # 3. 배정할 후보가 없으면 건너뜀
-                if not final_candidates_list:
-                    # (예: 후보가 김상균, 김지윤뿐인 경우, 둘 다 0회 목표라 배정 안 함)
-                    if eligible_candidates_step1: # 0회 목표 후보라도 있었다면 로그
-                        st.warning(f"⚠️ {date_str} 오전당직: 배정 가능한 후보자(목표>0)가 없습니다. (후보: {', '.join(eligible_candidates_step1)})")
-                    continue # 배정하지 않고 다음 날짜로 넘어감
-                # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+                if not eligible_candidates:
+                    continue 
 
-                # 4. 후보자 정렬 (균등 분배 핵심)
+                # 6. [핵심 수정] 후보자 정렬: '비율'이 아닌 '절대 횟수'가 가장 낮은 사람 우선
                 def sort_key(worker):
-                    target = oncall_targets.get(worker, 0) # 어차피 0보다 큼
-                    actual = actual_oncall_counts.get(worker, 0)
+                    # 1순위: 현재 누적 횟수 (전월 + 이번 달)
+                    current_count = oncall_live_counts.get(worker, 0)
                     
-                    # 1순위: (낮을수록 좋음) 목표 미달성 그룹 (0), 목표 달성 그룹 (1)
-                    is_below_target = 0 if actual < target else 1
-                    # 2순위: (낮을수록 좋음) 현재 배정 횟수
-                    current_count = actual
-                    # 3순위: (높을수록 좋음) 목표 횟수 (목표 많은 사람 우선 배정)
-                    target_priority = -target 
+                    # 2순위: (동점일 경우) 당직 가능 총 횟수가 적은 사람 (기회가 적은 사람)
+                    total_eligible = total_eligibility_counts.get(worker, 1) 
                     
-                    return (is_below_target, current_count, target_priority, worker)
+                    # (비율 로직 'ratio = current_count / total_eligible' 삭제)
+                    
+                    # 1순위: 'current_count'가 낮은 사람
+                    # 2순위: 'total_eligible'이 낮은 사람
+                    return (current_count, total_eligible)
 
-                final_candidates_list.sort(key=sort_key)
+                eligible_candidates.sort(key=sort_key)
                 
-                # 5. 최고 우선순위 후보자 배정
-                best_worker = final_candidates_list[0]
+                # 7. (유지) 최고 우선순위 후보자(0번 인덱스) 배정
+                best_worker = eligible_candidates[0]
                 oncall[date] = best_worker
-                actual_oncall_counts[best_worker] += 1
+                
+                # 8. (유지) 실시간 누적 횟수 업데이트
+                oncall_live_counts[best_worker] = oncall_live_counts.get(best_worker, 0) + 1
+                
+                # 9. (유지) 로그 및 연속체크용 변수 업데이트
+                actual_oncall_counts_this_month[best_worker] += 1
                 assigned_workers_by_date[date] = best_worker
 
-            # --- ▲▲▲ [수정 완료] ▲▲▲ ---
-
-            # --- [수정] 최종 배정 결과 로그 생성 (L1267) ---
-            st.session_state.oncall_logs = [] 
-            
-            # [수정] oncall_targets 딕셔너리 사용 (0회 목표자 포함)
-            all_relevant_workers = sorted(list(set(oncall_targets.keys()) | set(actual_oncall_counts.keys())))
-
-            for worker in all_relevant_workers:
-                required_count = oncall_targets.get(worker, 0)
-                actual_count = actual_oncall_counts.get(worker, 0) 
-
-                if required_count != actual_count:
-                    if actual_count > required_count:
-                        comparison_text = f"많은 {actual_count}회 배정"
-                    else:
-                        comparison_text = f"적은 {actual_count}회 배정"
-
-                    log_message = f"• {worker}: 오전당직 목표치 '{required_count}회'보다 {comparison_text}"
-                    st.session_state.oncall_logs.append(log_message)
             # --- 배정 종료 ---
 
-            # 엑셀 시트에 배정 결과 업데이트
+            # --- (유지) 최종 배정 결과 로그 생성 ---
+            st.session_state.oncall_logs = [] 
+            for worker, count in sorted(actual_oncall_counts_this_month.items()):
+                if count > 0:
+                    log_message = f"• {worker}: {count}회 배정"
+                    st.session_state.oncall_logs.append(log_message)
+
+            # (유지) 엑셀 시트에 배정 결과 업데이트
             for idx, row in df_schedule.iterrows():
                 date = row['날짜']
                 df_excel.at[idx, '오전당직(온콜)'] = oncall.get(date, '')
+            
             ### 끝: 오전당직 배정 로직 ###
 
             # ✨ [핵심 수정 1] 배정된 oncall 결과를 df_final에 '오전당직' 시간대로 추가
@@ -3061,6 +3285,7 @@ if st.session_state.get('assigned', False):
                     "df_requests": df_request,
                     "closing_dates": holiday_dates,
                     "month_str": month_str,
+                    "all_names": all_names, # <-- [★이 줄을 추가하세요★]
                     # --- 로그 데이터 ---
                     "request_logs": st.session_state.request_logs,
                     "swap_logs": st.session_state.swap_logs,
@@ -3153,32 +3378,136 @@ if st.session_state.get('assigned', False):
                 st.warning("⚠️ 배정 스케줄 테이블 데이터를 불러올 수 없습니다.")
                 edited_schedule_df = pd.DataFrame() # 오류 방지용 빈 DataFrame
 
+            # --- ▼▼▼ [신규] 스케줄 수정사항 로그 로직 ▼▼▼ ---
+            st.markdown("📝 **스케줄 수정사항**")
+            schedule_change_log = []
+
+            # [수정] 'results.get("df_excel_initial")' (괄호 없는 원본) 대신,
+            # 에디터에 '입력(input)'으로 사용된 'df_to_edit_schedule' (괄호가 이미 추가된)을 
+            # 비교할 원본으로 사용합니다.
+            original_schedule_df = df_to_edit_schedule 
+
+            if original_schedule_df is not None and not edited_schedule_df.equals(original_schedule_df):
+                try:
+                    # (파일 상단에 'import numpy as np'가 필요합니다)
+                    import numpy as np 
+                    diff_indices = np.where(edited_schedule_df.astype(str).ne(original_schedule_df.astype(str)))
+                    changed_cells = set(zip(diff_indices[0], diff_indices[1])) # 중복 로그 방지
+                    
+                    for row_idx, col_idx in changed_cells:
+                        date_str = edited_schedule_df.iloc[row_idx, 0] # '날짜' 열 (예: "10월 1일")
+                        slot_name = edited_schedule_df.columns[col_idx] # 변경된 열 이름 (예: "1")
+                        
+                        # [수정] 원본 값을 'original_schedule_df' (df_to_edit_schedule)에서 가져옵니다.
+                        old_value = original_schedule_df.iloc[row_idx, col_idx]
+                        new_value = edited_schedule_df.iloc[row_idx, col_idx]
+                        
+                        log_msg = f"{date_str} '{slot_name}' 변경: '{old_value or '빈 값'}' → '{new_value or '빈 값'}'"
+                        schedule_change_log.append(log_msg)
+                except Exception as e:
+                    schedule_change_log.append(f"[로그 오류] 스케줄 변경사항 비교 중 오류: {e}")
+                    
+            if schedule_change_log:
+                st.code("\n".join(f"• {msg}" for msg in sorted(schedule_change_log)), language='text')
+            else:
+                st.info("수정된 사항이 없습니다.")
+            # --- ▲▲▲ [신규] 스케줄 로그 끝 (수정본) ---
+
+            # [기존 코드] (L1682 근처)
             # --- [핵심 수정] 2. 누적 테이블 data_editor *반환값*을 변수에 저장 ---
             if "summary_df_for_display" in results:
                 st.write(" ")
                 st.markdown(f"**➕ {next_month_str} 누적 테이블 (수정 가능)**")
-
-                summary_df_input = results["summary_df_for_display"]
                 
-                # 1단계 수정으로 summary_df_input의 숫자 열들은 int 타입이어야 함
-                # [수정] st.data_editor의 *반환값*을 변수에 할당
+                # [★수정★] 누적 테이블이 자동 재계산됨을 안내
+                st.write("- 누적 테이블은 '배정 스케줄' 편집기에 반영된 내용을 바탕으로 자동 재계산됩니다.")
+
+                # --- [★신규★] 실시간 재계산 로직 ---
+                try:
+                    # 1. GSheet 원본 누적 데이터 (배정 시작 시점)
+                    df_cumulative_initial = st.session_state["df_cumulative"]
+                    # 2. 1단계에서 저장한 모든 이름 목록
+                    all_names_list = results.get("all_names", [])
+                    # 3. 날짜 매핑용 원본 df_schedule
+                    df_schedule_mapping = results.get("df_schedule")
+
+                    if not all_names_list or df_schedule_mapping is None:
+                        st.error("자동 재계산에 필요한 'all_names' 또는 'df_schedule' 데이터가 세션에 없습니다. 새로고침이 필요합니다.")
+                        # 오류 시 원본 데이터라도 보여줌
+                        summary_df_input = results["summary_df_for_display"]
+                    else:
+                        # 4. [호출] edited_schedule_df (L1671)을 기반으로 새 요약 테이블 계산
+                        summary_df_input = recalculate_summary_from_schedule(
+                            edited_schedule_df,       # (L1671)에서 반환된 '수정된 스케줄'
+                            df_cumulative_initial,    # GSheet 원본 누적값
+                            all_names_list,           # 모든 이름
+                            df_schedule_mapping       # 날짜 매핑용
+                        )
+                
+                except Exception as e_recalc:
+                    st.error(f"누적 테이블 자동 재계산 중 오류 발생: {e_recalc}")
+                    st.exception(e_recalc) # 디버깅용 상세 오류
+                    summary_df_input = results["summary_df_for_display"] # 오류 시 원본 표시
+                # --- [★신규★] 로직 끝 ---
+                
+                # [수정] st.data_editor가 'summary_df_input' (재계산된 값)을 사용
                 edited_summary_df = st.data_editor(
-                    summary_df_input,
+                    summary_df_input, # <-- 재계산된 데이터를 입력
                     key="edited_summary_table",
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         summary_df_input.columns[0]: st.column_config.Column(disabled=True),
                         **{col: st.column_config.NumberColumn(format="%d") 
-                           for col in summary_df_input.columns[1:]}
+                            for col in summary_df_input.columns[1:]}
                     },
                     disabled=False,
-                    on_change=set_editor_changed_flag # <--- [수정] 콜백 추가
+                    on_change=set_editor_changed_flag 
                 )
             else:
                 st.warning("⚠️ 누적 테이블 데이터를 불러올 수 없습니다.")
                 edited_summary_df = pd.DataFrame() # 오류 방지용 빈 DataFrame
 
+            # --- ▼▼▼ [신규] 누적 테이블 수동 수정사항 로그 로직 ▼▼▼ ---
+            st.markdown("📝 **누적 테이블 수정사항**")
+            summary_change_log = []
+            
+            # [핵심 수정] 'summary_df_input'(자동계산본) 대신, 
+            # '배정 완료' 시점의 '최초 원본'을 세션에서 불러와 비교합니다.
+            original_summary_df = results.get("summary_df_initial") 
+
+            # [핵심 수정] 'edited_summary_df'(최종본)과 'original_summary_df'(최초본)을 비교
+            if original_summary_df is not None and not edited_summary_df.equals(original_summary_df):
+                try:
+                    # (파일 상단에 'import numpy as np'가 필요합니다)
+                    import numpy as np 
+                    stats_orig_str = original_summary_df.astype(str)
+                    stats_edit_str = edited_summary_df.astype(str)
+                    
+                    diff_indices_stats = np.where(stats_edit_str.ne(stats_orig_str))
+                    changed_cells_stats = set(zip(diff_indices_stats[0], diff_indices_stats[1])) # 중복 로그 방지
+
+                    for row_idx, col_idx in changed_cells_stats:
+                        item_name = edited_summary_df.iloc[row_idx, 0] # 0번 열은 '항목' (예: "오전보충")
+                        person_name = edited_summary_df.columns[col_idx]  # col_idx에 해당하는 열 이름이 '인원' (예: "강승주")
+                        
+                        # [핵심 수정] old_value를 'original_summary_df'에서 가져옵니다.
+                        old_value = original_summary_df.iloc[row_idx, col_idx]
+                        new_value = edited_summary_df.iloc[row_idx, col_idx]
+                        
+                        log_msg = f"'{person_name}'의 '{item_name}' 변경: {old_value} → {new_value}"
+                        summary_change_log.append(log_msg)
+                except Exception as e:
+                    summary_change_log.append(f"[로그 오류] 누적 테이블 변경사항 비교 중 오류: {e}")
+
+            if summary_change_log:
+                log_text_stats = "\n".join(f"• {msg}" for msg in sorted(summary_change_log))
+                st.code(log_text_stats, language='text')
+            else:
+                st.info("수정된 사항이 없습니다.")
+            # --- ▲▲▲ [신규] 누적 테이블 로그 끝 ---
+
+            # [기존 코드] (L1751 근처)
             st.divider() # 구분선 추가
 
             # --- ▼▼▼ [핵심 수정] 3. 저장 및 다운로드 버튼 영역 수정 ▼▼▼ ---
