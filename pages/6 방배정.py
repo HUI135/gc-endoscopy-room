@@ -110,14 +110,34 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
         try:
             worksheet.clear()
             
-            # [수정] 모든 데이터를 문자열(str)로 변환하여 리스트 재생성
-            # 이렇게 하면 1, 2, 3 같은 숫자도 '1', '2', '3' 텍스트로 저장됩니다.
-            data_as_text = [[str(cell) for cell in row] for row in data]
+            data_forced_text = []
+            for i, row in enumerate(data): # i = row index
+                new_row = []
+                for j, cell in enumerate(row): # j = col index
+                    cell_str = str(cell).strip()
+                    
+                    # --- ▼▼▼ [수정] 정규 표현식(Regex)으로 숫자 감지 ---
+                    is_numeric = False
+                    if cell_str: # 비어있지 않은 셀만 검사
+                        # 정규식: 선택적 -(마이너스), 숫자, 선택적 .소수점
+                        # (예: '1', '-2', '3.14', '-0.5' 모두 감지)
+                        if re.match(r'^-?\d+(\.\d+)?$', cell_str):
+                            is_numeric = True
+                        else:
+                            is_numeric = False
+                    
+                    # 헤더(i=0)가 아니고, '항목' 열(j=0)이 아니며,
+                    # 숫자 형태의 텍스트인 경우
+                    if i > 0 and j != 0 and is_numeric:
+                        new_row.append(f"'{cell_str}") # (예: '1', '-2', '0')
+                    else:
+                        new_row.append(cell_str) # (예: '항목', '강승주', '')
+                    # --- ▲▲▲ [수정 완료] ---
+
+                data_forced_text.append(new_row)
             
-            # [수정] value_input_option을 'RAW'에서 'USER_ENTERED'로 변경
-            # 'USER_ENTERED'는 gspread가 데이터를 텍스트로 인식하게 하여
-            # Google Sheets에서 좌정렬(텍스트 형식)으로 저장되도록 합니다.
-            worksheet.update('A1', data_as_text, value_input_option='USER_ENTERED')
+            # [수정] data_as_text -> data_forced_text
+            worksheet.update('A1', data_forced_text, value_input_option='USER_ENTERED')
             
             return True
         except Exception as e:

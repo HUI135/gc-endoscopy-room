@@ -540,10 +540,10 @@ st.html("""
 if df_user_request.empty:
     with st.container(border=True):
         st.write(f"🔔 {month_str}에 등록하신 '요청사항'이 없습니다.")
-st.write(" ")
 
 # 2. 캘린더 UI 렌더링 (HTML Table 방식 - 최종 수정)
 
+st.write(" ")
 st.markdown(f'<div class="calendar-title">{month_str} 요청사항</div>', unsafe_allow_html=True)
 
 events_by_date = {}

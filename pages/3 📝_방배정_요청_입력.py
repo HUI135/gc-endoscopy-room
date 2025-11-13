@@ -542,10 +542,9 @@ st.html("""
 if st.session_state.get("df_user_room_request", pd.DataFrame()).empty:
     with st.container(border=True):
         st.write(f"🔔 {month_str}에 등록하신 '방배정 요청'이 없습니다.")
-    st.write("")
 
 # 2. 캘린더 UI 렌더링 (HTML Table 방식으로 완전 교체)
-
+st.write("")
 st.markdown(f'<div class="calendar-title">{month_str} 방배정 요청</div>', unsafe_allow_html=True)
 
 events_by_date = {}
