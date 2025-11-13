@@ -40,8 +40,9 @@ def initialize_schedule_session_state():
         "assignment_results": None,
         "show_confirmation_warning": False,
         "latest_existing_version": None,
-        # ▼▼▼ [핵심 추가] 편집 플래그 추가 ▼▼▼
-        "editor_has_changes": False 
+        "editor_has_changes": False,
+        # ▼▼▼ [핵심 수정] data_editor를 강제 리셋하기 위한 키 버전 ▼▼▼
+        "editor_key_version": 0
     }
     for key, value in keys_to_init.items():
         if key not in st.session_state:
@@ -411,9 +412,9 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             fill_color = None
             if label in ["오전누적", "오후누적"]: fill_color = fills['pink']
             elif label in ["오전합계", "오후합계"]: fill_color = fills['blue']
-            elif label == "오전당직합계": fill_color = fills['green']
-            elif label == "오전당직누적": fill_color = fills['dark_green']
-            elif label == "오후당직합계": fill_color = fills['orange']
+            elif label == "오전당직합계": fill_color = fills['blue']
+            elif label == "오전당직누적": fill_color = fills['pink']
+            elif label == "오후당직합계": fill_color = fills['lightgray']
             elif label == "오후당직누적": fill_color = fills['lightgray']
 
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]:
@@ -449,7 +450,8 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
         ('FFF28F', '보충'),
         ('95B3D7', '대체 휴근'),
         ('B1A0C7', '휴근'),
-        ('DA9694', '휴가/학회')
+        ('DA9694', '휴가/학회'),
+        ('FABF8F', '꼭근무')
     ]
 
     for i, (hex_color, description) in enumerate(legend_data):
@@ -508,8 +510,9 @@ def append_final_summary_to_excel(worksheet, df_final_summary, style_args):
 
 def replace_adjustments(df):
     """
-    [수정됨] 동일 인물 + 동일 주차에서 추가보충/추가제외 -> 대체보충/대체휴근로 변경합니다.
-    추가보충/추가제외가 1:N 또는 N:1일 경우, 날짜가 빠른 순서대로 1:1 매칭합니다.
+    [수정됨] 동일 인물 + 동일 시간대에서 추가보충/추가제외 -> 대체보충/대체휴근로 변경합니다.
+    [★] '주차' 제약을 제거하고 월 전체에서 1:1 매칭을 수행합니다.
+    [★] 메모 형식을 'm/d에서 대체됨', 'm/d로 대체함'으로 변경합니다.
     """
     color_priority = {'🟠 주황색': 0, '🟢 초록색': 1, '🟡 노란색': 2, '기본': 3, '🔴 빨간색': 4, '🔵 파란색': 5, '🟣 보라색': 6, '특수근무색': -1}
 
@@ -520,7 +523,9 @@ def replace_adjustments(df):
     adjustments_df.sort_values(by='날짜', inplace=True)
 
     # 3. 그룹별로 순차 매칭 수행
-    for (worker, week, shift), group in adjustments_df.groupby(['근무자', '주차', '시간대']):
+    # --- ▼▼▼ [수정 1] '주차'를 groupby에서 제거 ▼▼▼ ---
+    for (worker, shift), group in adjustments_df.groupby(['근무자', '시간대']):
+    # --- ▲▲▲ [수정 1] 완료 ---
         
         # 날짜 순으로 정렬된 추가보충 및 추가제외 레코드 리스트를 얻습니다.
         bochung_records = group[group['상태'] == '보충'].to_dict('records')
@@ -548,7 +553,9 @@ def replace_adjustments(df):
             
             df.loc[bochung_mask, '상태'] = '대체보충'
             df.loc[bochung_mask, '색상'] = '🟢 초록색'
-            df.loc[bochung_mask, '메모'] = f"{pd.to_datetime(jeoe_date_str).strftime('%-m월 %-d일')}일과 대체"
+            # --- ▼▼▼ [수정 2] '대체보충' 메모 형식 변경 (요청사항) ▼▼▼ ---
+            df.loc[bochung_mask, '메모'] = f"{pd.to_datetime(jeoe_date_str).strftime('%-m/%-d')}에서 대체됨"
+            # --- ▲▲▲ [수정 2] 완료 ---
 
             # 대체휴근로 변경 (추가제외였던 레코드)
             jeoe_mask = (df['날짜'] == jeoe_date_str) & \
@@ -558,7 +565,9 @@ def replace_adjustments(df):
             
             df.loc[jeoe_mask, '상태'] = '대체휴근'
             df.loc[jeoe_mask, '색상'] = '🔵 파란색'
-            df.loc[jeoe_mask, '메모'] = f"{pd.to_datetime(bochung_date_str).strftime('%-m월 %-d일')}일과 대체"
+            # --- ▼▼▼ [수정 3] '대체휴근' 메모 형식도 일관되게 변경 ▼▼▼ ---
+            df.loc[jeoe_mask, '메모'] = f"{pd.to_datetime(bochung_date_str).strftime('%-m/%-d')}로 대체함"
+            # --- ▲▲▲ [수정 3] 완료 ---
             
     # 6. 최종 결과를 반환합니다. (호출한 곳에서 최종 중복 제거 필요)
     return df
@@ -567,10 +576,11 @@ def replace_adjustments(df):
 def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_special, df_requests, closing_dates, month_str, df_final_unique, df_schedule):
     """
     [공유용 최종본]
-    - 열 개수가 고정되며, 셀에는 근무자 이름만 표시됩니다. (상태는 색상으로 표현)
-    - [수정] 상태 및 색상 적용 시 df_final_unique 데이터를 참조합니다.
-    - [수정] df_final_unique, df_schedule를 인수로 받도록 변경.
-    - [수정] 색상 적용 로직 및 토/휴일 처리 개선.
+    - [★ F2DCDB 수정 v2 ★]
+    - '변경된' 셀의 배경색을 'F2DCDB' (연분홍)로 변경합니다.
+    - '변경된' 셀의 색상을 '상태' 색상보다 우선 적용합니다.
+    - '변경된' 셀에 '변경 전:' 메모를 추가합니다.
+    - (대체보충) 메모 로직을 통합합니다.
     """
     output = io.BytesIO()
     wb = openpyxl.Workbook()
@@ -593,27 +603,34 @@ def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_
     special_day_fill = PatternFill(start_color='95B3D7', fill_type='solid') # 토/휴일 요일 파란색
     empty_day_fill = PatternFill(start_color='808080', fill_type='solid') # 빈 날짜 회색
     holiday_blue_fill = PatternFill(start_color="DDEBF7", fill_type='solid') # 토/휴일 오전 기본 파란색
+    
+    # --- ▼▼▼ [★ 1. F2DCDB 스타일 추가] ▼▼▼ ---
+    changed_fill = PatternFill(start_color='F2DCDB', fill_type='solid')
+    # --- ▲▲▲ [추가 완료] ▲▲▲ ---
+    
     border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     center_align = Alignment(horizontal='center', vertical='center')
 
-    # --- df_final_unique, df_schedule 유효성 검사 ---
-    # (수정된 함수는 df_final_unique를 더 이상 색상 결정에 사용하지 않지만, 
-    #  오전 당직 폰트 적용(L570)에 사용되므로 유효성 검사를 유지합니다.)
     if df_final_unique is None or df_schedule is None:
         st.error("Excel 생성에 필요한 최종 배정 데이터(df_final_unique or df_schedule)가 함수로 전달되지 않았습니다.")
         wb.save(output)
         return output.getvalue()
-    # --- 유효성 검사 ---
-
-    # --- 고정된 열 정의 ---
+        
     final_columns = ['날짜', '요일'] + [str(i) for i in range(1, 13)] + [''] + ['오전당직(온콜)'] + [f'오후{i}' for i in range(1, 5)]
 
-    # --- 헤더 생성 ---
     for c, col_name in enumerate(final_columns, 1):
         cell = ws.cell(row=1, column=c, value=col_name); cell.font = header_font; cell.fill = header_fill; cell.alignment = center_align; cell.border = border
 
     # --- 데이터 행 생성 및 서식 적용 ---
     for r, (idx, edited_row) in enumerate(edited_df.iterrows(), 2):
+        
+        # --- ▼▼▼ [★ 2. NameError 수정] ▼▼▼ ---
+        # 'initial_df' (괄호 포함 원본)에서 '수정 전' 행을 가져옵니다.
+        if idx not in initial_df.index: # (안전장치)
+            continue 
+        initial_row = initial_df.loc[idx]
+        # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+
         try:
             display_date = edited_row['날짜']
             cleaned_display_date = display_date.replace('월','-').replace('일','').replace(' ','')
@@ -663,14 +680,12 @@ def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_
 
 
         for c, col_name in enumerate(final_columns, 1):
-            # [수정 1] 원본 텍스트(괄호 포함)와 표시용 텍스트(괄호 제거)를 둘 다 가져옵니다.
             raw_value_edited = str(edited_row.get(col_name, '')).strip()
             worker_name_display = re.sub(r'\(.+\)', '', raw_value_edited).strip()
 
             cell = ws.cell(row=r, column=c, value=worker_name_display)
             cell.font = default_font; cell.alignment = center_align; cell.border = border
 
-            # --- 기본 배경색 및 빈칸 처리 ---
             if is_empty_day:
                 cell.fill = empty_day_fill
                 continue
@@ -685,55 +700,69 @@ def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_
                 cell.fill = PatternFill(fill_type=None) # 배경색 없음 (기본 흰색)
                 continue
             
-            # --- ▼▼▼ [핵심 수정] ▼▼▼ ---
             elif is_special_day and str(col_name).isdigit(): # 토/휴일 오전
-                # [수정] 값이 있을 때(이름이 있을 때)만 파란색 배경을 적용합니다.
                 if worker_name_display:
                     cell.fill = holiday_blue_fill
                 else:
                     cell.fill = PatternFill(fill_type=None) # 값이 없으면 기본(흰색)
-            # --- ▲▲▲ [수정 완료] ▲▲▲ ---
             
             else: # 평일 기본 배경 없음 (기본 흰색)
                 cell.fill = PatternFill(fill_type=None)
 
-            # --- 근무자 이름 없으면 이후 처리 생략 ---
             if not worker_name_display:
                 continue
 
-            # --- 시간대 결정 ---
             time_slot = None
             if str(col_name).isdigit(): time_slot = '오전'
             elif '오후' in str(col_name): time_slot = '오후'
             elif col_name == '오전당직(온콜)': time_slot = '오전당직'
 
-            # --- [핵심 수정] 상태 조회 로직 변경 (이전 수정사항) ---
-            # 1. 'df_final_unique'를 조회하는 대신, 괄호 안의 텍스트를 직접 파싱(parse)합니다.
-            status = '기본'
-            match = re.match(r'.+?\((.+)\)', raw_value_edited) # 원본 텍스트(예: "양선영(대체보충)")에서 괄호 찾기
+            status_or_memo = '기본'
+            match = re.match(r'.+?\((.+)\)', raw_value_edited)
             if match: 
-                status = match.group(1).strip() # 괄호 안 텍스트(예: "대체보충")를 status로 사용
+                status_or_memo = match.group(1).strip() 
 
-            # 2. 파싱된 status를 기준으로 색상 코드를 가져옵니다.
-            color_hex = color_map.get(status, 'FFFFFF') # color_map에 없으면 'FFFFFF'(흰색)
+            real_status = '기본'
+            if status_or_memo == '기본':
+                real_status = '기본'
+            elif status_or_memo in color_map: 
+                real_status = status_or_memo
+            elif pd.notna(status_or_memo) and ('대체됨' in status_or_memo or '대체함' in status_or_memo or re.search(r'\d{1,2}/\d{1,2}', status_or_memo)):
+                real_status = '대체보충' 
+            else:
+                real_status = '기본' 
+
+            color_hex = color_map.get(real_status, 'FFFFFF') 
             
-            # 3. 토/휴일 오전이고 기본 상태(흰색)일 경우 파란색 배경을 유지합니다.
             if is_special_day and time_slot == '오전' and color_hex == 'FFFFFF':
                 color_hex = "DDEBF7" # holiday_blue_fill
-            # --- [수정 완료] ---
 
-            # --- 최종 색상 적용 ---
-            # holiday_blue_fill은 위에서 이미 적용되었으므로, 흰색이 아닌 경우만 덮어쓰기
-            if color_hex != 'FFFFFF':
+            # --- ▼▼▼ [★ 3. F2DCDB 및 메모 로직 적용] ▼▼▼ ---
+            # 'initial_row'는 괄호가 포함된 원본임
+            initial_raw_value = str(initial_row.get(col_name, '')).strip()
+            cell_changed = (raw_value_edited != initial_raw_value)
+
+            if cell_changed:
+                cell.fill = changed_fill # 1순위: 변경됨 (F2DCDB)
+                cell.comment = Comment(f"변경 전: {initial_raw_value or '빈 값'}", "Edit Tracker")
+            elif color_hex != 'FFFFFF':
+                # 2순위: (변경 안됐지만) 상태 색상
                 cell.fill = PatternFill(start_color=color_hex, fill_type='solid')
-            # (만약 is_special_day 오전이고 color_hex가 'DDEBF7'이면 holiday_blue_fill 유지됨)
+            # 3순위: 기본 (흰색)은 cell.fill을 따로 지정 안 함 (L598에서 이미 처리됨)
+
+            # [수정] 기존 '대체보충' 메모 로직과 통합
+            if real_status == '대체보충' and pd.notna(status_or_memo) and re.search(r'\d{1,2}/\d{1,2}', status_or_memo):
+                try:
+                    # '변경 전' 코멘트가 없을 때만 '대체' 메모를 추가
+                    if cell.comment is None: 
+                        cell.comment = Comment(status_or_memo, "Schedule Bot")
+                except Exception as e_memo:
+                    pass # 코멘트 추가 실패 시 무시
+            # --- ▲▲▲ [신규 로직 교체 완료] ▲▲▲ ---
 
             # --- 당직자 폰트 적용 ---
-            # (이 로직은 여전히 df_final_unique를 참조해야 하므로 '수정 안 함')
-            # 평일 오전 당직
             if col_name == '오전당직(온콜)' and worker_name_display:
                 cell.font = duty_font
-            # 토/휴일 오전 당직
             elif is_special_day and time_slot == '오전' and worker_name_display == weekend_oncall_worker:
                 cell.font = duty_font
 
@@ -758,7 +787,11 @@ def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_
 def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_special, df_requests, closing_dates, month_str):
     """
     [관리자 확인용]
-    - 열 개수가 동적으로 변하며, 셀에는 이름만 표시되고 상태는 색상으로 표현됩니다.
+    - [★ F2DCDB 수정 v2 ★]
+    - '변경된' 셀의 배경색을 'F2DCDB' (연분홍)로 변경합니다.
+    - '변경된' 셀의 색상을 '상태' 색상보다 우선 적용합니다.
+    - '변경된' 셀에 '변경 전:' 메모를 추가합니다.
+    - (대체보충) 메모 로직을 통합합니다.
     """
     output = io.BytesIO()
     wb = openpyxl.Workbook()
@@ -776,7 +809,11 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
     date_col_fill = PatternFill(start_color='808080', fill_type='solid')
     weekday_fill = PatternFill(start_color='FFF2CC', fill_type='solid')
     special_day_fill = PatternFill(start_color='95B3D7', fill_type='solid')
-    changed_fill = PatternFill(start_color='FFFF00', fill_type='solid') # 노란색 (변경됨)
+    
+    # --- ▼▼▼ [★ 1. F2DCDB 스타일로 변경] ▼▼▼ ---
+    changed_fill = PatternFill(start_color='F2DCDB', fill_type='solid') # (연분홍)
+    # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+    
     empty_day_fill = PatternFill(start_color='808080', fill_type='solid')
     holiday_blue_fill = PatternFill(start_color="DDEBF7", fill_type='solid')
     border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
@@ -791,7 +828,13 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
 
     # --- 데이터 행 생성 및 서식 적용 ---
     for r, (idx, edited_row) in enumerate(edited_df.iterrows(), 2):
+        # --- ▼▼▼ [★ 2. NameError 수정] ▼▼▼ ---
+        # 'initial_df' (괄호 포함 원본)에서 '수정 전' 행을 가져옵니다.
+        if idx not in initial_df.index: # (안전장치)
+            continue
         initial_row = initial_df.loc[idx]
+        # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+        
         try:
             current_date = datetime.strptime(f"{month_str.split('년')[0]}-{edited_row['날짜']}", "%Y-%m월 %d일").date()
             current_date_iso = current_date.strftime('%Y-%m-%d')
@@ -831,31 +874,47 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
                 elif '오후' in str(col_name): cell.value = ""
                 continue
             
-            # --- ▼▼▼ [수정] 색상 적용 로직 변경 (상태 색상 우선) ▼▼▼ ---
+            # --- ▼▼▼ [★ 3. F2DCDB 및 메모 로직 적용] ▼▼▼ ---
+            status_or_memo = status 
+
+            real_status = '기본'
+            if status_or_memo == '기본':
+                real_status = '기본'
+            elif status_or_memo in color_map: 
+                real_status = status_or_memo
+            elif pd.notna(status_or_memo) and ('대체됨' in status_or_memo or '대체함' in status_or_memo or re.search(r'\d{1,2}/\d{1,2}', status_or_memo)):
+                real_status = '대체보충' 
+            else:
+                real_status = '기본'
+
+            fill_hex = color_map.get(real_status, 'FFFFFF') 
+
+            # 'initial_row'는 괄호가 포함된 원본임
             initial_raw_value = str(initial_row.get(col_name, '')).strip()
             cell_changed = (raw_value != initial_raw_value)
             
-            fill_hex = color_map.get(status) # 1. 상태에 맞는 색상 가져오기
-            
-            if fill_hex and fill_hex != 'FFFFFF':
-                # 2. 상태 색상이 '기본'(흰색)이 아니면, 해당 색상 적용
-                cell.fill = PatternFill(start_color=fill_hex, fill_type='solid')
-            elif cell_changed:
-                # 3. 상태 색상이 '기본'인데, 셀 내용이 변경된 경우에만 노란색 적용
+            if cell_changed:
+                # 1순위: 변경된 셀은 무조건 F2DCDB
                 cell.fill = changed_fill
+                cell.comment = Comment(f"변경 전: {initial_raw_value or '빈 값'}", "Edit Tracker")
+            elif fill_hex and fill_hex != 'FFFFFF':
+                # 2순위: (변경 안됐지만) 상태 색상
+                cell.fill = PatternFill(start_color=fill_hex, fill_type='solid')
             else:
-                # 4. '기본' 상태이고 변경되지도 않음 (흰색)
+                # 3순위: '기본' 상태이고 변경되지도 않음 (흰색)
                 cell.fill = PatternFill(start_color='FFFFFF', fill_type='solid')
-            # --- ▲▲▲ [수정] 완료 ▲▲▲ ---
             
             if col_name == '오전당직(온콜)': cell.font = duty_font
             
-            # --- ▼▼▼ [수정] 메모(Comment) 생성 라인 제거 ▼▼▼ ---
-            # initial_raw_value = str(initial_row.get(col_name, '')).strip()
-            # if raw_value != initial_raw_value:
-            #    cell.fill = changed_fill
-            #    # cell.comment = Comment(f"변경 전: {initial_raw_value or '빈 값'}", "Edit Tracker")
-            # --- ▲▲▲ [수정] 완료 ▲▲▲ ---
+            # [수정] 기존 '대체보충' 메모 로직과 통합
+            if real_status == '대체보충' and pd.notna(status_or_memo) and re.search(r'\d{1,2}/\d{1,2}', status_or_memo):
+                try:
+                    # '변경 전' 코멘트가 없을 때만 '대체' 메모를 추가
+                    if cell.comment is None: 
+                        cell.comment = Comment(status_or_memo, "Schedule Bot")
+                except Exception as e_memo:
+                    pass
+            # --- ▲▲▲ [신규 로직 교체 완료] ▲▲▲ ---
     
     # --- ✨ [핵심 수정] 익월 누적 현황을 올바른 형식으로 추가 ---
     if not edited_cumulative_df.empty:
@@ -895,6 +954,7 @@ def create_formatted_schedule_excel(initial_df, edited_df, edited_cumulative_df,
     special_day_fill = PatternFill(start_color='95B3D7', fill_type='solid')
     changed_fill = PatternFill(start_color='FFFF00', fill_type='solid') # 노란색 (변경됨)
     empty_day_fill = PatternFill(start_color='808080', fill_type='solid')
+    changed_fill = PatternFill(start_color='F2DCDB', fill_type='solid')
     border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     center_align = Alignment(horizontal='center', vertical='center')
 
@@ -1027,17 +1087,21 @@ def create_formatted_schedule_excel(initial_df, edited_df, edited_cumulative_df,
     wb.save(output)
     return output.getvalue()
 
-# [★ L800 부근의 이 함수 전체를 교체하세요 ★]
+# [★ L990의 이 함수 전체를 교체하세요 ★]
 
 def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial, all_names, df_schedule_mapping):
     """
     (신규 함수)
     수정된 스케줄 data_editor 내용을 실시간으로 파싱하여,
     '보충', '당직' 횟수를 재계산하고 누적 테이블 DataFrame을 반환합니다.
+
+    [★ 버그 수정 v2 ★]
+    - L1010 ~ L1040의 파싱 로직을 수정합니다.
+    - data_editor에 (10/6에서 대체됨) 처럼 메모로 표시된 '대체보충' 상태를
+    - 올바르게 +1로 집계하도록 로직을 수정합니다.
     """
     
     # 1. 이름별로 (보충/휴근) 횟수, (당직) 횟수를 집계할 카운터 초기화
-    # (예: {'홍길동': 1, '이순신': -1})
     am_bochong_counts = Counter()
     pm_bochong_counts = Counter()
     oncall_counts = Counter()
@@ -1046,18 +1110,10 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
     for idx, row in edited_schedule_df.iterrows():
         
         # 2-1. data_editor의 날짜(예: "10월 1일")를 ISO 날짜(예: "2025-10-01")로 변환
-        # date_display = row['날짜'] # "10월 1일"
         try:
-            # ▼▼▼ [핵심 버그 수정] ▼▼▼
-            # .str.contains는 날짜 형식이 달라 항상 실패합니다.
-            # edited_schedule_df와 df_schedule_mapping은 동일한 정수 인덱스(idx)를 공유하므로,
-            # idx를 사용해 매핑 테이블에서 정확한 ISO 날짜를 직접 조회합니다.
             date_iso = df_schedule_mapping.loc[idx, '날짜']
-            # ▲▲▲ [수정 완료] ▲▲▲
-
         except Exception:
-            # 매핑 실패 시 (예: 토/휴일이 아닌, 인덱스가 맞지 않는 예외적 오류) 해당 행은 건너뜀
-            continue 
+            continue
 
         for col_name in edited_schedule_df.columns:
             raw_value = str(row[col_name] or '').strip()
@@ -1067,7 +1123,9 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
             # 2-2. 셀 텍스트에서 이름과 상태 파싱
             worker_name = re.sub(r'\(.+\)', '', raw_value).strip()
             status_match = re.search(r'\((.+)\)', raw_value)
-            status = status_match.group(1).strip() if status_match else '기본'
+            
+            # --- ▼▼▼ [핵심 버그 수정] L1010~L1040 교체 ▼▼▼ ---
+            status_text = status_match.group(1).strip() if status_match else '기본'
             
             # 2-3. 열 이름(col_name)에 따라 시간대 결정
             time_slot = None
@@ -1078,21 +1136,36 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
             if not time_slot or not worker_name:
                 continue
 
-            # 2-4. 카운터 집계
+            # 2-4. [수정된 로직] 파싱된 텍스트(status_text)를 '실제 상태'로 변환
+            
+            real_status_effect = 0 # 0: 기본, +1: 보충, -1: 휴근
+            
+            if status_text in ['보충', '대체보충']:
+                real_status_effect = 1
+            elif status_text in ['휴근', '대체휴근']:
+                real_status_effect = -1
+            elif pd.notna(status_text) and (re.search(r'\d{1,2}/\d{1,2}', status_text) or '대체됨' in status_text):
+                # L2158 로직에 따라, 메모(날짜)가 표시되는 경우는 '대체보충'(+1) 뿐임
+                real_status_effect = 1
+            # (참고: '대체휴근'은 L2161에 따라 (대체휴근)으로 표시되므로 위에서 처리됨)
+
+            # 2-5. 카운터 집계
             if time_slot == '오전당직':
                 oncall_counts[worker_name] += 1
             
             elif time_slot == '오전':
-                if status in ['보충', '대체보충']:
+                if real_status_effect == 1:
                     am_bochong_counts[worker_name] += 1
-                elif status in ['휴근', '대체휴근']:
+                elif real_status_effect == -1:
                     am_bochong_counts[worker_name] -= 1
             
             elif time_slot == '오후':
-                if status in ['보충', '대체보충']:
+                if real_status_effect == 1:
                     pm_bochong_counts[worker_name] += 1
-                elif status in ['휴근', '대체휴근']:
+                elif real_status_effect == -1:
                     pm_bochong_counts[worker_name] -= 1
+            # --- ▲▲▲ [핵심 버그 수정 완료] ▲▲▲ ---
+
 
     # 3. GSheet에서 로드한 *원본* 누적 테이블을 기반으로 최종 테이블 재구성
     recalculated_summary_df = df_cumulative_initial.copy()
@@ -1111,11 +1184,11 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
         if name not in recalculated_summary_df.columns:
             recalculated_summary_df[name] = 0 # 새 이름이 있으면 열 추가
         
-        # 4-1. GSheet 원본 값 가져오기
-        base_am = int(recalculated_summary_df.loc['오전누적', name])
-        base_pm = int(recalculated_summary_df.loc['오후누적', name])
-        base_am_oncall = int(recalculated_summary_df.loc['오전당직누적', name])
-        base_pm_oncall = int(recalculated_summary_df.loc['오후당직누적', name])
+        # 4-1. GSheet 원본 값 가져오기 (오류 방지를 위해 .get(name, 0) 사용)
+        base_am = int(recalculated_summary_df.loc['오전누적'].get(name, 0))
+        base_pm = int(recalculated_summary_df.loc['오후누적'].get(name, 0))
+        base_am_oncall = int(recalculated_summary_df.loc['오전당직누적'].get(name, 0))
+        base_pm_oncall = int(recalculated_summary_df.loc['오후당직누적'].get(name, 0))
 
         # 4-2. 실시간 집계 값 가져오기
         am_bochong = am_bochong_counts.get(name, 0)
@@ -1137,8 +1210,14 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
         recalculated_summary_df.at["오후당직합계", name] = 0 # 오후 당직은 이 시트에서 배정 안 함
         recalculated_summary_df.at["오후당직누적", name] = base_pm_oncall
 
-    # '항목' 열을 다시 복원하여 반환
-    return recalculated_summary_df.reset_index()
+    recalculated_summary_df = recalculated_summary_df.reset_index()
+
+    # 원본 build_summary_table과 동일하게 모든 숫자 열을 int로 강제 변환
+    for col in recalculated_summary_df.columns:
+        if col != '항목':
+            recalculated_summary_df[col] = pd.to_numeric(recalculated_summary_df[col], errors='coerce').fillna(0).astype(int)
+
+    return recalculated_summary_df
 
 st.header("🗓️ 스케줄 배정", divider='rainbow')
 st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
@@ -1926,10 +2005,16 @@ def load_closing_days(month_str):
         st.error(f"휴관일 정보를 불러오는 중 오류가 발생했습니다: {e}")
         return [], pd.DataFrame(columns=["날짜"])
 
+# [★ L1600의 이 함수 전체를 교체하세요 ★]
+
 def transform_schedule_for_checking(df_final_unique, df_excel, month_start, month_end):
     """
     [수정] 배정 확인용 스케줄 데이터를 생성합니다.
     휴가/제외 인원을 포함한 모든 인원이 출력되도록 열 개수를 동적으로 계산합니다.
+    
+    [★ 버그 수정 ★]
+    - L1634의 로직을 L2158의 로직(메모 확인 로직)과 동일하게 수정합니다.
+    - '대체보충'의 경우 (상태)가 아닌 (메모)가 저장되도록 수정합니다.
     """
     # [핵심 수정 1] 월 전체에서 일별 최대 인원수 계산
     daily_counts = df_final_unique.groupby(['날짜', '시간대'])['근무자'].nunique().unstack(fill_value=0)
@@ -1938,8 +2023,12 @@ def transform_schedule_for_checking(df_final_unique, df_excel, month_start, mont
 
     # 토요/휴일 스케줄의 최대 인원수도 고려
     if not df_excel.empty:
-        weekend_am_counts = df_excel[[str(i) for i in range(1, 13)]].apply(lambda row: row.str.strip().ne('').sum(), axis=1)
-        max_am_workers = max(max_am_workers, weekend_am_counts.max())
+        # '1'부터 '12'까지의 열이 df_excel에 있는지 확인
+        am_cols = [str(i) for i in range(1, 13) if str(i) in df_excel.columns]
+        if am_cols:
+            weekend_am_counts = df_excel[am_cols].apply(lambda row: row.str.strip().ne('').sum(), axis=1)
+            if not weekend_am_counts.empty:
+                max_am_workers = max(max_am_workers, weekend_am_counts.max())
 
     # 최종 열 개수 확정 (최소 12, 4개는 유지)
     max_am_workers = max(max_am_workers, 12)
@@ -1977,24 +2066,54 @@ def transform_schedule_for_checking(df_final_unique, df_excel, month_start, mont
                     info = workers_info[i]
                     worker_name = info['근무자']
                     status = info['상태']
-                    if status not in ['근무', '당직', '기본']:
-                        row_data[col_name] = f"{worker_name}({status})"
+                    
+                    # --- ▼▼▼ [핵심 수정] L2158 로직 이식 ▼▼▼ ---
+                    memo = info.get('메모', '') # 1. 메모 가져오기
+                    
+                    if status == '대체보충' and pd.notna(memo) and str(memo).strip():
+                         # 2. 대체보충이고 메모가 있으면 (메모) 사용
+                         row_data[col_name] = f"{worker_name}({memo})"
+                    elif status not in ['근무', '당직', '기본']:
+                         # 3. 그 외 (휴가, 보충, 대체휴근 등)는 (상태) 사용
+                         row_data[col_name] = f"{worker_name}({status})"
                     else:
-                        row_data[col_name] = worker_name
+                         # 4. 기본 근무는 이름만
+                         row_data[col_name] = worker_name
+                    # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+                        
                 else:
                     row_data[col_name] = ''
 
-        # 당직 및 주말 정보 처리
+        # 당직 및 주말 정보 처리 (이 부분은 원본 L1645 이후와 동일)
         excel_row = df_excel[df_excel['날짜'] == date]
         if not excel_row.empty:
-            row_data['오전당직(온콜)'] = excel_row['오전당직(온콜)'].iloc[0] if '오전당직(온콜)' in excel_row.columns else ''
+            # '오전당직(온콜)' 열이 df_excel에 있는지 확인
+            if '오전당직(온콜)' in excel_row.columns:
+                row_data['오전당직(온콜)'] = excel_row['오전당직(온콜)'].iloc[0]
+            
             if weekday in ['토', '일']:
                 for i in range(1, max_am_workers + 1):
-                    row_data[str(i)] = excel_row[str(i)].iloc[0] if str(i) in excel_row.columns and pd.notna(excel_row[str(i)].iloc[0]) else ''
+                    col_str = str(i)
+                    if col_str in excel_row.columns and pd.notna(excel_row[col_str].iloc[0]):
+                        row_data[col_str] = excel_row[col_str].iloc[0]
+                    # else:
+                    #     # row_data[col_str] = '' # (이미 위에서 ''로 초기화됨)
                 for i in range(1, max_pm_workers + 1):
                     row_data[f'오후{i}'] = ''
+        
+        # '오전당직(온콜)'이 row_data에 없는 경우(평일)를 대비해 ''로 초기화
+        if '오전당직(온콜)' not in row_data:
+            row_data['오전당직(온콜)'] = ''
 
         result_df = pd.concat([result_df, pd.DataFrame([row_data])], ignore_index=True)
+
+    # 누락된 열이 있다면 ''로 채움 (안전장치)
+    for col in columns:
+        if col not in result_df.columns:
+            result_df[col] = ''
+            
+    # 최종 열 순서 맞추기
+    result_df = result_df[columns]
 
     return result_df
 
@@ -2530,6 +2649,12 @@ if st.button("🚀 스케줄 배정 수행", type="primary", use_container_width
         st.session_state.assigned = True
         st.session_state.assignment_results = None
         st.session_state.request_logs, st.session_state.swap_logs, st.session_state.adjustment_logs, st.session_state.oncall_logs = [], [], [], []
+        
+        # --- ▼▼▼ [핵심 수정] ▼▼▼ ---
+        st.session_state.editor_has_changes = False # 1. 수정 플래그 리셋
+        st.session_state.editor_key_version += 1 # 2. 에디터 키 버전을 올려 강제 리셋
+        # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+            
         st.rerun()
 
 # 2단계: 확인 경고 및 최종 실행 UI
@@ -2549,6 +2674,12 @@ if st.session_state.get("show_confirmation_warning", False):
             st.session_state.show_confirmation_warning = False
             st.session_state.assignment_results = None
             st.session_state.request_logs, st.session_state.swap_logs, st.session_state.adjustment_logs, st.session_state.oncall_logs = [], [], [], []
+            
+            # --- ▼▼▼ [핵심 수정] ▼▼▼ ---
+            st.session_state.editor_has_changes = False # 1. 수정 플래그 리셋
+            st.session_state.editor_key_version += 1 # 2. 에디터 키 버전을 올려 강제 리셋
+            # --- ▲▲▲ [수정 완료] ▲▲▲ ---
+                
             st.rerun()
     with col2:
         if st.button("❌ 아니요, 취소합니다.", use_container_width=True):
@@ -2886,7 +3017,11 @@ if st.session_state.get('assigned', False):
             day_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
             week_numbers = {d.to_pydatetime().date(): (d.day - 1) // 7 + 1 for d in all_month_dates}
 
-            df_schedule = pd.DataFrame({'날짜': [d.strftime('%Y-%m-%d') for d in all_month_dates], '요일': [day_map.get(d.weekday()) for d in all_month_dates]})
+            df_schedule = pd.DataFrame({
+                '날짜': [d.strftime('%Y-%m-%d') for d in all_month_dates], 
+                '요일': [day_map.get(d.weekday()) for d in all_month_dates],
+                '날짜_표시': [f"{d.month}월 {d.day}일" for d in all_month_dates] # <-- 이 줄이 추가되었습니다.
+            })
             worker_counts_all = df_final_unique.groupby(['날짜', '시간대'])['근무자'].nunique().unstack(fill_value=0)
             max_morning_workers = int(worker_counts_all.get('오전', pd.Series(data=0)).max())
             max_afternoon_workers = int(worker_counts_all.get('오후', pd.Series(data=0)).max())
@@ -3151,9 +3286,9 @@ if st.session_state.get('assigned', False):
                                 color_name = worker_data.iloc[0]['색상']
                                 cell.fill = PatternFill(start_color=color_map.get(color_name, 'FFFFFF'), end_color=color_map.get(color_name, 'FFFFFF'), fill_type='solid')
                                 memo_text = worker_data.iloc[0]['메모']
-                                if memo_text and ('보충' in memo_text or '이동' in memo_text):
+                                if memo_text and ('보충' in memo_text or '이동' in memo_text or '대체' in memo_text):
                                     cell.comment = Comment(memo_text, "Schedule Bot")
-                    
+                                    
                     elif '오후' in str(col_name):  
                         worker = str(row[col_name]).strip()
                         if worker and pd.notna(worker):
@@ -3162,9 +3297,9 @@ if st.session_state.get('assigned', False):
                                 color_name = worker_data.iloc[0]['색상']
                                 cell.fill = PatternFill(start_color=color_map.get(color_name, 'FFFFFF'), end_color=color_map.get(color_name, 'FFFFFF'), fill_type='solid')
                                 memo_text = worker_data.iloc[0]['메모']
-                                if memo_text and ('보충' in memo_text or '이동' in memo_text):
+                                if memo_text and ('보충' in memo_text or '이동' in memo_text or '대체' in memo_text):
                                     cell.comment = Comment(memo_text, "Schedule Bot")
-                    
+
                     elif col_name == '오전당직(온콜)':
                         if oncall_person_for_row:
                             cell.font = duty_font
@@ -3311,12 +3446,11 @@ if st.session_state.get('assigned', False):
         if results:
             with st.expander("🔍 배정 과정 상세 로그 보기", expanded=True):
                 st.markdown("**📋 요청사항 반영 로그**"); st.code("\n".join(results.get("request_logs", [])) if results.get("request_logs") else "반영된 요청사항(휴가/학회)이 없습니다.", language='text')
-                st.markdown("---"); st.markdown("**🔄 대체 보충/휴근 로그 (1:1 이동)**"); st.code("\n".join(results.get("swap_logs", [])) if results.get("swap_logs") else "일반 제외/보충이 발생하지 않았습니다.", language='text')
                 st.markdown("---"); st.markdown("**📞 오전당직(온콜) 배정 로그**"); st.code("\n".join(results.get("oncall_logs", [])) if results.get("oncall_logs") else "모든 오전당직(온콜)이 누적 횟수에 맞게 정상 배정되었습니다.", language='text')
 
             # --- [핵심 수정] 1. 스케줄 테이블 data_editor *반환값*을 변수에 저장 ---
             if "df_schedule_for_display" in results:
-                st.write(" ")
+                st.divider()
                 st.markdown(f"**➕ {month_str} 배정 스케줄 (수정 가능)**")
                 st.warning("⚠️ 아래에서 내용을 수정하신 후, **'수정사항 저장'** 버튼을 누르면 Google Sheets에 반영됩니다.")
 
@@ -3326,10 +3460,12 @@ if st.session_state.get('assigned', False):
                 df_schedule = results.get("df_schedule")
 
                 if df_final_unique is not None and df_schedule is not None:
+                    # [★수정★] 상태와 메모를 모두 저장하는 딕셔너리로 변경
                     status_lookup = {}
                     for _, row in df_final_unique.iterrows():
                         key = (row['날짜'], row['시간대'], row['근무자'])
-                        status_lookup[key] = row['상태']
+                        # (상태, 메모) 튜플로 저장
+                        status_lookup[key] = (row['상태'], row.get('메모', '')) 
 
                     for idx, row in df_to_edit_schedule.iterrows():
                         if idx not in df_schedule.index: continue
@@ -3353,22 +3489,32 @@ if st.session_state.get('assigned', False):
                                 match = re.match(r'.+?\((.+)\)', worker_name_cell)
                                 
                                 if match:
-                                    pass
+                                    pass # 이미 괄호가 있으면 (수동 편집) 그대로 둠
                                 else:
                                     worker_name_only = worker_name_cell # 괄호가 없으니 이게 이름
                                     
                                     key = (date_str, time_slot, worker_name_only)
-                                    status = status_lookup.get(key)
+                                    lookup_result = status_lookup.get(key)
                                     
-                                    # 4. 원본 데이터(status_lookup)에 '기본'이 아닌 상태가 있을 때만 괄호를 추가함
-                                    if status and status not in ['근무', '당직', '기본']:
-                                        df_to_edit_schedule.at[idx, col_name] = f"{worker_name_only}({status})"
-                                    pass
-                
-                # [수정] st.data_editor의 *반환값*을 변수에 할당
+                                    # 4. [★수정★] 상태와 메모를 분리하여 조건에 맞게 괄호 추가
+                                    if lookup_result:
+                                        status, memo = lookup_result
+                                        
+                                        # [요청사항] '대체보충'이고 유효한 메모가 있으면 (메모)를 표시
+                                        if status == '대체보충' and pd.notna(memo) and str(memo).strip():
+                                            df_to_edit_schedule.at[idx, col_name] = f"{worker_name_only}({memo})"
+                                        # [유지] 그 외 (휴가, 보충, '대체휴근' 등)
+                                        elif status and status not in ['근무', '당직', '기본']:
+                                            df_to_edit_schedule.at[idx, col_name] = f"{worker_name_only}({status})"
+
+                if "df_schedule_for_comparison" not in results:
+                    st.session_state.assignment_results["df_schedule_for_comparison"] = df_to_edit_schedule.copy()
+                # --- ▲▲▲ [저장 완료] ▲▲▲ ---
+
                 edited_schedule_df = st.data_editor(
                     df_to_edit_schedule,
-                    key="edited_schedule_table",
+                    # ▼▼▼ [핵심 수정] key를 동적으로 변경하여 강제 리셋 ▼▼▼
+                    key=f"edited_schedule_table_{st.session_state.editor_key_version}",
                     use_container_width=True,
                     hide_index=True,
                     disabled=['날짜', '요일'],
@@ -3381,13 +3527,14 @@ if st.session_state.get('assigned', False):
             # --- ▼▼▼ [신규] 스케줄 수정사항 로그 로직 ▼▼▼ ---
             st.markdown("📝 **스케줄 수정사항**")
             schedule_change_log = []
+            schedule_has_changed = False
 
             # [수정] 'results.get("df_excel_initial")' (괄호 없는 원본) 대신,
             # 에디터에 '입력(input)'으로 사용된 'df_to_edit_schedule' (괄호가 이미 추가된)을 
             # 비교할 원본으로 사용합니다.
-            original_schedule_df = df_to_edit_schedule 
-
+            original_schedule_df = df_to_edit_schedule
             if original_schedule_df is not None and not edited_schedule_df.equals(original_schedule_df):
+                schedule_has_changed = True # <--- ★★★ [ 2. 이 줄을 추가 ] ★★★
                 try:
                     # (파일 상단에 'import numpy as np'가 필요합니다)
                     import numpy as np 
@@ -3416,44 +3563,43 @@ if st.session_state.get('assigned', False):
             # [기존 코드] (L1682 근처)
             # --- [핵심 수정] 2. 누적 테이블 data_editor *반환값*을 변수에 저장 ---
             if "summary_df_for_display" in results:
-                st.write(" ")
+                st.divider()
                 st.markdown(f"**➕ {next_month_str} 누적 테이블 (수정 가능)**")
                 
                 # [★수정★] 누적 테이블이 자동 재계산됨을 안내
-                st.write("- 누적 테이블은 '배정 스케줄' 편집기에 반영된 내용을 바탕으로 자동 재계산됩니다.")
+                st.write("- 누적 테이블은 '배정 스케줄' 편집기에 반영된 내용을 바탕으로 자동 재계산됩니다.\n- 주의) 대체보충은 수정 시 누적 테이블을 직접 수정해주셔야 합니다.")
 
-                # --- [★신규★] 실시간 재계산 로직 ---
-                try:
-                    # 1. GSheet 원본 누적 데이터 (배정 시작 시점)
-                    df_cumulative_initial = st.session_state["df_cumulative"]
-                    # 2. 1단계에서 저장한 모든 이름 목록
-                    all_names_list = results.get("all_names", [])
-                    # 3. 날짜 매핑용 원본 df_schedule
-                    df_schedule_mapping = results.get("df_schedule")
+                # --- ▼▼▼ [ ★ L1725~L1741을 이 블록으로 교체 ★ ] ▼▼▼ ---
+                if schedule_has_changed:
+                    try:
+                        df_cumulative_initial = st.session_state["df_cumulative"] # GSheet 원본(A)
+                        all_names_list = results.get("all_names", [])
+                        df_schedule_mapping = results.get("df_schedule")
 
-                    if not all_names_list or df_schedule_mapping is None:
-                        st.error("자동 재계산에 필요한 'all_names' 또는 'df_schedule' 데이터가 세션에 없습니다. 새로고침이 필요합니다.")
-                        # 오류 시 원본 데이터라도 보여줌
-                        summary_df_input = results["summary_df_for_display"]
-                    else:
-                        # 4. [호출] edited_schedule_df (L1671)을 기반으로 새 요약 테이블 계산
-                        summary_df_input = recalculate_summary_from_schedule(
-                            edited_schedule_df,       # (L1671)에서 반환된 '수정된 스케줄'
-                            df_cumulative_initial,    # GSheet 원본 누적값
-                            all_names_list,           # 모든 이름
-                            df_schedule_mapping       # 날짜 매핑용
-                        )
-                
-                except Exception as e_recalc:
-                    st.error(f"누적 테이블 자동 재계산 중 오류 발생: {e_recalc}")
-                    st.exception(e_recalc) # 디버깅용 상세 오류
-                    summary_df_input = results["summary_df_for_display"] # 오류 시 원본 표시
-                # --- [★신규★] 로직 끝 ---
-                
+                        if not all_names_list or df_schedule_mapping is None:
+                            st.error("자동 재계산에 필요한 'all_names' 또는 'df_schedule' 데이터가 없습니다.")
+                            summary_df_input = results["summary_df_initial"] 
+                        else:
+                            # '수정된' 스케줄(edited_schedule_df)로 재계산 (B)
+                            summary_df_input = recalculate_summary_from_schedule(
+                                edited_schedule_df,
+                                df_cumulative_initial,
+                                all_names_list,
+                                df_schedule_mapping
+                            )
+                    except Exception as e_recalc:
+                        st.error(f"누적 테이블 자동 재계산 중 오류 발생: {e_recalc}")
+                        summary_df_input = results["summary_df_initial"] 
+                else:
+                    # 2. 상단 스케줄이 수정되지 않음 (페이지 첫 로드) -> 원본(A) 표시
+                    summary_df_input = results.get("summary_df_initial", pd.DataFrame()).copy() # 원본(A)을 그대로 사용
+                # --- ▲▲▲ [ 교체 완료 ] ▲▲▲ ---
+
                 # [수정] st.data_editor가 'summary_df_input' (재계산된 값)을 사용
                 edited_summary_df = st.data_editor(
                     summary_df_input, # <-- 재계산된 데이터를 입력
-                    key="edited_summary_table",
+                    # ▼▼▼ [핵심 수정] key를 동적으로 변경하여 강제 리셋 ▼▼▼
+                    key=f"edited_summary_table_{st.session_state.editor_key_version}",
                     use_container_width=True,
                     hide_index=True,
                     column_config={
@@ -3468,30 +3614,39 @@ if st.session_state.get('assigned', False):
                 st.warning("⚠️ 누적 테이블 데이터를 불러올 수 없습니다.")
                 edited_summary_df = pd.DataFrame() # 오류 방지용 빈 DataFrame
 
-            # --- ▼▼▼ [신규] 누적 테이블 수동 수정사항 로그 로직 ▼▼▼ ---
+            # --- ▼▼▼ [누적 테이블 수동 수정사항 로그 로직 (수정됨)] ▼▼▼ ---
             st.markdown("📝 **누적 테이블 수정사항**")
-            summary_change_log = []
-            
-            # [핵심 수정] 'summary_df_input'(자동계산본) 대신, 
-            # '배정 완료' 시점의 '최초 원본'을 세션에서 불러와 비교합니다.
-            original_summary_df = results.get("summary_df_initial") 
+            summary_change_log = [] # 리스트 초기화
 
-            # [핵심 수정] 'edited_summary_df'(최종본)과 'original_summary_df'(최초본)을 비교
-            if original_summary_df is not None and not edited_summary_df.equals(original_summary_df):
+            # --- ▼▼▼ [신규] 항목 순서 정렬을 위한 맵(Map) 정의 ▼▼▼ ---
+            desired_order = [
+                "오전보충", "임시보충", "오전합계", "오전누적", 
+                "오후보충", "온콜검사", "오후합계", "오후누적", 
+                "오전당직합계", "오전당직누적", "오후당직합계", "오후당직누적"
+            ]
+            # 항목 이름을 정렬 순서(숫자)로 매핑
+            order_map = {item_name: index for index, item_name in enumerate(desired_order)}
+
+            original_summary_df = results.get("summary_df_initial") # (A)
+
+            cumulative_has_changed = False # <-- [★ 1. 이 줄을 추가하세요]
+
+            if original_summary_df is not None and not edited_summary_df.equals(original_summary_df): # (A) vs (C)
+                cumulative_has_changed = True # <-- [★ 2. 이 줄을 추가하세요]
                 try:
-                    # (파일 상단에 'import numpy as np'가 필요합니다)
-                    import numpy as np 
-                    stats_orig_str = original_summary_df.astype(str)
-                    stats_edit_str = edited_summary_df.astype(str)
+                    import numpy as np
+                    # 1번 수정으로 A와 C의 숫자 타입이 int로 통일되었으므로 astype(str) 비교가 안전합니다.
+                    stats_orig_str = original_summary_df.astype(str) # (A)
+                    stats_edit_str = edited_summary_df.astype(str) # (C)
                     
                     diff_indices_stats = np.where(stats_edit_str.ne(stats_orig_str))
-                    changed_cells_stats = set(zip(diff_indices_stats[0], diff_indices_stats[1])) # 중복 로그 방지
+                    changed_cells_stats = set(zip(diff_indices_stats[0], diff_indices_stats[1])) 
 
                     for row_idx, col_idx in changed_cells_stats:
-                        item_name = edited_summary_df.iloc[row_idx, 0] # 0번 열은 '항목' (예: "오전보충")
-                        person_name = edited_summary_df.columns[col_idx]  # col_idx에 해당하는 열 이름이 '인원' (예: "강승주")
+                        item_name = edited_summary_df.iloc[row_idx, 0] 
+                        person_name = edited_summary_df.columns[col_idx]
                         
-                        # [핵심 수정] old_value를 'original_summary_df'에서 가져옵니다.
+                        # [핵심] old_value를 'original_summary_df'(A)에서 가져옵니다.
                         old_value = original_summary_df.iloc[row_idx, col_idx]
                         new_value = edited_summary_df.iloc[row_idx, col_idx]
                         
@@ -3505,9 +3660,8 @@ if st.session_state.get('assigned', False):
                 st.code(log_text_stats, language='text')
             else:
                 st.info("수정된 사항이 없습니다.")
-            # --- ▲▲▲ [신규] 누적 테이블 로그 끝 ---
+            # --- ▲▲▲ [누적 테이블 로그 끝 (수정 완료)] ---
 
-            # [기존 코드] (L1751 근처)
             st.divider() # 구분선 추가
 
             # --- ▼▼▼ [핵심 수정] 3. 저장 및 다운로드 버튼 영역 수정 ▼▼▼ ---
@@ -3515,7 +3669,16 @@ if st.session_state.get('assigned', False):
 
             with col1:
                 # --- 1. Google Sheets 저장 버튼 ---
-                if st.button("💾 수정사항 Google Sheet에 저장", type="primary", use_container_width=True):
+
+                # [★ 3. .equals() 비교 결과로 실제 변경 유무를 최종 판정 ★]
+                # (schedule_has_changed는 L1822에서 이미 정의됨)
+                real_has_unsaved_changes = schedule_has_changed or cumulative_has_changed
+                
+                if st.button("💾 수정사항 Google Sheet에 저장", 
+                             type="primary", 
+                             use_container_width=True, 
+                             disabled=not real_has_unsaved_changes # <-- [수정 완료]
+                            ):
                     # [수정] st.session_state 대신 위에서 할당받은 *변수* 사용
                     if not edited_schedule_df.empty and not edited_summary_df.empty:
                         with st.spinner("수정된 데이터 저장 중..."):
@@ -3543,8 +3706,8 @@ if st.session_state.get('assigned', False):
                                     st.success(f"✅ '{schedule_sheet_name}' 및 '{summary_sheet_name}' 시트에 수정된 내용이 저장되었습니다.")
 
                                     # 저장 성공 후 초기 상태 업데이트
-                                    st.session_state.assignment_results["df_excel_initial"] = edited_schedule_df.copy()
-                                    st.session_state.assignment_results["summary_df_initial"] = edited_summary_df.copy()
+                                    # st.session_state.assignment_results["df_excel_initial"] = edited_schedule_df.copy()
+                                    # st.session_state.assignment_results["summary_df_initial"] = edited_summary_df.copy()
                                     st.session_state.assignment_results["df_schedule_for_display"] = edited_schedule_df.copy()
                                     st.session_state.assignment_results["summary_df_for_display"] = edited_summary_df.copy()
                                     
@@ -3572,7 +3735,7 @@ if st.session_state.get('assigned', False):
                     try:
                         # --- 데이터 로드 (기존과 동일) ---
                         results = st.session_state.get('assignment_results', {})
-                        initial_schedule_df = results.get("df_excel_initial")
+                        initial_schedule_df = results.get("df_schedule_for_comparison")
                         # initial_summary_df는 사용되지 않음 (콜백 플래그가 대체)
                         df_special_dl = results.get("df_special")
                         df_requests_dl = results.get("df_requests")
@@ -3581,13 +3744,15 @@ if st.session_state.get('assigned', False):
                         df_final_unique_dl = results.get("df_final_unique_sorted")
                         df_schedule_dl = results.get("df_schedule")
 
-                        # --- ▼▼▼ [핵심 수정 v7] 플래그 확인 ▼▼▼
-                        # 이제 has_unsaved_changes는 오직 콜백 플래그의 상태만을 반영합니다.
-                        has_unsaved_changes = st.session_state.get("editor_has_changes", False)
-                        # --- ▲▲▲ [핵심 수정 v7] 완료 ▲▲▲ ---
+                        # --- ▼▼▼ [핵심 수정] 플래그 확인 ▼▼▼
+                        # 'editor_has_changes' 플래그가 True이면 다운로드를 막습니다.
+                        has_unsaved_changes = real_has_unsaved_changes
+                        # --- ▲▲▲ [핵심 수정] 완료 ▲▲▲ ---
 
                         if has_unsaved_changes:
                             st.error("⚠️ 수정사항이 감지되었습니다. 먼저 '수정사항 Google Sheet에 저장' 버튼을 눌러주세요.")
+                            # [수정] 버튼이 아예 보이지 않도록 하거나, 여기에 disabled된 버튼을 추가할 수 있습니다.
+                            # 여기서는 st.error 메시지만 표시합니다.
                         else:
                             # 변경 사항이 없거나 저장된 상태일 때만 다운로드 버튼 표시
                             if initial_schedule_df is None or month_str_dl is None or df_final_unique_dl is None or df_schedule_dl is None:
@@ -3633,7 +3798,7 @@ if st.session_state.get('assigned', False):
 
                                 # --- 2. 배정 확인용 Excel 생성 및 다운로드 버튼 ---
                                 excel_data_checking = create_checking_schedule_excel(
-                                    initial_df=initial_schedule_df,
+                                    initial_df=results.get("df_schedule_for_comparison"), # (C_orig)
                                     edited_df=edited_schedule_df,
                                     edited_cumulative_df=edited_summary_df,
                                     df_special=df_special_dl if df_special_dl is not None else pd.DataFrame(),
@@ -3650,8 +3815,6 @@ if st.session_state.get('assigned', False):
                                     type="secondary",
                                     key="download_edited_checking"
                                 )
-                        # --- ▲▲▲ 조건부 버튼 표시 완료 ▲▲▲ ---
-
                     except Exception as e:
                         st.error(f"Excel 파일 생성 또는 변경 사항 확인 중 오류가 발생했습니다: {e}")
                         st.exception(e)

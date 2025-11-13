@@ -109,7 +109,16 @@ def update_sheet_with_retry(worksheet, data, retries=5, delay=10):
     for attempt in range(retries):
         try:
             worksheet.clear()
-            worksheet.update('A1', data, value_input_option='RAW')
+            
+            # [수정] 모든 데이터를 문자열(str)로 변환하여 리스트 재생성
+            # 이렇게 하면 1, 2, 3 같은 숫자도 '1', '2', '3' 텍스트로 저장됩니다.
+            data_as_text = [[str(cell) for cell in row] for row in data]
+            
+            # [수정] value_input_option을 'RAW'에서 'USER_ENTERED'로 변경
+            # 'USER_ENTERED'는 gspread가 데이터를 텍스트로 인식하게 하여
+            # Google Sheets에서 좌정렬(텍스트 형식)으로 저장되도록 합니다.
+            worksheet.update('A1', data_as_text, value_input_option='USER_ENTERED')
+            
             return True
         except Exception as e:
             if "Quota exceeded" in str(e):
@@ -450,7 +459,7 @@ def create_df_schedule_md(df_schedule):
 def apply_schedule_swaps(original_schedule_df, swap_requests_df, special_df):
     df_modified = original_schedule_df.copy()
     applied_count = 0
-    total_requests = len(swap_requests_df) # --- 이 줄 추가 ---
+    total_requests = len(swap_requests_df)
     swapped_assignments = st.session_state.get("swapped_assignments", set())
     batch_change_log = []
     messages = []
@@ -492,9 +501,12 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df, special_df):
                 for col in cols_with_person_before: df_modified.at[target_row_idx, col] = person_after
                 for col in cols_with_person_after: df_modified.at[target_row_idx, col] = person_before
 
-                swapped_assignments.add((formatted_date_in_df, '오전', person_after))
-                swapped_assignments.add((formatted_date_in_df, '오후', person_after))
-                swapped_assignments.add((formatted_date_in_df, '오전당직(온콜)', person_after))
+                # --- ▼▼▼ [ 1. 핵심 수정 ] ▼▼▼ ---
+                # (날짜, 시간, 변경 전, 변경 후) 4-tuple로 저장
+                swapped_assignments.add((formatted_date_in_df, '오전', person_before, person_after))
+                swapped_assignments.add((formatted_date_in_df, '오후', person_before, person_after))
+                swapped_assignments.add((formatted_date_in_df, '오전당직(온콜)', person_before, person_after))
+                # --- ▲▲▲ [ 수정 완료 ] ▲▲▲
 
                 batch_change_log.append({
                     '날짜': f"{formatted_date_in_df} ({'월화수목금토일'[date_obj.weekday()]}) - 오전당직 변경",
@@ -520,7 +532,12 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df, special_df):
             
             for col in matched_cols:
                 df_modified.at[target_row_idx, col] = person_after
-            swapped_assignments.add((formatted_date_in_df, time_period_from_request, person_after))
+            
+            # --- ▼▼▼ [ 2. 핵심 수정 ] ▼▼▼ ---
+            # (날짜, 시간, 변경 전, 변경 후) 4-tuple로 저장
+            swapped_assignments.add((formatted_date_in_df, time_period_from_request, person_before, person_after))
+            # --- ▲▲▲ [ 수정 완료 ] ▲▲▲
+            
             batch_change_log.append({
                 '날짜': f"{formatted_schedule_info}", '변경 전 인원': person_before, '변경 후 인원': person_after,
             })
@@ -530,8 +547,7 @@ def apply_schedule_swaps(original_schedule_df, swap_requests_df, special_df):
             messages.append(('error', f"요청 처리 중 오류 발생: {type(e).__name__} - {str(e)}"))
             continue
     
-    # --- 이 부분 수정 ---
-    if applied_count > 0 or messages: # 성공, 경고, 오류 중 하나라도 있으면 요약 메시지 생성
+    if applied_count > 0 or messages:
         summary = f"✅ 총 {total_requests}건 중 {applied_count}건의 스케줄 변경 요청이 성공적으로 반영되었습니다."
         messages.insert(0, ('success', summary))
     elif not messages:
@@ -593,17 +609,17 @@ def load_special_schedules(month_str):
         st.error(f"토요/휴일 데이터 로드 중 오류 발생: {str(e)}")
         return pd.DataFrame()
 
-# [L1707에 이 코드를 삽입하세요]
-
-def generate_excel_output(df_room, stats_df, columns, special_dates, special_df, date_cache, request_cells, swapped_assignments, morning_duty_slot, month_str):
+def generate_excel_output(df_room, stats_df, columns, special_dates, special_df, date_cache, request_cells, swapped_assignments, morning_duty_slot, month_str, change_log_map=None):
     """
-    현재 방배정/통계 DataFrame을 기반으로 Excel 파일을 생성(BytesIO)합니다.
-    (L1830-L2081 로직을 그대로 사용)
+    [수정됨]
+    현재 방배정/통계 DataFrame을 기반으로 '방배정'이라는 단일 시트에
+    스케줄과 통계 테이블을 모두 포함하는 Excel 파일을 생성(BytesIO)합니다.
     """
     
     wb = openpyxl.Workbook()
     sheet = wb.active
-    sheet.title = "Schedule"
+    
+    sheet.title = "방배정"
 
     if platform.system() == "Windows":
         font_name = "맑은 고딕"
@@ -613,14 +629,17 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
     # (스타일 정의)
     highlight_fill = PatternFill(start_color="F2DCDB", fill_type="solid")
     duty_font = Font(name=font_name, size=9, bold=True, color="FF00FF")
-    default_font = Font(name=font_name, size=9)
+    default_font = Font(name=font_name, size=9, bold=False) 
     special_day_fill = PatternFill(start_color="BFBFBF", fill_type="solid")
     no_person_day_fill = PatternFill(start_color="808080", fill_type="solid")
     default_yoil_fill = PatternFill(start_color="FFF2CC", fill_type="solid")
     special_person_fill = PatternFill(start_color="DDEBF7", fill_type="solid")
-    border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    thin_side = Side(style='thin')
+    thick_side = Side(style='medium')
+    border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
-    # (헤더 렌더링)
+    # (헤더 렌더링 - df_room 기준)
     for col_idx, header in enumerate(columns, 1):
         cell = sheet.cell(1, col_idx, header)
         cell.font = Font(bold=True, name=font_name, size=9)
@@ -638,8 +657,10 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
             cell.fill = PatternFill(start_color="CC99FF", fill_type="solid")
 
     # (데이터 렌더링 - df_room 기준)
-    result_data = df_room.fillna('').values.tolist() # DataFrame을 리스트로 변환
+    result_data = df_room.fillna('').values.tolist()
     target_year = int(month_str.split('년')[0])
+    
+    last_data_row = 1 
     
     for row_idx, row_data in enumerate(result_data, 2):
         current_date_str = row_data[0]
@@ -650,14 +671,13 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
         if is_special_day:
             try:
                 date_obj_lookup = datetime.strptime(current_date_str, '%m월 %d일').replace(year=target_year)
-                # [수정] special_df['날짜'] -> special_df['날짜_dt'].dt.date
                 duty_person_row = special_df[special_df['날짜_dt'].dt.date == date_obj_lookup.date()]
                 if not duty_person_row.empty:
                     duty_person_raw = duty_person_row['당직'].iloc[0]
                     if pd.notna(duty_person_raw) and str(duty_person_raw).strip() and str(duty_person_raw).strip() != '당직 없음':
                         duty_person_for_the_day = str(duty_person_raw).strip()
             except Exception as e:
-                pass # st.warning(f"Excel (재)생성 중 당직 인원 조회 오류: {e}")
+                pass 
 
         assignment_cells = row_data[2:]
         personnel_in_row = [p for p in assignment_cells if p]
@@ -667,9 +687,8 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
         for col_idx, value in enumerate(row_data, 1):
             cell = sheet.cell(row_idx, col_idx, value)
             cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = border
+            cell.border = border 
             
-            # (배경색 적용)
             if col_idx == 1: cell.fill = no_person_day_fill
             elif col_idx == 2:
                 if is_no_person_day: cell.fill = no_person_day_fill
@@ -679,25 +698,76 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
             elif is_special_day and col_idx > 2 and value: cell.fill = special_person_fill
             
             slot_name = columns[col_idx-1]
-            cell_shift_type = ''
-            if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']): cell_shift_type = '오전'
-            elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜']): cell_shift_type = '오후'
-
             current_cell_date = str(current_date_str).strip()
             current_cell_value = str(value).strip()
 
-            # (하이라이트 적용)
+            # --- 1. 'swapped_assignments' (스케줄 변경) 기준 ---
+            cell_shift_type = ''
+            if any(time_str in str(slot_name) for time_str in ['8:30', '9:00', '9:30', '10:00']): cell_shift_type = '오전'
+            # [수정] '오전당직(온콜)'도 '오후'로 간주하여 '스케줄 수정'의 `apply_schedule_swaps`와 맞춤
+            elif any(time_str in str(slot_name) for time_str in ['13:30', '온콜', '오전당직(온콜)']): cell_shift_type = '오후'
+            
+            # --- ▼▼▼ [ 3. 핵심 수정 ] ▼▼▼ ---
             is_newly_assigned = False
-            for swapped_date, swapped_shift, swapped_value in swapped_assignments:
-                if (str(swapped_date).strip() == current_cell_date and
-                    str(swapped_shift).strip() == cell_shift_type and
-                    str(swapped_value).strip() == current_cell_value):
-                    is_newly_assigned = True
-                    break
-            if is_newly_assigned:
-                cell.fill = highlight_fill
+            original_value_schedule = None # '변경 전' 값을 저장할 변수
 
-            # (폰트 적용)
+            if swapped_assignments:
+                # 4-tuple (날짜, 시간, 이전값, 새값) 또는 3-tuple (날짜, 시간, 새값)을 순회
+                for swap_tuple in swapped_assignments:
+                    try:
+                        if len(swap_tuple) == 4:
+                            s_date, s_shift, s_old, s_new = swap_tuple
+                            # [수정] '오전당직(온콜)' 특별 처리
+                            if s_shift == '오전당직(온콜)':
+                                s_shift = '오후' # cell_shift_type과 맞추기
+                                
+                            if (s_date == current_cell_date and
+                                s_shift == cell_shift_type and
+                                s_new == current_cell_value):
+                                is_newly_assigned = True
+                                original_value_schedule = s_old # '변경 전' 값 저장
+                                break 
+                        elif len(swap_tuple) == 3: # [호환성]
+                            s_date, s_shift, s_new = swap_tuple
+                            if s_shift == '오전당직(온콜)':
+                                s_shift = '오후'
+                                
+                            if (s_date == current_cell_date and
+                                s_shift == cell_shift_type and
+                                s_new == current_cell_value):
+                                is_newly_assigned = True
+                                break
+                    except Exception as e:
+                        # 튜플 형식이 잘못되었을 경우 무시
+                        pass 
+            # --- ▲▲▲ [ 수정 완료 ] ▲▲▲
+
+            # --- 2. 'change_log_map' (방배정 수동 변경) 기준 ---
+            cell_changed_in_room_editor = False
+            original_value = None
+            if change_log_map is not None:
+                lookup_key_map = (current_cell_date, slot_name)
+                if lookup_key_map in change_log_map:
+                    cell_changed_in_room_editor = True
+                    original_value, _ = change_log_map[lookup_key_map]
+
+            # --- 3. 우선순위에 따라 적용 ---
+            if cell_changed_in_room_editor:
+                # 1순위: '방배정' 에디터에서 수동 변경 (색상 + 메모)
+                cell.fill = highlight_fill
+                original_display = original_value if original_value else '빈 값'
+                cell.comment = Comment(f"변경 전: {original_display}", "Edit Tracker")
+
+            # --- ▼▼▼ [ 4. 핵심 수정 ] ▼▼▼ ---
+            elif is_newly_assigned:
+                # 2순위: '스케줄' 에디터에서 변경 (색상 + 메모)
+                cell.fill = highlight_fill
+                # '변경 전' 값이 있으면 코멘트 추가
+                if original_value_schedule is not None:
+                    original_display = original_value_schedule if original_value_schedule else '빈 값'
+                    cell.comment = Comment(f"변경 전: {original_display}", "Edit Tracker")
+            # --- ▲▲▲ [ 수정 완료 ] ▲▲▲
+
             cell.font = default_font
             if value:
                 if is_special_day:
@@ -706,43 +776,90 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
                 else:
                     if slot_name.endswith('_당직') or slot_name == '온콜':
                         cell.font = duty_font
-                        
-            # (코멘트 추가)
-            if col_idx > 2 and value and date_cache.get(current_date_str):
+
+            # --- ▼▼▼ [ 5. 핵심 수정 ] ▼▼▼ ---
+            # '변경 전:' 코멘트가 *없을 때만* '방배정 요청' 코멘트를 추가 (덮어쓰기 방지)
+            if cell.comment is None and col_idx > 2 and value and date_cache.get(current_date_str):
                 formatted_date_for_comment = date_cache[current_date_str]
                 if (formatted_date_for_comment, slot_name) in request_cells and value == request_cells[(formatted_date_for_comment, slot_name)]['이름']:
                     cell.comment = Comment(f"{request_cells[(formatted_date_for_comment, slot_name)]['분류']}", "System")
+            # --- ▲▲▲ [ 수정 완료 ] ▲▲▲
+            
+        last_data_row = row_idx
     
-    # (열 너비 설정)
     sheet.column_dimensions['A'].width = 11
-    for col in sheet.columns:
-        if col[0].column_letter != 'A':
-            sheet.column_dimensions[col[0].column_letter].width = 9
+    
+    schedule_col_count = len(columns)
+    stats_col_count = len(stats_df.columns)
+    max_cols = max(schedule_col_count, stats_col_count)
+    
+    for i in range(2, max_cols + 1): 
+        col_letter = openpyxl.utils.get_column_letter(i)
+        sheet.column_dimensions[col_letter].width = 10
 
-    # (Stats 시트 생성 - stats_df 기준)
-    stats_sheet = wb.create_sheet("Stats")
-    stats_columns = stats_df.columns.tolist()
+    # --- (이하 Stats 테이블 로직은 동일) ---
+    stats_start_row = last_data_row + 3 
+    stats_columns = stats_df.columns.tolist()  
+    stats_end_col = len(stats_columns)
+    stats_end_row = stats_start_row + len(stats_df)
+    stats_header_fill = PatternFill(start_color="E7E6E6", fill_type="solid")
+
     for col_idx, header in enumerate(stats_columns, 1):
-        stats_sheet.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 12
-        cell = stats_sheet.cell(1, col_idx, header)
-        cell.font = Font(bold=True, name=font_name, size=9)
+        cell = sheet.cell(stats_start_row, col_idx, header) 
+        cell.font = Font(bold=True, name=font_name, size=9) 
         cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = border
-        if header == '인원': cell.fill = PatternFill(start_color="D0CECE", fill_type="solid")
-        elif header == '이른방 합계': cell.fill = PatternFill(start_color="FFE699", fill_type="solid")
-        elif header == '늦은방 합계': cell.fill = PatternFill(start_color="C6E0B4", fill_type="solid")
-        elif header == '오전당직 합계': cell.fill = PatternFill(start_color="FFC8CD", fill_type="solid")
-        elif header == '오후당직 합계': cell.fill = PatternFill(start_color="FFC8CD", fill_type="solid")
-        elif header == '오후당직 누적': cell.fill = PatternFill(start_color="B8CCE4", fill_type="solid")
-        elif '당직' in header: cell.fill = PatternFill(start_color="FFC0CB", fill_type="solid")
-        else: cell.fill = PatternFill(start_color="F2F2F2", fill_type="solid")
+        cell.fill = stats_header_fill
+        cell.border = Border(
+            left=thick_side if col_idx == 1 else thin_side,
+            right=thick_side if col_idx == 1 or col_idx == stats_end_col else thin_side, 
+            top=thick_side,
+            bottom=thick_side
+        )
 
-    for row_idx, row in enumerate(stats_df.values, 2):
-        for col_idx, value in enumerate(row, 1):
-            cell = stats_sheet.cell(row_idx, col_idx, value)
-            cell.font = Font(name=font_name, size=9)
+    item_names_series = stats_df['항목']
+    separator_rows_set = {"늦은방 합계", "오전당직 누적", "오후당직 누적"}
+    time_prefixes = ["8:30(", "9:00(", "9:30(", "10:00("] 
+    for prefix in time_prefixes:
+        matching_rows = item_names_series[item_names_series.str.startswith(prefix)]
+        if not matching_rows.empty:
+            separator_rows_set.add(matching_rows.iloc[-1])
+
+    for stats_row_idx, row_data in enumerate(stats_df.fillna('').values.tolist(), stats_start_row + 1):
+        item_name = str(row_data[0]) 
+        is_last_row = (stats_row_idx == stats_end_row)
+        is_separator_row = (item_name in separator_rows_set)
+        
+        summary_fill = None
+        if item_name == '이른방 합계': summary_fill = PatternFill(start_color="FFE699", fill_type="solid")
+        elif item_name == '늦은방 합계': summary_fill = PatternFill(start_color="C6E0B4", fill_type="solid")
+        elif item_name == '오전당직 합계': summary_fill = PatternFill(start_color="B8CCE4", fill_type="solid")
+        elif item_name == '오후당직 합계': summary_fill = PatternFill(start_color="B8CCE4", fill_type="solid")
+        elif item_name == '오전당직 누적': summary_fill = PatternFill(start_color="FFC8CD", fill_type="solid")
+        elif item_name == '오후당직 누적': summary_fill = PatternFill(start_color="FFC8CD", fill_type="solid")
+
+        for col_idx, value in enumerate(row_data, 1):
+            cell = sheet.cell(stats_row_idx, col_idx, value) 
+            
+            if col_idx == 1:
+                cell.font = Font(name=font_name, size=9, bold=True)
+            else:
+                cell.font = default_font
+            
             cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = border
+            cell.border = Border(
+                left=thick_side if col_idx == 1 else thin_side, 
+                right=thick_side if col_idx == 1 or col_idx == stats_end_col else thin_side,
+                top=thin_side, 
+                bottom=thick_side if is_last_row or is_separator_row else thin_side
+            )
+            
+            if summary_fill:
+                cell.fill = summary_fill
+            else:
+                if col_idx == 1:
+                    cell.fill = PatternFill(start_color="F2F2F2", fill_type="solid")
+                else:
+                    cell.fill = PatternFill(fill_type=None)
 
     output = BytesIO()
     wb.save(output)
@@ -1075,7 +1192,7 @@ else:
 
 st.divider()
 st.subheader("✍️ 스케줄 수정")
-st.write("- 요청사항을 **일괄 적용/취소**하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.")
+st.write("- 요청사항을 **일괄 적용/취소**하거나, 셀을 더블클릭하여 직접 수정한 후 **최종 저장 버튼**을 누르세요.\n- 하단에서 방배정 수행 버튼을 누르면 위 변경사항이 반영된 '**스케줄 최종**' 버전이 저장됩니다.")
 
 # 표시할 데이터프레임 결정
 df_to_display = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial", pd.DataFrame()))
@@ -1177,11 +1294,13 @@ if "batch_apply_messages" in st.session_state and st.session_state["batch_apply_
 edited_df_md = st.data_editor(df_to_display, use_container_width=True, key="schedule_editor", disabled=['날짜', '요일'])
 
 # --- 실시간 변경사항 로그 ---
+st.write(" ")
 st.caption("📝 변경사항 미리보기")
 
 # 1. 수동 변경사항 계산
 base_df_for_manual_diff = st.session_state.get("df_schedule_md_modified", st.session_state.get("df_schedule_md_initial"))
 manual_change_log = []
+oncall_warning_messages = []
 if not edited_df_md.equals(base_df_for_manual_diff):
     diff_indices = np.where(edited_df_md.ne(base_df_for_manual_diff))
     for row_idx, col_idx in zip(diff_indices[0], diff_indices[1]):
@@ -1194,7 +1313,33 @@ if not edited_df_md.equals(base_df_for_manual_diff):
             weekday = original_row['요일']
         except IndexError:
             weekday = ''
-        time_period = '오후' if col_name.startswith('오후') else '오전'
+        if col_name == '오전당직(온콜)':
+            time_period = '오전당직'
+            
+            # --- ▼▼▼ [경고 메시지 생성 로직 추가] ▼▼▼ ---
+            old_val_str = str(old_value).strip()
+            new_val_str = str(new_value).strip()
+            
+            # 1. 값이 둘 다 있는 경우 (A -> B)
+            if old_val_str and new_val_str:
+                msg = f"• {date_str_raw}: '{old_val_str}' 님의 오전당직 누적 -1, '{new_val_str}' 님의 누적 +1"
+                oncall_warning_messages.append(msg)
+            # 2. 값 B가 비어있는 경우 (A -> 빈 값)
+            elif old_val_str:
+                msg = f"• {date_str_raw}: '{old_val_str}' 님의 오전당직 누적 -1"
+                oncall_warning_messages.append(msg)
+            # 3. 값 A가 비어있는 경우 (빈 값 -> B)
+            elif new_val_str:
+                msg = f"• {date_str_raw}: '{new_val_str}' 님의 오전당직 누적 +1"
+                oncall_warning_messages.append(msg)
+            # --- ▲▲▲ [추가 완료] ▲▲▲ ---
+
+        elif col_name.startswith('오후'):
+            time_period = '오후'
+        else:
+            time_period = '오전'
+        # ▲▲▲ [수정 완료] ▲▲▲
+
         formatted_date_str = f"{date_str_raw} ({weekday.replace('요일', '')}) - {time_period}"
         manual_change_log.append({
             '날짜': formatted_date_str, 
@@ -1212,10 +1357,21 @@ if st.session_state["final_change_log"]:
 else:
     st.info("기록된 변경사항이 없습니다.")
 
+# --- ▼▼▼ [경고 메시지 표시 로직 추가] (L1448 다음 줄) ▼▼▼ ---
+if oncall_warning_messages:
+    # 리스트의 중복을 제거하고 날짜순으로 정렬
+    sorted_warnings = sorted(list(set(oncall_warning_messages)))
+    
+    # [수정] 경고 메시지에 안내 문구 추가
+    warning_text = (
+        "🔔 **오전당직 누적 수치 변경 알림**\n\n" +
+        "\n".join(sorted_warnings) +
+        "\n\n(하단 '방배정 수행' 버튼을 누르면 이 누적 수치가 최종 저장됩니다.)"
+    )
+    st.warning(warning_text)
+# --- ▲▲▲ [추가 완료] ▲▲▲
+
 # --- 기존 '변경사항 저장' 버튼 관련 코드를 아래 블록으로 교체하세요 ---
-
-st.write(" ") # 여백
-
 # --- 1. [수정] 버튼을 표시하기 전에 다음 버전 번호를 미리 계산 ---
 loaded_version = st.session_state.get("loaded_version", "")
 version_match = re.search(r'ver\s*(\d+)\.\d+', loaded_version)
@@ -1225,8 +1381,6 @@ if version_match:
 else:
     # 기본 시트에서 작업한 경우, 다음 버전은 2.0
     next_major_version = 2
-
-st.write(" ") # 여백
 
 # 방 설정 UI
 st.divider()
@@ -2115,7 +2269,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
         # 로그 기록 (기존과 동일)
         manual_change_log_for_save.append({'날짜': formatted_date_str, '변경 전 인원': str(old_value), '변경 후 인원': str(new_value)})
 
-        swapped_set_for_save.add((date_str_raw.strip(), time_period, str(new_value).strip()))
+        swapped_set_for_save.add((date_str_raw.strip(), time_period, str(old_value).strip(), str(new_value).strip()))
 
     # "일괄 적용" 시 생성된 세트도 여기에 합쳐줍니다.
     batch_swapped_set = st.session_state.get("swapped_assignments", set()) # 이미 위에서 가져왔으므로 중복될 수 있으나 set이 처리
@@ -2597,43 +2751,47 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             
             df_room = pd.DataFrame(result_data, columns=columns)
 
-            # for _, row in df_room.iterrows():
-            #     current_date_str = row['날짜']
-            #     if current_date_str in special_dates:
-            #         continue # 토요/휴일은 통계에 포함 안 함
+            # 1. 'df_room' (최종 방배정 결과)를 기반으로 'total_stats'를 (재)계산합니다.
+            total_stats = {
+                'early': Counter(), 
+                'late': Counter(), 
+                'morning_duty': Counter(), 
+                'afternoon_duty': Counter(), 
+                'rooms': {str(i): Counter() for i in range(1, 13)}, 
+                'time_room_slots': {s: Counter() for s in st.session_state["time_slots"].keys()}
+            }
+            
+            for _, row in df_room.iterrows():
+                current_date_str = row['날짜']
+                if current_date_str in special_dates:
+                    continue # 토요/휴일은 통계에 포함 안 함
 
-            #     # 'columns' 리스트와 'row' (Series)를 매핑
-            #     assignment_for_day = row[columns[2:]] # '날짜', '요일' 제외
+                # 'columns' 리스트와 'row' (Series)를 매핑
+                assignment_for_day = row[columns[2:]] # '날짜', '요일' 제외
 
-            #     for slot_name, person in assignment_for_day.items():
-            #         if not person:
-            #             continue
-            
-            #         # 1. 오전 당직
-            #         if slot_name == morning_duty_slot:
-            #             total_stats['morning_duty'][person] += 1
-            
-            #         # 2. 오후 당직 (13:30 당직)
-            #         elif slot_name.startswith('13:30') and slot_name.endswith('_당직'):
-            #             total_stats['afternoon_duty'][person] += 1
-            
-            #         # 3. [삭제] 온콜 (오후 당직으로 합산)
-            #         # elif slot_name == '온콜':
-            #         #     total_stats['afternoon_duty'][person] += 1
-            
-            #         # 4. 이른방 (8:30, 당직 제외)
-            #         elif slot_name.startswith('8:30') and '_당직' not in slot_name:
-            #             total_stats['early'][person] += 1
-            
-            #         # 5. 늦은방 (10:00)
-            #         elif slot_name.startswith('10:00'):
-            #             total_stats['late'][person] += 1
-            
-            #         # 6. 시간대별/방별 통계 (for stats_df)
-            #         if slot_name in total_stats['time_room_slots']:
-            #             total_stats['time_room_slots'][slot_name][person] += 1
-                
-            time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
+                for slot_name, person in assignment_for_day.items():
+                    if not person:
+                        continue
+                    
+                    # 1. 오전 당직
+                    if slot_name == morning_duty_slot:
+                        total_stats['morning_duty'][person] += 1
+                    
+                    # 2. 오후 당직 (13:30 당직)
+                    elif slot_name.startswith('13:30') and slot_name.endswith('_당직'):
+                        total_stats['afternoon_duty'][person] += 1
+                    
+                    # 3. 이른방 (8:30, 당직 제외)
+                    elif slot_name.startswith('8:30') and '_당직' not in slot_name:
+                        total_stats['early'][person] += 1
+                    
+                    # 4. 늦은방 (10:00)
+                    elif slot_name.startswith('10:00'):
+                        total_stats['late'][person] += 1
+                    
+                    # 5. 시간대별/방별 통계 (for stats_df)
+                    if slot_name in total_stats['time_room_slots']:
+                        total_stats['time_room_slots'][slot_name][person] += 1
 
             # --- [수정 2] 통계 DataFrame 생성 (목표치 열 추가) ---
             stats_data, all_personnel_stats = [], set(p for _, r in st.session_state["df_schedule_md"].iterrows() for p in r[2:].dropna() if p)
@@ -2642,59 +2800,75 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             
             # ▼▼▼ [수정 시작] ▼▼▼
             duty_target_map = {}
-            old_cumulative_map = {} # [FIX] '지난달 누적'을 저장할 맵 추가
+            # [수정] "진짜 베이스 누적"을 계산하기 위해 4개의 맵을 모두 로드합니다.
+            old_pm_cumulative_map = {}
+            old_pm_source_map = {}
+            old_am_cumulative_map = {} 
+            old_am_source_map = {}
             
             if not df_cumulative_stats.empty and '이름' in df_cumulative_stats.columns:
+                if '오후당직누적' in df_cumulative_stats.columns:
+                    old_pm_cumulative_map = df_cumulative_stats.set_index('이름')['오후당직누적'].to_dict()
                 if '오후당직합계' in df_cumulative_stats.columns:
-                    duty_target_map = df_cumulative_stats.set_index('이름')['오후당직합계'].to_dict()
-                if '오후당직누적' in df_cumulative_stats.columns: # [FIX] '오후당직누적' 열이 있는지 확인
-                    old_cumulative_map = df_cumulative_stats.set_index('이름')['오후당직누적'].to_dict() # [FIX] '오후당직누적' 값을 맵으로 생성
-            
+                    old_pm_source_map = df_cumulative_stats.set_index('이름')['오후당직합계'].to_dict()
+                if '오전당직누적' in df_cumulative_stats.columns:
+                    old_am_cumulative_map = df_cumulative_stats.set_index('이름')['오전당직누적'].to_dict()
+                if '오전당직합계' in df_cumulative_stats.columns:
+                    old_am_source_map = df_cumulative_stats.set_index('이름')['오전당직합계'].to_dict()
+
             for person in sorted(all_personnel_stats):
                 
-                # ▼▼▼ [핵심 수정] Stats 테이블의 누적 로직을 G-Sheet 저장 로직과 일치시킴 ▼▼▼
-                
-                # 1. 이번 달 합계 (이번 달 배정 횟수)
-                assigned_this_month = total_stats['afternoon_duty'][person]
-
-                # 2. 지난달 누적 (시작 값)
-                old_cumulative_count = 0
+                # --- [수정] 오후 당직: (Old 누적 - Old 합계) + New 합계 ---
+                pm_assigned_this_month = total_stats['afternoon_duty'][person] # New 합계
+                pm_old_cumulative = 0
+                pm_old_source = 0
                 try:
-                    # [FIX] '오후당직누적' 맵에서 값을 가져옵니다.
-                    old_cumulative_count = int(old_cumulative_map.get(person, 0))
+                    pm_old_cumulative = int(old_pm_cumulative_map.get(person, 0)) # Old 누적
+                    pm_old_source = int(old_pm_source_map.get(person, 0))     # Old 합계
                 except (ValueError, TypeError):
-                    old_cumulative_count = 0 # 숫자로 변환 실패 시 0
+                    pass
+                true_pm_base = pm_old_cumulative - pm_old_source # 진짜 베이스
+                pm_final_cumulative = true_pm_base + pm_assigned_this_month # 최종 누적
                 
-                # 3. 최종 누적 (이번 달 합계 + 지난달 누적)
-                final_cumulative_count = assigned_this_month + old_cumulative_count
+                # --- [수정] 오전 당직: (Old 누적 - Old 합계) + New 합계 ---
+                am_assigned_this_month = total_stats['morning_duty'][person] # New 합계
+                am_old_cumulative = 0
+                am_old_source = 0
+                try:
+                    am_old_cumulative = int(old_am_cumulative_map.get(person, 0)) # Old 누적
+                    am_old_source = int(old_am_source_map.get(person, 0))     # Old 합계
+                except (ValueError, TypeError):
+                    pass
+                true_am_base = am_old_cumulative - am_old_source # 진짜 베이스
+                am_final_cumulative = true_am_base + am_assigned_this_month # 최종 누적
                 
-                # ▲▲▲ [수정 완료] ▲▲▲
-
                 stats_entry = {
                     '인원': person,
                     '이른방 합계': total_stats['early'][person],
                     '늦은방 합계': total_stats['late'][person],
-                    '오전당직 합계': total_stats['morning_duty'][person],
-                    '오후당직 합계': assigned_this_month, # (1. 이번달 합계)
-                    '오후당직 누적': final_cumulative_count # (2. 최종 누적)
+                    '오전당직 합계': am_assigned_this_month,
+                    '오전당직 누적': am_final_cumulative,
+                    '오후당직 합계': pm_assigned_this_month,
+                    '오후당직 누적': pm_final_cumulative
                 }
-                # ▲▲▲ [수정 완료] ▲▲▲
-
                 for slot in st.session_state["time_slots"].keys():
                     if not slot.endswith('_당직'):
                         stats_entry[f'{slot} 합계'] = total_stats['time_room_slots'].get(slot, Counter())[person]
                 stats_data.append(stats_entry)
 
-            # ▼▼▼ [핵심 수정] 컬럼명 변경 ▼▼▼
-            sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오후당직 합계', '오후당직 누적']
-            # ▲▲▲ [수정 완료] ▲▲▲
+            time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
+
+            # [수정] 컬럼 목록에 '오전당직 누적' 추가
+            sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오전당직 누적', '오후당직 합계', '오후당직 누적']
             
-            time_slots = sorted(
+            time_slots_sorted = sorted(
                 [slot for slot in st.session_state["time_slots"].keys() if not slot.endswith('_당직')],
                 key=lambda x: (time_order.index(x.split('(')[0]), int(x.split('(')[1].split(')')[0]))
             )
-            sorted_columns.extend([f'{slot} 합계' for slot in time_slots])
-            stats_df = pd.DataFrame(stats_data)[sorted_columns]
+            sorted_columns.extend([f'{slot} 합계' for slot in time_slots_sorted])
+            stats_df_names_as_rows = pd.DataFrame(stats_data)[sorted_columns]
+            # [신규] (항목-행) 기준으로 Transpose 하여 최종 stats_df 생성
+            stats_df = stats_df_names_as_rows.set_index('인원').transpose().reset_index().rename(columns={'index': '항목'})
 
             # --- [수정 3] 배정 완료 후, 모든 로그 생성 ---
             
@@ -2910,61 +3084,117 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                                     except (ValueError, TypeError):
                                         pass
 
-                            target_row_index = -1
-                            source_row_index = -1
+                            # [1단계] 오전/오후 인덱스 변수 초기화
+                            pm_target_row_index = -1 # '오후당직누적'
+                            pm_source_row_index = -1 # '오후당직합계'
+                            am_target_row_index = -1 # '오전당직누적'
+                            am_source_row_index = -1 # '오전당직합계'
 
+                            # [2단계] 4개 행의 인덱스 찾기
                             for i, row_data in enumerate(rows):
                                 if row_data[0] == '오후당직누적':
-                                    target_row_index = i
+                                    pm_target_row_index = i
                                 if row_data[0] == '오후당직합계':
-                                    source_row_index = i
+                                    pm_source_row_index = i
+                                if row_data[0] == '오전당직누적':
+                                    am_target_row_index = i
+                                if row_data[0] == '오전당직합계':
+                                    am_source_row_index = i
                             
-                            if target_row_index != -1 and source_row_index != -1:
+                            # [3단계] 4개 행을 모두 찾았는지 확인
+                            if all(idx != -1 for idx in [pm_target_row_index, pm_source_row_index, am_target_row_index, am_source_row_index]):
                                 
+                                # [4단계] 오전/오후 누적값 맵(Map) 불러오기
                                 df_cumulative_updated = st.session_state.get("df_cumulative", pd.DataFrame())
-                                old_cumulative_map = {}
-                                if not df_cumulative_updated.empty and '이름' in df_cumulative_updated.columns and '오후당직누적' in df_cumulative_updated.columns:
-                                    old_cumulative_map = df_cumulative_updated.set_index('이름')['오후당직누적'].to_dict()
+                                old_pm_cumulative_map = {}
+                                old_am_cumulative_map = {}
+                                
+                                # --- ▼▼▼ [수정] 누락된 '합계(Source)' 맵 로드 ▼▼▼ ---
+                                old_pm_source_map = {}
+                                old_am_source_map = {}
+                                # --- ▲▲▲ [수정] 완료 ▲▲▲ ---
+
+                                if not df_cumulative_updated.empty and '이름' in df_cumulative_updated.columns:
+                                    if '오후당직누적' in df_cumulative_updated.columns:
+                                        old_pm_cumulative_map = df_cumulative_updated.set_index('이름')['오후당직누적'].to_dict()
+                                    if '오전당직누적' in df_cumulative_updated.columns:
+                                        old_am_cumulative_map = df_cumulative_updated.set_index('이름')['오전당직누적'].to_dict()
+                                    
+                                    # --- ▼▼▼ [수정] '합계' 맵을 로드하는 코드 추가 ▼▼▼ ---
+                                    if '오후당직합계' in df_cumulative_updated.columns:
+                                        old_pm_source_map = df_cumulative_updated.set_index('이름')['오후당직합계'].to_dict()
+                                    if '오전당직합계' in df_cumulative_updated.columns:
+                                        old_am_source_map = df_cumulative_updated.set_index('이름')['오전당직합계'].to_dict()
+                                    # --- ▲▲▲ [수정] 완료 ▲▲▲ ---
                                 else:
                                     save_errors.append("세션에서 'df_cumulative' (수정된 누적 데이터)를 읽어오는 데 실패했습니다.")
 
+                                # [5단계] '오전당직' 횟수 계산 및 저장 로직 추가
                                 for col_idx, name in enumerate(headers):
                                     if col_idx == 0: continue
                                     name_strip = name.strip()
                                     
-                                    assigned_this_month = actual_duty_counts.get(name_strip, 0)
-                                    old_cumulative_val = 0
+                                    # --- 1. 오후 당직 (계산식 수정) ---
+                                    pm_assigned_this_month = total_stats['afternoon_duty'].get(name_strip, 0) # New 합계
+                                    pm_old_cumulative_val = 0
+                                    pm_old_source_val = 0 # [추가]
                                     try:
-                                        old_cumulative_val = int(old_cumulative_map.get(name_strip, 0))
+                                        pm_old_cumulative_val = int(old_pm_cumulative_map.get(name_strip, 0)) # Old 누적
+                                        pm_old_source_val = int(old_pm_source_map.get(name_strip, 0)) # Old 합계 [추가]
                                     except (ValueError, TypeError):
-                                        old_cumulative_val = 0
-                                        
-                                    final_cumulative_count = assigned_this_month + old_cumulative_val
+                                        pm_old_cumulative_val = 0
+                                        pm_old_source_val = 0 # [추가]
                                     
-                                    rows[source_row_index][col_idx] = assigned_this_month
-                                    rows[target_row_index][col_idx] = final_cumulative_count
+                                    true_pm_base = pm_old_cumulative_val - pm_old_source_val # [수정] 진짜 베이스
+                                    pm_final_cumulative_count = true_pm_base + pm_assigned_this_month # [수정] 최종 누적
+                                    
+                                    rows[pm_source_row_index][col_idx] = pm_assigned_this_month
+                                    rows[pm_target_row_index][col_idx] = pm_final_cumulative_count
+                                    
+                                    # --- 2. 오전 당직 (계산식 수정) ---
+                                    am_assigned_this_month = total_stats['morning_duty'].get(name_strip, 0) # New 합계
+                                    am_old_cumulative_val = 0
+                                    am_old_source_val = 0 # [추가]
+                                    try:
+                                        am_old_cumulative_val = int(old_am_cumulative_map.get(name_strip, 0)) # Old 누적
+                                        am_old_source_val = int(old_am_source_map.get(name_strip, 0)) # Old 합계 [추가]
+                                    except (ValueError, TypeError):
+                                        am_old_cumulative_val = 0
+                                        am_old_source_val = 0 # [추가]
+                                    
+                                    true_am_base = am_old_cumulative_val - am_old_source_val # [수정] 진짜 베이스
+                                    am_final_cumulative_count = true_am_base + am_assigned_this_month # [수정] 최종 누적
+                                    
+                                    rows[am_source_row_index][col_idx] = am_assigned_this_month
+                                    rows[am_target_row_index][col_idx] = am_final_cumulative_count
 
                                 final_cumulative_sheet_name = f"{next_month_str} 누적 최종"
                                 try:
                                     worksheet_final_cumulative = sheet.worksheet(final_cumulative_sheet_name)
                                 except gspread.exceptions.WorksheetNotFound:
                                     worksheet_final_cumulative = sheet.add_worksheet(title=final_cumulative_sheet_name,
-                                                                                        rows=len(all_data) + 5,
-                                                                                        cols=len(headers) + 5)
+                                                                                    rows=len(all_data) + 5,
+                                                                                    cols=len(headers) + 5)
 
                                 if update_sheet_with_retry(worksheet_final_cumulative, [headers] + rows):
                                     st.success(f"✅ '{final_cumulative_sheet_name}' 시트 업데이트가 완료되었습니다.")
                                 else:
                                     save_errors.append(f"'{final_cumulative_sheet_name}' 시트 업데이트에 실패하였습니다.")
-                                
-                            elif target_row_index == -1: 
+                            
+                            # [6단계] 오류 메시지 수정
+                            elif pm_target_row_index == -1: 
                                 save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직누적' 항목을 찾을 수 없습니다.")
-                            elif source_row_index == -1: 
+                            elif pm_source_row_index == -1: 
                                 save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직합계' 항목을 찾을 수 없습니다.")
-                
+                            elif am_target_row_index == -1: 
+                                save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오전당직누적' 항목을 찾을 수 없습니다.")
+                            elif am_source_row_index == -1: 
+                                save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오전당직합계' 항목을 찾을 수 없습니다.")
+
                 except Exception as e:
                     st.error(f"Google Sheets '누적 최종' 시트 저장 중 오류 발생: {type(e).__name__} - {e}")
                     save_errors.append(f"'누적 최종' 시트 저장 실패: {e}")
+                    time.sleep(5)
 
             except Exception as e:
                 # gc = get_gspread_client() 자체에서 오류가 난 경우
@@ -2982,7 +3212,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 request_cells=request_cells,
                 swapped_assignments=st.session_state.get("swapped_assignments", set()), # 이 시점엔 비어있음
                 morning_duty_slot=morning_duty_slot,
-                month_str=month_str
+                month_str=month_str,
             )
             # --- [수정 완료] ---
 
@@ -3005,182 +3235,10 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                 "all_personnel_stats": all_personnel_stats,
                 "time_slots": st.session_state["time_slots"],
                 "time_order": time_order,
-                "all_slots": all_slots
+                "all_slots": all_slots,
             }
             
             save_errors = [] # 저장 오류 기록용
-            # try:
-            #     # st.info("ℹ️ 최종 스케줄 및 누적 데이터를 Google Sheets에 저장합니다...")
-            #     gc = get_gspread_client()
-            #     sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])
-
-            #     if "assignment_results" not in st.session_state or "actual_duty_counts" not in st.session_state["assignment_results"]:
-            #         st.error("❌ 'actual_duty_counts'를 세션에서 찾을 수 없습니다. '방배정 수행'을 다시 시도해주세요.")
-            #         st.stop()
-            #     actual_duty_counts = st.session_state["assignment_results"]["actual_duty_counts"]
-
-            #     # 1. 스케줄 최종 저장 (이전 저장 버튼 로직 재활용)
-            #     df_schedule_to_save = st.session_state["df_schedule_original"].copy()
-            #     # --- robust_parse_date 함수 정의 (필요한 경우 여기에 추가) ---
-            #     target_year = int(month_str.split('년')[0]) # 함수 내에서 사용되므로 target_year 정의 필요
-            #     def robust_parse_date(date_str, year=target_year):
-            #         try:
-            #             if "월" in str(date_str): return datetime.strptime(str(date_str), '%m월 %d일').replace(year=year).date()
-            #             else: return pd.to_datetime(date_str).date()
-            #         except: return None
-            #     # --------------------------------------------------------
-
-            #     df_schedule_to_save['parsed_date'] = df_schedule_to_save['날짜'].apply(robust_parse_date)
-            #     for _, edited_row in edited_df_md.iterrows():
-            #         edited_date_obj = robust_parse_date(edited_row['날짜'])
-            #         if edited_date_obj is None: continue
-            #         target_indices = df_schedule_to_save[df_schedule_to_save['parsed_date'] == edited_date_obj].index
-            #         if target_indices.empty: continue
-            #         original_row_idx = target_indices[0]
-
-            #         # 1. 수정된 내용 가져오기 (편집기 기준 - 괄호 없음)
-            #         oncall_person = str(edited_row.get('오전당직(온콜)', '')).strip()
-
-            #         am_editor_cols = [str(i) for i in range(1, 12)] # 1 ~ 11
-            #         am_personnel = [str(edited_row[col]).strip() for col in am_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
-
-            #         pm_editor_cols = [f'오후{i}' for i in range(1, 5)] # 오후1 ~ 오후4
-            #         pm_personnel = [str(edited_row[col]).strip() for col in pm_editor_cols if col in edited_row and pd.notna(edited_row[col]) and str(edited_row[col]).strip()]
-
-            #         # --- ▼▼▼ 원본 스케줄의 숨겨진 근무자 파싱 ▼▼▼ ---
-            #         # 원본(괄호포함) 데이터 가져오기
-            #         original_schedule_row = st.session_state["df_schedule_original"].loc[original_row_idx]
-
-            #         # 오후5 이후 근무자 파싱
-            #         pm_hidden_cols = [f'오후{i}' for i in range(5, 10)] # 오후5 ~ 오후9
-            #         pm_hidden_personnel = [
-            #             clean_name(original_schedule_row[col]) for col in pm_hidden_cols
-            #             if col in original_schedule_row and pd.notna(original_schedule_row[col]) and clean_name(original_schedule_row[col])
-            #         ]
-
-            #         # 12 이후 근무자 파싱
-            #         am_hidden_cols = [str(i) for i in range(12, 18)] # 12 ~ 17
-            #         am_hidden_personnel = [
-            #             clean_name(original_schedule_row[col]) for col in am_hidden_cols
-            #             if col in original_schedule_row and pd.notna(original_schedule_row[col]) and clean_name(original_schedule_row[col])
-            #         ]
-            #         # --- [숨겨진 근무자 파싱 끝] ---
-
-            #         # 2. 저장할 DataFrame의 모든 관련 열 초기화 (전체 범위)
-            #         cols_to_clear_am = [str(i) for i in range(1, 18)] # 1 ~ 17
-            #         for col in cols_to_clear_am:
-            #             if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
-
-            #         cols_to_clear_pm = [f'오후{i}' for i in range(1, 10)] # 오후1 ~ 오후9
-            #         for col in cols_to_clear_pm:
-            #             if col in df_schedule_to_save.columns: df_schedule_to_save.at[original_row_idx, col] = ''
-
-            #         # 3. 수정된 내용으로 다시 채워넣기
-            #         df_schedule_to_save.at[original_row_idx, '오전당직(온콜)'] = oncall_person
-
-            #         # am_personnel (편집된 1~11) + oncall + am_hidden_personnel (파싱된 12~17)
-            #         am_save_list = list(dict.fromkeys(am_personnel + ([oncall_person] if oncall_person else []) + am_hidden_personnel))
-            #         for i, person in enumerate(am_save_list, 1):
-            #             col_name_am = str(i)
-            #             if col_name_am in df_schedule_to_save.columns: # 범위 확인
-            #                 df_schedule_to_save.at[original_row_idx, col_name_am] = person
-
-            #         # pm_personnel (편집된 오후1~4) + pm_hidden_personnel (파싱된 오후5~9)
-            #         pm_save_list = list(dict.fromkeys(pm_personnel + pm_hidden_personnel))
-            #         for i, person in enumerate(pm_save_list, 1):
-            #             col_name_pm = f'오후{i}'
-            #             if col_name_pm in df_schedule_to_save.columns: # 범위 확인
-            #                 df_schedule_to_save.at[original_row_idx, col_name_pm] = person
-            #     df_schedule_to_save.drop(columns=['parsed_date'], inplace=True)
-
-            #     schedule_sheet_name = f"{month_str} 스케줄 최종"
-            #     try:
-            #         worksheet_schedule = sheet.worksheet(schedule_sheet_name)
-            #         # st.warning(f"⚠️ 기존 '{schedule_sheet_name}' 시트를 덮어씁니다.")
-            #     except gspread.exceptions.WorksheetNotFound:
-            #         worksheet_schedule = sheet.add_worksheet(title=schedule_sheet_name, rows=100, cols=30) # 크기 적절히 조절
-
-            #     columns_to_save_requested = [ # 저장할 컬럼 명시 (원본 컬럼 기준)
-            #         '날짜', '요일', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12',
-            #         '오전당직(온콜)', '오후1', '오후2', '오후3', '오후4' # , '오후5', ... 원본에 있는 컬럼 추가
-            #     ]
-            #     columns_to_save = [col for col in columns_to_save_requested if col in df_schedule_to_save.columns]
-            #     schedule_data = [columns_to_save] + df_schedule_to_save[columns_to_save].fillna('').values.tolist()
-
-            #     if update_sheet_with_retry(worksheet_schedule, schedule_data):
-            #         # st.success(f"✅ '{schedule_sheet_name}' 시트 저장을 완료하였습니다.")
-            #         pass
-            #     else:
-            #         save_errors.append(f"'{schedule_sheet_name}' 시트 저장에 실패하였습니다.")
-
-            #     # 2. 누적 최종 저장 (기존 로직 재활용)
-            #     target_month_dt = datetime.strptime(month_str, "%Y년 %m월")
-            #     next_month_dt = target_month_dt + relativedelta(months=1)
-            #     next_month_str = next_month_dt.strftime("%Y년 %-m월")
-            #     latest_cumulative_name_next = st.session_state.get("latest_cumulative_name")
-
-            #     if not latest_cumulative_name_next:
-            #         save_errors.append(f"'{next_month_str} 누적' 시트를 찾을 수 없어 업데이트 불가.")
-            #     else:
-            #         worksheet_cumulative_next = sheet.worksheet(latest_cumulative_name_next)
-            #         all_data = worksheet_cumulative_next.get_all_values()
-            #         if not all_data or len(all_data) < 2: # 헤더 포함 최소 2줄 필요
-            #             save_errors.append(f"'{latest_cumulative_name_next}' 시트가 비어있거나 형식이 잘못되어 업데이트 불가.")
-            #         else:
-            #             headers, rows = all_data[0], all_data[1:]
-
-            #             # 데이터 숫자형 변환 시도 (오류 발생 시 원본 유지)
-            #             for r_idx, row_data in enumerate(rows):
-            #                 for c_idx, cell_value in enumerate(row_data):
-            #                     if c_idx == 0: continue # 첫 번째 열(항목)은 제외
-            #                     try:
-            #                         # 빈 문자열이면 0으로 처리하거나 그대로 둘 수 있음 (현재는 그대로 둠)
-            #                         if cell_value != '':
-            #                             rows[r_idx][c_idx] = int(cell_value) # 숫자로 변환 시도
-            #                     except (ValueError, TypeError):
-            #                         # 숫자로 변환 안 되는 값은 원본 유지 (예: 문자열 '-')
-            #                         pass
-
-            #             target_row_found = False
-            #             target_row_index = -1
-            #             # '오후당직누적' 행 찾기
-            #             for i, row_data in enumerate(rows):
-            #                 if row_data[0] == '오후당직누적':
-            #                     target_row_found = True
-            #                     target_row_index = i
-            #                     # 해당 행의 모든 셀을 0으로 초기화 (기존 값 제거, 항목 열 제외)
-            #                     for col_idx in range(1, len(headers)):
-            #                          rows[target_row_index][col_idx] = 0 # 0으로 초기화
-
-            #                     # 실제 배정 횟수(actual_duty_counts)로 업데이트
-            #                     for col_idx, name in enumerate(headers):
-            #                         if col_idx == 0: continue # 항목 열 건너뛰기
-            #                         name_strip = name.strip() # 헤더 이름 공백 제거
-            #                         # 실제 배정 횟수가 있다면 해당 값으로 업데이트
-            #                         if name_strip in actual_duty_counts:
-            #                              rows[target_row_index][col_idx] = actual_duty_counts[name_strip]
-            #                     break # 행을 찾았으므로 루프 종료
-
-            #             if target_row_found:
-            #                 final_cumulative_sheet_name = f"{next_month_str} 누적 최종"
-            #                 try:
-            #                     worksheet_final_cumulative = sheet.worksheet(final_cumulative_sheet_name)
-            #                     # st.warning(f"⚠️ 기존 '{final_cumulative_sheet_name}' 시트를 덮어씁니다.")
-            #                 except gspread.exceptions.WorksheetNotFound:
-            #                     # 새 시트 생성 시 행/열 크기 확인 및 적절히 설정
-            #                     worksheet_final_cumulative = sheet.add_worksheet(title=final_cumulative_sheet_name,
-            #                                                                      rows=len(all_data) + 5, # 헤더 포함 + 여유분
-            #                                                                      cols=len(headers) + 5) # 헤더 포함 + 여유분
-
-            #                 if update_sheet_with_retry(worksheet_final_cumulative, [headers] + rows):
-            #                     st.success(f"✅ '{final_cumulative_sheet_name}' 시트 업데이트가 완료되었습니다.") # 메시지 복원
-            #                 else:
-            #                     save_errors.append(f"'{final_cumulative_sheet_name}' 시트 업데이트에 실패하였습니다.")
-            #             else:
-            #                 save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직누적' 항목을 찾을 수 없습니다.")
-
-            # except Exception as e:
-            #     save_errors.append(f"Google Sheets 저장 중 오류 발생: {e}")
 
             # 저장 오류가 있으면 화면에 표시
             if save_errors:
@@ -3284,7 +3342,7 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
     # --- ▼▼▼ [신규] 통계 자동 재계산 로직 ▼▼▼ ---
     # 1. 세션에서 설정값과 원본 데이터를 불러옵니다.
     df_cumulative = st.session_state["df_cumulative"]
-    all_personnel_stats = results["all_personnel_stats"]
+    all_personnel_stats = results["all_personnel_stats"] # <-- 이 줄을 추가하세요.
     columns = results["columns"]
     all_slots = results["all_slots"]
     morning_duty_slot = results["morning_duty_slot"]
@@ -3292,8 +3350,18 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
     time_slots = results["time_slots"]
     time_order = results["time_order"]
     
-    # 2. [수정] 'edited_df_room' (DataFrame)을 순회하며 모든 통계를 '재계산'합니다.
-    total_stats = {'early': Counter(), 'late': Counter(), 'morning_duty': Counter(), 'afternoon_duty': Counter(), 'rooms': {str(i): Counter() for i in range(1, 13)}, 'time_room_slots': {s: Counter() for s in time_slots}}
+    # --- [수정] 통계(Stats) 계산 로직 (L2208의 올바른 로직을 여기로 가져옴) ---
+    
+    # 1. 'df_room' (최종 방배정 결과)를 기반으로 'total_stats'를 (재)계산합니다.
+    # (이것이 '오전당직(온콜)'이 포함된 가장 정확한 통계입니다)
+    total_stats = {
+        'early': Counter(), 
+        'late': Counter(), 
+        'morning_duty': Counter(), 
+        'afternoon_duty': Counter(), 
+        'rooms': {str(i): Counter() for i in range(1, 13)}, 
+        'time_room_slots': {s: Counter() for s in st.session_state["time_slots"].keys()}
+    }
     
     for _, row in edited_df_room.iterrows():
         current_date_str = row['날짜']
@@ -3306,96 +3374,106 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
         for slot_name, person in assignment_for_day.items():
             if not person:
                 continue
-    
+            
             # 1. 오전 당직
             if slot_name == morning_duty_slot:
                 total_stats['morning_duty'][person] += 1
-    
+            
             # 2. 오후 당직 (13:30 당직)
             elif slot_name.startswith('13:30') and slot_name.endswith('_당직'):
                 total_stats['afternoon_duty'][person] += 1
-    
-            # # 3. 온콜 (오후 당직으로 합산)
-            # elif slot_name == '온콜':
-            #     total_stats['afternoon_duty'][person] += 1 # 온콜을 오후당직 합계에 포함
-    
+            
+            # 3. [삭제] 온콜 (오후 당직으로 합산) - 이 로직은 화면 재계산 로직과 동일하게 삭제
+            
             # 4. 이른방 (8:30, 당직 제외)
             elif slot_name.startswith('8:30') and '_당직' not in slot_name:
                 total_stats['early'][person] += 1
-    
+            
             # 5. 늦은방 (10:00)
             elif slot_name.startswith('10:00'):
                 total_stats['late'][person] += 1
-    
+            
             # 6. 시간대별/방별 통계 (for stats_df)
             if slot_name in total_stats['time_room_slots']:
                 total_stats['time_room_slots'][slot_name][person] += 1
 
-# [기존 코드] (L2199)
-    # 3. 통계 DataFrame 생성 (L1780-L1812)
-    stats_data = []
+    time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
+
+    # 2. 통계 DataFrame을 생성합니다. (L2200 로직과 동일)
+    stats_data, all_personnel_stats = [], set(p for _, r in st.session_state["df_schedule_md"].iterrows() for p in r[2:].dropna() if p)
+    df_cumulative_stats = st.session_state.get("df_cumulative", pd.DataFrame())
     
-    # --- ▼▼▼ [수정] 이 블록 전체를 교체합니다. (L2200 ~ L2238) ▼▼▼ ---
-    
-    # [수정] 오전/오후 누적값을 모두 가져오기 위해 맵 2개 준비
+# [수정] "진짜 베이스 누적"을 계산하기 위해 4개의 맵을 모두 로드합니다.
     old_pm_cumulative_map = {}
+    old_pm_source_map = {}
     old_am_cumulative_map = {} 
+    old_am_source_map = {}
     
     if not df_cumulative.empty and '이름' in df_cumulative.columns:
         if '오후당직누적' in df_cumulative.columns:
             old_pm_cumulative_map = df_cumulative.set_index('이름')['오후당직누적'].to_dict()
-        if '오전당직누적' in df_cumulative.columns: # [신규] 오전 누적값 로드
+        if '오후당직합계' in df_cumulative.columns:
+            old_pm_source_map = df_cumulative.set_index('이름')['오후당직합계'].to_dict()
+        if '오전당직누적' in df_cumulative.columns:
             old_am_cumulative_map = df_cumulative.set_index('이름')['오전당직누적'].to_dict()
+        if '오전당직합계' in df_cumulative.columns:
+            old_am_source_map = df_cumulative.set_index('이름')['오전당직합계'].to_dict()
 
     for person in sorted(all_personnel_stats):
         
-        # 1. 오후 당직 계산 (기존 로직)
-        pm_assigned_this_month = total_stats['afternoon_duty'][person]
+        # --- [수정] 오후 당직: (Old 누적 - Old 합계) + New 합계 ---
+        pm_assigned_this_month = total_stats['afternoon_duty'][person] # New 합계
         pm_old_cumulative = 0
+        pm_old_source = 0
         try:
-            pm_old_cumulative = int(old_pm_cumulative_map.get(person, 0))
+            pm_old_cumulative = int(old_pm_cumulative_map.get(person, 0)) # Old 누적
+            pm_old_source = int(old_pm_source_map.get(person, 0))     # Old 합계
         except (ValueError, TypeError):
-            pm_old_cumulative = 0
-        pm_final_cumulative = pm_assigned_this_month + pm_old_cumulative
+            pass
+        true_pm_base = pm_old_cumulative - pm_old_source # 진짜 베이스
+        pm_final_cumulative = true_pm_base + pm_assigned_this_month # 최종 누적
         
-        # 2. 오전 당직 계산 (누락된 로직 추가)
-        am_assigned_this_month = total_stats['morning_duty'][person]
+        # --- [수정] 오전 당직: (Old 누적 - Old 합계) + New 합계 ---
+        am_assigned_this_month = total_stats['morning_duty'][person] # New 합계
         am_old_cumulative = 0
+        am_old_source = 0
         try:
-            am_old_cumulative = int(old_am_cumulative_map.get(person, 0))
+            am_old_cumulative = int(old_am_cumulative_map.get(person, 0)) # Old 누적
+            am_old_source = int(old_am_source_map.get(person, 0))     # Old 합계
         except (ValueError, TypeError):
-            am_old_cumulative = 0
-        am_final_cumulative = am_assigned_this_month + am_old_cumulative # [신규]
+            pass
+        true_am_base = am_old_cumulative - am_old_source # 진짜 베이스
+        am_final_cumulative = true_am_base + am_assigned_this_month # 최종 누적
         
         stats_entry = {
             '인원': person,
             '이른방 합계': total_stats['early'][person],
             '늦은방 합계': total_stats['late'][person],
-            '오전당직 합계': am_assigned_this_month,     # (이번 달 오전 횟수)
-            '오전당직 누적': am_final_cumulative,      # [신규] (최종 오전 누적)
-            '오후당직 합계': pm_assigned_this_month,     # (이번 달 오후 횟수)
-            '오후당직 누적': pm_final_cumulative       # (최종 오후 누적)
+            '오전당직 합계': am_assigned_this_month,
+            '오전당직 누적': am_final_cumulative,
+            '오후당직 합계': pm_assigned_this_month,
+            '오후당직 누적': pm_final_cumulative
         }
         for slot in time_slots.keys():
             if not slot.endswith('_당직'):
                 stats_entry[f'{slot} 합계'] = total_stats['time_room_slots'].get(slot, Counter())[person]
         stats_data.append(stats_entry)
 
-    # [수정] 컬럼 목록에 '오전당직 누적' 추가
+    # [수정] '오전당직 누적'을 포함하도록 컬럼 목록 수정
     sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오전당직 누적', '오후당직 합계', '오후당직 누적']
     
+    # 시간대별 합계 컬럼 추가
     time_slots_sorted = sorted(
         [slot for slot in time_slots.keys() if not slot.endswith('_당직')],
         key=lambda x: (time_order.index(x.split('(')[0]), int(x.split('(')[1].split(')')[0]))
     )
     sorted_columns.extend([f'{slot} 합계' for slot in time_slots_sorted])
     
-    # --- ▲▲▲ [수정] 교체 완료 ▲▲▲ ---
-
-    # [기존 코드] (L2239)
     # 4. 'recalculated_stats_df' 라는 새 변수에 자동 재계산된 통계를 저장
-    recalculated_stats_df = pd.DataFrame(stats_data)[sorted_columns]
-    
+    recalculated_stats_df_names_as_rows = pd.DataFrame(stats_data)[sorted_columns]
+    # [신규] (항목-행) 기준으로 Transpose 하여 최종 df 생성
+    recalculated_stats_df = recalculated_stats_df_names_as_rows.set_index('인원').transpose().reset_index().rename(columns={'index': '항목'})
+
     # --- ▼▼▼ [수정] 방배정 로그 로직 (기존과 동일) ▼▼▼ ---
     st.markdown("📝 **방배정 스케줄 수정사항**")
     room_change_log = []
@@ -3429,56 +3507,116 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
         recalculated_stats_df, # [수정] stats_df -> recalculated_stats_df
         hide_index=True,
         key="stats_editor",
-        disabled=['인원'],
+        disabled=['항목'],
         on_change=set_editor_changed_flag
     )
     # --- ▲▲▲ [수정] 완료 ---
 
     # --- ▼▼▼ [수정] 통계 로그 로직 (기존과 동일) ▼▼▼ ---
+# --- [수정] 통계 로그 로직 (L2331 ~ L2368 교체) ---
+
     st.markdown("📝 **통계 테이블 수정사항**")
-    stats_change_log = []
+    stats_change_log = [] # 리스트 초기화
+
+    # --- ▼▼▼ [신규] 항목 순서 정렬을 위한 맵(Map) 정의 ▼▼▼ ---
+    # 사용자가 요청한 정확한 순서
+    desired_order = [
+        "이른방 합계", "늦은방 합계", 
+        "오전당직 합계", "오전당직 누적", 
+        "오후당직 합계", "오후당직 누적"
+    ]
+    # 항목 이름을 정렬 순서(숫자)로 매핑
+    # (예: '이른방 합계': 0, '오전당직 누적': 3)
+    order_map = {item_name: index for index, item_name in enumerate(desired_order)}
+    # --- ▲▲▲ [신규] 완료 ---
 
     # 2. 인원별 통계 비교
-    original_stats_df = recalculated_stats_df
+    # (L2334) 비교 대상을 '최초 원본'으로 설정 (이전 단계에서 수정 완료됨)
+    original_stats_df = results["stats_df"] 
     
-    # --- ▼▼▼ [수정] 이 if 블록 전체를 교체하세요 (L2251 ~ L2272) ▼▼▼ ---
-    
-    # '최종 편집본' (edited_stats_df)과 '최초 원본' (original_stats_df)을 비교합니다.
-    # 이렇게 하면 '자동 계산된 변경'과 '수동으로 추가 수정한 변경'이 모두 잡힙니다.
+    # '최종 편집본'(edited_stats_df)과 '최초 원본'(original_stats_df)을 비교
     if not edited_stats_df.equals(original_stats_df): 
-        # --- ▼▼▼ [수정] 이 try 블록을 교체합니다. ▼▼▼ ---
         try:
-            # 원본과 최종본을 문자열로 변환하여 비교 (Type 오류 방지)
             stats_orig_str = original_stats_df.astype(str)
             stats_edit_str = edited_stats_df.astype(str)
             
             diff_indices = np.where(stats_edit_str.ne(stats_orig_str))
-            changed_cells_stats = set(zip(diff_indices[0], diff_indices[1])) # 중복 로그 방지
+            changed_cells_stats = set(zip(diff_indices[0], diff_indices[1])) 
 
             for row_idx, col_idx in changed_cells_stats:
-                person_name = edited_stats_df.iloc[row_idx, 0] # '인원' 이름 가져오기
-                stat_name = edited_stats_df.columns[col_idx]  # '항목' 이름 가져오기
+                stat_name = edited_stats_df.iloc[row_idx, 0] # '항목' (예: "오전당직 합계")
+                person_name = edited_stats_df.columns[col_idx] # '인원' (예: "강승주")
                 
-                # [수정] 'old_value'를 'original_stats_df'에서 가져옵니다.
-                old_value = original_stats_df.iloc[row_idx, col_idx] # [수정]
+                old_value = original_stats_df.iloc[row_idx, col_idx]
                 new_value = edited_stats_df.iloc[row_idx, col_idx]
-                
+
                 log_msg = f"{person_name} '{stat_name}' 변경: {old_value} → {new_value}"
-                stats_change_log.append(log_msg)
+                
+                # --- ▼▼▼ [수정] 로그를 튜플로 저장 (정렬 기준 포함) ▼▼▼ ---
+                
+                # 1. 맵에서 정렬 순서(숫자)를 조회.
+                #    '이른방' 등은 0-5, 맵에 없는 '8:30(4) 합계' 등은 99로 설정
+                item_sort_key = order_map.get(stat_name, 99) 
+                
+                # 2. (사람이름, 항목순서, 실제로그메시지) 튜플로 저장
+                stats_change_log.append((person_name, item_sort_key, log_msg))
+                
+                # --- ▲▲▲ [수정] (기존 log_msg.append(log_msg) 줄은 삭제) ---
+                
         except Exception as e:
-            stats_change_log.append(f"[로그 오류] 통계 변경사항을 비교하는 중 오류: {e}")
-        # --- ▲▲▲ [수정] 교체 완료 ---
+            # (예외 발생 시 튜플 대신 문자열로 추가)
+            stats_change_log.append(("[로그 오류]", 99, f"[로그 오류] 통계 변경사항을 비교하는 중 오류: {e}"))
+            
     if stats_change_log:
-        log_text_stats = "\n".join(f"• {msg}" for msg in sorted(stats_change_log))
+        # --- ▼▼▼ [수정] 튜플을 기준으로 정렬 (사람이름 > 항목순서) ▼▼▼ ---
+        
+        # 1. 튜플의 첫 번째 요소 (x[0] = person_name)로 먼저 정렬
+        # 2. 튜플의 두 번째 요소 (x[1] = item_sort_key)로 두 번째 정렬
+        stats_change_log.sort(key=lambda x: (x[0], x[1]))
+        
+        # 3. 정렬된 튜플 리스트에서 실제 로그 메시지(x[2])만 추출
+        log_text_stats = "\n".join(f"• {msg_tuple[2]}" for msg_tuple in stats_change_log)
         st.code(log_text_stats, language='text')
+        # --- ▲▲▲ [수정] 완료 ---
     else:
         st.info("수정된 사항이 없습니다.")
+    
+    # --- [수정 완료] ---
     st.divider()
 
-    # --- ▼▼▼ [수정] 저장/다운로드 버튼 영역 (기존과 동일, 변수명만 확인) ▼▼▼ ---
+    # --- ▼▼▼ [수정] 저장/다운로드 버튼 영역 수정 ▼▼▼ ---
+    
+    # 1. 변경사항 여부를 col1, col2를 정의하기 *전에* 계산합니다.
+    has_unsaved_changes = bool(room_change_log or stats_change_log)
+    
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("💾 수정사항 Google Sheet에 저장", type="primary", use_container_width=True):
+        # 2. '저장' 버튼에 disabled 파라미터를 적용합니다.
+        if st.button("💾 수정사항 Google Sheet에 저장", 
+                    type="primary", 
+                    use_container_width=True,
+                    disabled=not has_unsaved_changes): # <-- 이 부분이 추가/수정되었습니다.
+            
+            room_change_map = {}
+            # 'results'에서 'df_room' (배정 직후 원본)을 가져옵니다.
+            original_room_df_for_map = st.session_state.assignment_results["df_room"]
+            
+            # 'edited_df_room'은 L2551에서 data_editor의 결과로 이미 정의됨
+            if not edited_df_room.equals(original_room_df_for_map):
+                diff_indices = np.where(edited_df_room.astype(str).ne(original_room_df_for_map.astype(str)))
+                changed_cells = set(zip(diff_indices[0], diff_indices[1]))
+                
+                for row_idx, col_idx in changed_cells:
+                    date_key = edited_df_room.iloc[row_idx, 0] # '날짜' (e.g., '10월 1일')
+                    slot_key = edited_df_room.columns[col_idx] # '슬롯' (e.g., '8:30(1)')
+                    
+                    old_value = original_room_df_for_map.iloc[row_idx, col_idx]
+                    new_value = edited_df_room.iloc[row_idx, col_idx]
+                    
+                    # 키: (날짜, 슬롯이름), 값: (이전 값, 새 값)
+                    room_change_map[(date_key, slot_key)] = (str(old_value).strip(), str(new_value).strip())
+
+            # (이하 저장 로직은 동일)
             if not edited_df_room.empty:
                 with st.spinner("수정된 '방배정 결과' 저장 중..."):
                     try:
@@ -3495,9 +3633,6 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
                         success_sched = update_sheet_with_retry(ws_sched, [edited_df_room.columns.tolist()] + edited_df_room.astype(str).fillna('').values.tolist())
 
                         # [필요시] 통계 테이블(edited_stats_df) 저장 로직 추가 (현재는 '방배정' 시트만 저장)
-                        
-# [L2305 부근, "if success_sched:" 블록 내부를 찾으세요]
-
                         if success_sched:
                             st.success(f"✅ '{schedule_sheet_name}' 시트에 수정된 내용이 저장되었습니다.")
 
@@ -3507,6 +3642,8 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
                             results = st.session_state["assignment_results"]
                             swapped_assignments = st.session_state.get("swapped_assignments", set()) # 수동/일괄 적용 포함
                             special_df = st.session_state.get("special_df", pd.DataFrame())
+
+                            # change_log_map_for_save = results.get("change_log_map", {})
 
                             # 2. 갱신된 df(edited_df_room, edited_stats_df)로 Excel 재생성
                             new_output = generate_excel_output(
@@ -3519,7 +3656,8 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
                                 request_cells=results["request_cells"],
                                 swapped_assignments=swapped_assignments,
                                 morning_duty_slot=results["morning_duty_slot"],
-                                month_str=month_str
+                                month_str=month_str,
+                                change_log_map=room_change_map
                             )
                             
                             # 3. 세션의 원본 데이터 및 'excel_output'을 갱신
