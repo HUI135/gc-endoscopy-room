@@ -291,7 +291,7 @@ def load_data_page6_no_cache(month_str):
             # 기존 로직은 다른 기능에서 사용하므로 유지
             df_transposed = df_cumulative_original.set_index('항목')
             df_cumulative = df_transposed.transpose().reset_index().rename(columns={'index': '이름'})
-            for col in ['오전누적', '오후누적', '오전당직합계', '오후당직합계']:
+            for col in ['오전누적', '오후누적', '오전당직', '오후당직']:
                 if col in df_cumulative.columns:
                     df_cumulative[col] = pd.to_numeric(df_cumulative[col], errors='coerce').fillna(0).astype(int)
                     
@@ -877,7 +877,7 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
                 cell.fill = summary_fill
             else:
                 if col_idx == 1:
-                    cell.fill = PatternFill(start_color="F2F2F2", fill_type="solid")
+                    cell.fill = PatternFill(start_color="D0CECE", fill_type="solid")
                 else:
                     cell.fill = PatternFill(fill_type=None)
 
@@ -2188,7 +2188,7 @@ st.markdown(f"**➕ 이번달 배정에 반영될 누적 테이블(오후당직)
 df_cumulative_original = st.session_state.get("df_cumulative_original", pd.DataFrame())
 
 if not df_cumulative_original.empty:
-    # 1. 표시할 데이터 필터링: '오후당직합계' 행만 선택
+    # 1. 표시할 데이터 필터링: '오후당직' 행만 선택
     df_to_display = df_cumulative_original[df_cumulative_original['항목'] == '오후당직누적'].copy()
 
     # 2. data_editor를 사용하여 편집 가능한 테이블을 만듭니다.
@@ -2829,12 +2829,12 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             if not df_cumulative_stats.empty and '이름' in df_cumulative_stats.columns:
                 if '오후당직누적' in df_cumulative_stats.columns:
                     old_pm_cumulative_map = df_cumulative_stats.set_index('이름')['오후당직누적'].to_dict()
-                if '오후당직합계' in df_cumulative_stats.columns:
-                    old_pm_source_map = df_cumulative_stats.set_index('이름')['오후당직합계'].to_dict()
+                if '오후당직' in df_cumulative_stats.columns:
+                    old_pm_source_map = df_cumulative_stats.set_index('이름')['오후당직'].to_dict()
                 if '오전당직누적' in df_cumulative_stats.columns:
                     old_am_cumulative_map = df_cumulative_stats.set_index('이름')['오전당직누적'].to_dict()
-                if '오전당직합계' in df_cumulative_stats.columns:
-                    old_am_source_map = df_cumulative_stats.set_index('이름')['오전당직합계'].to_dict()
+                if '오전당직' in df_cumulative_stats.columns:
+                    old_am_source_map = df_cumulative_stats.set_index('이름')['오전당직'].to_dict()
 
             for person in sorted(all_personnel_stats):
                 
@@ -3106,19 +3106,19 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
 
                             # [1단계] 오전/오후 인덱스 변수 초기화
                             pm_target_row_index = -1 # '오후당직누적'
-                            pm_source_row_index = -1 # '오후당직합계'
+                            pm_source_row_index = -1 # '오후당직'
                             am_target_row_index = -1 # '오전당직누적'
-                            am_source_row_index = -1 # '오전당직합계'
+                            am_source_row_index = -1 # '오전당직'
 
                             # [2단계] 4개 행의 인덱스 찾기
                             for i, row_data in enumerate(rows):
                                 if row_data[0] == '오후당직누적':
                                     pm_target_row_index = i
-                                if row_data[0] == '오후당직합계':
+                                if row_data[0] == '오후당직':
                                     pm_source_row_index = i
                                 if row_data[0] == '오전당직누적':
                                     am_target_row_index = i
-                                if row_data[0] == '오전당직합계':
+                                if row_data[0] == '오전당직':
                                     am_source_row_index = i
                             
                             # [3단계] 4개 행을 모두 찾았는지 확인
@@ -3141,10 +3141,10 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                                         old_am_cumulative_map = df_cumulative_updated.set_index('이름')['오전당직누적'].to_dict()
                                     
                                     # --- ▼▼▼ [수정] '합계' 맵을 로드하는 코드 추가 ▼▼▼ ---
-                                    if '오후당직합계' in df_cumulative_updated.columns:
-                                        old_pm_source_map = df_cumulative_updated.set_index('이름')['오후당직합계'].to_dict()
-                                    if '오전당직합계' in df_cumulative_updated.columns:
-                                        old_am_source_map = df_cumulative_updated.set_index('이름')['오전당직합계'].to_dict()
+                                    if '오후당직' in df_cumulative_updated.columns:
+                                        old_pm_source_map = df_cumulative_updated.set_index('이름')['오후당직'].to_dict()
+                                    if '오전당직' in df_cumulative_updated.columns:
+                                        old_am_source_map = df_cumulative_updated.set_index('이름')['오전당직'].to_dict()
                                     # --- ▲▲▲ [수정] 완료 ▲▲▲ ---
                                 else:
                                     save_errors.append("세션에서 'df_cumulative' (수정된 누적 데이터)를 읽어오는 데 실패했습니다.")
@@ -3205,11 +3205,11 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                             elif pm_target_row_index == -1: 
                                 save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직누적' 항목을 찾을 수 없습니다.")
                             elif pm_source_row_index == -1: 
-                                save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직합계' 항목을 찾을 수 없습니다.")
+                                save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오후당직' 항목을 찾을 수 없습니다.")
                             elif am_target_row_index == -1: 
                                 save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오전당직누적' 항목을 찾을 수 없습니다.")
                             elif am_source_row_index == -1: 
-                                save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오전당직합계' 항목을 찾을 수 없습니다.")
+                                save_errors.append(f"'{latest_cumulative_name_next}' 시트에서 '오전당직' 항목을 찾을 수 없습니다.")
 
                 except Exception as e:
                     st.error(f"Google Sheets '누적 최종' 시트 저장 중 오류 발생: {type(e).__name__} - {e}")
@@ -3432,12 +3432,12 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
     if not df_cumulative.empty and '이름' in df_cumulative.columns:
         if '오후당직누적' in df_cumulative.columns:
             old_pm_cumulative_map = df_cumulative.set_index('이름')['오후당직누적'].to_dict()
-        if '오후당직합계' in df_cumulative.columns:
-            old_pm_source_map = df_cumulative.set_index('이름')['오후당직합계'].to_dict()
+        if '오후당직' in df_cumulative.columns:
+            old_pm_source_map = df_cumulative.set_index('이름')['오후당직'].to_dict()
         if '오전당직누적' in df_cumulative.columns:
             old_am_cumulative_map = df_cumulative.set_index('이름')['오전당직누적'].to_dict()
-        if '오전당직합계' in df_cumulative.columns:
-            old_am_source_map = df_cumulative.set_index('이름')['오전당직합계'].to_dict()
+        if '오전당직' in df_cumulative.columns:
+            old_am_source_map = df_cumulative.set_index('이름')['오전당직'].to_dict()
 
     for person in sorted(all_personnel_stats):
         
@@ -3707,7 +3707,7 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
             st.error("⚠️ 수정사항이 감지되었습니다. 먼저 '수정사항 Google Sheet에 저장' 버튼을 눌러주세요.")
         else:
             st.download_button(
-                label="📥 최종 방배정 다운로드",
+                label="📥 방배정 다운로드",
                 data=output, # <-- 이 output이 L2308에서 갱신된 최신 파일임
                 file_name=f"{month_str} 방배정.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

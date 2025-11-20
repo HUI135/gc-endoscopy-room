@@ -412,9 +412,9 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             fill_color = None
             if label in ["오전누적", "오후누적"]: fill_color = fills['pink']
             elif label in ["오전합계", "오후합계"]: fill_color = fills['blue']
-            elif label == "오전당직합계": fill_color = fills['blue']
+            elif label == "오전당직": fill_color = fills['blue']
             elif label == "오전당직누적": fill_color = fills['pink']
-            elif label == "오후당직합계": fill_color = fills['lightgray']
+            elif label == "오후당직": fill_color = fills['lightgray']
             elif label == "오후당직누적": fill_color = fills['lightgray']
 
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]:
@@ -439,7 +439,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
     block2_end = start_row + 1 + labels.index("오후누적")
     apply_outer_border(worksheet, block2_start, block2_end, start_col, end_col)
     
-    block3_start = start_row + 1 + labels.index("오전당직합계")
+    block3_start = start_row + 1 + labels.index("오전당직")
     block3_end = start_row + 1 + labels.index("오후당직누적")
     apply_outer_border(worksheet, block3_start, block3_end, start_col, end_col)
 
@@ -1204,10 +1204,10 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
         recalculated_summary_df.at["오후합계", name] = base_pm
         recalculated_summary_df.at["오후누적", name] = base_pm + pm_bochong
 
-        recalculated_summary_df.at["오전당직합계", name] = am_oncall_total
+        recalculated_summary_df.at["오전당직", name] = am_oncall_total
         recalculated_summary_df.at["오전당직누적", name] = base_am_oncall + am_oncall_total
         
-        recalculated_summary_df.at["오후당직합계", name] = 0 # 오후 당직은 이 시트에서 배정 안 함
+        recalculated_summary_df.at["오후당직", name] = 0 # 오후 당직은 이 시트에서 배정 안 함
         recalculated_summary_df.at["오후당직누적", name] = base_pm_oncall
 
     recalculated_summary_df = recalculated_summary_df.reset_index()
@@ -1329,7 +1329,7 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
     row_labels = [
         "오전보충", "임시보충", "오전합계", "오전누적",
         "오후보충", "온콜검사", "오후합계", "오후누적",
-        "오전당직합계", "오전당직누적", "오후당직합계", "오후당직누적"
+        "오전당직", "오전당직누적", "오후당직", "오후당직누적"
     ]
     df_summary.index = row_labels
 
@@ -1365,14 +1365,14 @@ def build_summary_table(df_cumulative, all_names, next_month_str, df_final_uniqu
         # 3. '이번 달 배정 횟수'를 가져옴
         oncall_this_month = actual_oncall_counts.get(name, 0)
         
-        # 4. '오전당직합계' (이번 달 횟수) 행에 '이번 달 횟수'를 넣습니다.
-        df_summary.at["오전당직합계", name] = oncall_this_month
+        # 4. '오전당직' (이번 달 횟수) 행에 '이번 달 횟수'를 넣습니다.
+        df_summary.at["오전당직", name] = oncall_this_month
         
         # 5. '오전당직누적' (최종) 행에 '시작 값 + 이번 달 횟수'를 넣습니다.
         df_summary.at["오전당직누적", name] = oncall_start_total + oncall_this_month
         
         # 6. 오후 당직 (이번 달 0회)
-        df_summary.at["오후당직합계", name] = 0
+        df_summary.at["오후당직", name] = 0
         df_summary.at["오후당직누적", name] = pm_oncall_start_total # 시작 값 = 최종 값
         
         # ▲▲▲ [수정 완료] ▲▲▲
@@ -1411,9 +1411,9 @@ def build_final_summary_table(df_cumulative, df_final_unique, all_names):
             '오후누적 (시작)': b.get('오후누적', 0),
             '오후누적 (변동)': pm_change,
             '오후누적 (최종)': b.get('오후누적', 0) + pm_change,
-            '오전당직합계': b.get('오전당직합계', 0),
+            '오전당직': b.get('오전당직', 0),
             '오전당직 (최종)': oncall_counts.get(name, 0),
-            '오후당직합계': b.get('오후당직합계', 0),
+            '오후당직': b.get('오후당직', 0),
         })
         
     return pd.DataFrame(summary_data)
@@ -3061,7 +3061,7 @@ if st.session_state.get('assigned', False):
             if '오전당직누적' in df_cum_indexed.index: # "합계" -> "누적"
                 for w in all_workers_in_cum:
                     target_val = df_cum_indexed.loc['오전당직누적'].get(w) # "합계" -> "누적"            else:
-                # '오전당직합계' 행 자체가 없는 경우
+                # '오전당직' 행 자체가 없는 경우
                 oncall_targets = {w: 0 for w in all_workers_in_cum}
             # --- ▲▲▲ [수정 완료] ▲▲▲ ---
 
@@ -3622,7 +3622,7 @@ if st.session_state.get('assigned', False):
             desired_order = [
                 "오전보충", "임시보충", "오전합계", "오전누적", 
                 "오후보충", "온콜검사", "오후합계", "오후누적", 
-                "오전당직합계", "오전당직누적", "오후당직합계", "오후당직누적"
+                "오전당직", "오전당직누적", "오후당직", "오후당직누적"
             ]
             # 항목 이름을 정렬 순서(숫자)로 매핑
             order_map = {item_name: index for index, item_name in enumerate(desired_order)}

@@ -338,6 +338,7 @@ try:
         st.stop()
     name = st.session_state["name"]
 
+    # 오늘 날짜를 기준으로 다음 달 1일을 계산합니다.
     from zoneinfo import ZoneInfo
     kst = ZoneInfo("Asia/Seoul")
     now = datetime.datetime.now(kst)
@@ -346,11 +347,13 @@ try:
 
     next_month_date = today.replace(day=1) + relativedelta(months=1)
 
+    # 모든 날짜 관련 변수를 다음 달 기준으로 설정합니다.
     month_str = next_month_date.strftime("%Y년 %-m월")
     month_start = next_month_date
     year, month = next_month_date.year, next_month_date.month
     _, last_day = calendar.monthrange(year, month)
     month_end = next_month_date.replace(day=last_day)
+    
     week_nums = sorted(set(d.isocalendar()[1] for d in pd.date_range(start=month_start, end=month_end)))
     week_labels = [f"{i+1}주" for i in range(len(week_nums))]
 except NameError as e:

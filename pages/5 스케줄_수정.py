@@ -545,9 +545,9 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
             fill_color = None
             if label in ["오전누적", "오후누적"]: fill_color = fills['pink']
             elif label in ["오전합계", "오후합계"]: fill_color = fills['blue']
-            elif label == "오전당직합계": fill_color = fills['blue']
+            elif label == "오전당직": fill_color = fills['blue']
             elif label == "오전당직누적": fill_color = fills['pink']
-            elif label == "오후당직합계": fill_color = fills['lightgray']
+            elif label == "오후당직": fill_color = fills['lightgray']
             elif label == "오후당직누적": fill_color = fills['lightgray']
             if c_idx == 1 and label in ["오전보충", "임시보충", "오후보충", "온콜검사"]: fill_color = fills['yellow']
             if fill_color: cell.fill = fill_color
@@ -559,7 +559,7 @@ def append_summary_table_to_excel(worksheet, summary_df, style_args):
     apply_outer_border(worksheet, start_row, start_row + len(labels), start_col, start_col)
     if "오전보충" in labels and "오전누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전보충"), start_row + 1 + labels.index("오전누적"), start_col, end_col)
     if "오후보충" in labels and "오후누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오후보충"), start_row + 1 + labels.index("오후누적"), start_col, end_col)
-    if "오전당직합계" in labels and "오후당직누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전당직합계"), start_row + 1 + labels.index("오후당직누적"), start_col, end_col)
+    if "오전당직" in labels and "오후당직누적" in labels: apply_outer_border(worksheet, start_row + 1 + labels.index("오전당직"), start_row + 1 + labels.index("오후당직누적"), start_col, end_col)
 
     legend_start_row = worksheet.max_row + 3 
     legend_data = [('A9D08E', '대체 보충'), ('FFF28F', '보충'), ('95B3D7', '대체 휴근'), ('B1A0C7', '휴근'), ('DA9694', '휴가/학회')]
@@ -985,10 +985,10 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
         recalculated_summary_df.at["오후합계", name] = base_pm
         recalculated_summary_df.at["오후누적", name] = base_pm + pm_bochong
 
-        recalculated_summary_df.at["오전당직합계", name] = am_oncall_total
+        recalculated_summary_df.at["오전당직", name] = am_oncall_total
         recalculated_summary_df.at["오전당직누적", name] = base_am_oncall + am_oncall_total
         
-        recalculated_summary_df.at["오후당직합계", name] = 0 
+        recalculated_summary_df.at["오후당직", name] = 0 
         recalculated_summary_df.at["오후당직누적", name] = base_pm_oncall
 
     # '항목' 열을 다시 복원하여 반환
@@ -1396,7 +1396,7 @@ summary_change_log = [] # 리스트 초기화
 desired_order = [
     "오전보충", "임시보충", "오전합계", "오전누적", 
     "오후보충", "온콜검사", "오후합계", "오후누적", 
-    "오전당직합계", "오전당직누적", "오후당직합계", "오후당직누적"
+    "오전당직", "오전당직누적", "오후당직", "오후당직누적"
 ]
 # 순서를 숫자로 매핑 (예: '오전보충': 0, '오전합계': 2, '오전누적': 3)
 order_map = {item_name: index for index, item_name in enumerate(desired_order)}
