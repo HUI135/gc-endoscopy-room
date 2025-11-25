@@ -1328,9 +1328,22 @@ if st.session_state.get('show_final_results', False):
                     st.error(f"저장 오류: {e}")
 
     with c2:
-        # 현재 상태가 저장된 상태와 다른지 체크 (저장 유도용)
-        is_modified_now = not (edited_final_schedule.equals(st.session_state.df_final_assignment) and 
-                               edited_final_stats.equals(st.session_state.get("df_cumulative_stats", pd.DataFrame())))
+        # --- [수정] 변경 감지 로직 강화 (Ghost Change 방지) ---
+        # 문제 원인: NaN, None, 빈 문자열("") 간의 타입 불일치로 인해 
+        # 실제 데이터가 같아도 다르다고 판단하는 문제 해결
+        
+        # 1. 스케줄 비교: 공백/NaN을 모두 빈 문자열로 통일하고 문자열로 변환하여 비교
+        current_sched_str = edited_final_schedule.fillna('').astype(str)
+        saved_sched_str = st.session_state.df_final_assignment.fillna('').astype(str)
+        is_schedule_changed = not current_sched_str.equals(saved_sched_str)
+
+        # 2. 통계 비교: 동일하게 처리
+        current_stats_str = edited_final_stats.fillna('').astype(str)
+        saved_stats_str = st.session_state.get("df_cumulative_stats", pd.DataFrame()).fillna('').astype(str)
+        is_stats_changed = not current_stats_str.equals(saved_stats_str)
+
+        # 최종 변경 여부
+        is_modified_now = is_schedule_changed or is_stats_changed
         
         if is_modified_now:
             st.error("⚠️ 수정사항이 감지되었습니다. 먼저 '수정사항 Google Sheet에 저장' 버튼을 눌러주세요.")
