@@ -856,9 +856,9 @@ if st.session_state.get('show_final_results', False):
                 '인원': person,
                 '이른방 합계': total_stats['early'][person],
                 '늦은방 합계': total_stats['late'][person],
-                '오전당직 합계': total_stats['morning_duty'][person],
+                '오전당직': total_stats['morning_duty'][person],
                 '오전당직 누적': am_final_cum,
-                '오후당직 합계': total_stats['afternoon_duty'][person],
+                '오후당직': total_stats['afternoon_duty'][person],
                 '오후당직 누적': pm_final_cum
             }
             
@@ -872,7 +872,7 @@ if st.session_state.get('show_final_results', False):
         # 3-4. DataFrame 생성 및 포맷팅
         if stats_data:
             # 컬럼 순서 정의
-            base_cols = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오전당직 누적', '오후당직 합계', '오후당직 누적']
+            base_cols = ['인원', '이른방 합계', '늦은방 합계', '오전당직', '오전당직 누적', '오후당직', '오후당직 누적']
             # 시간대 컬럼 정렬 (8:30 -> 9:00 -> ... 순서)
             sorted_slot_cols = sorted(
                 [col for col in stats_data[0].keys() if col not in base_cols],
@@ -995,8 +995,8 @@ if st.session_state.get('show_final_results', False):
             r = {
                 '인원': p,
                 '이른방 합계': temp['early'][p], '늦은방 합계': temp['late'][p],
-                '오전당직 합계': temp['morning_duty'][p], '오전당직 누적': am_fin,
-                '오후당직 합계': temp['afternoon_duty'][p], '오후당직 누적': pm_fin
+                '오전당직': temp['morning_duty'][p], '오전당직 누적': am_fin,
+                '오후당직': temp['afternoon_duty'][p], '오후당직 누적': pm_fin
             }
             for t in t_headers: r[f'{t} 합계'] = temp['time_slots'][(t, p)]
             rows_list.append(r)
@@ -1004,7 +1004,7 @@ if st.session_state.get('show_final_results', False):
         if not rows_list: return pd.DataFrame(columns=['항목'])
         
         # DataFrame 생성 및 Transpose
-        fixed_cols = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오전당직 누적', '오후당직 합계', '오후당직 누적'] + [f'{t} 합계' for t in t_headers]
+        fixed_cols = ['인원', '이른방 합계', '늦은방 합계', '오전당직', '오전당직 누적', '오후당직', '오후당직 누적'] + [f'{t} 합계' for t in t_headers]
         res_df = pd.DataFrame(rows_list)
         for c in fixed_cols: 
             if c not in res_df.columns: res_df[c] = 0
@@ -1036,7 +1036,7 @@ if st.session_state.get('show_final_results', False):
     stats_change_log = []
     
     # 정렬 순서 정의
-    desired_order = ["이른방 합계", "늦은방 합계", "오전당직 합계", "오전당직 누적", "오후당직 합계", "오후당직 누적"]
+    desired_order = ["이른방 합계", "늦은방 합계", "오전당직", "오전당직 누적", "오후당직", "오후당직 누적"]
     order_map = {name: i for i, name in enumerate(desired_order)}
 
     # [비교 로직] 원본(original_stats_df) vs 현재(edited_final_stats)

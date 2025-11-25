@@ -343,7 +343,7 @@ try:
     kst = ZoneInfo("Asia/Seoul")
     now = datetime.datetime.now(kst)
     today = now.date()
-    today = now.date() - relativedelta(months=1)
+    # today = now.date() - relativedelta(months=1)
 
     next_month_date = today.replace(day=1) + relativedelta(months=1)
 

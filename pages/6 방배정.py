@@ -852,8 +852,8 @@ def generate_excel_output(df_room, stats_df, columns, special_dates, special_df,
         summary_fill = None
         if item_name == '이른방 합계': summary_fill = PatternFill(start_color="FFE699", fill_type="solid")
         elif item_name == '늦은방 합계': summary_fill = PatternFill(start_color="C6E0B4", fill_type="solid")
-        elif item_name == '오전당직 합계': summary_fill = PatternFill(start_color="B8CCE4", fill_type="solid")
-        elif item_name == '오후당직 합계': summary_fill = PatternFill(start_color="B8CCE4", fill_type="solid")
+        elif item_name == '오전당직': summary_fill = PatternFill(start_color="B8CCE4", fill_type="solid")
+        elif item_name == '오후당직': summary_fill = PatternFill(start_color="B8CCE4", fill_type="solid")
         elif item_name == '오전당직 누적': summary_fill = PatternFill(start_color="FFC8CD", fill_type="solid")
         elif item_name == '오후당직 누적': summary_fill = PatternFill(start_color="FFC8CD", fill_type="solid")
 
@@ -2866,9 +2866,9 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
                     '인원': person,
                     '이른방 합계': total_stats['early'][person],
                     '늦은방 합계': total_stats['late'][person],
-                    '오전당직 합계': am_assigned_this_month,
+                    '오전당직': am_assigned_this_month,
                     '오전당직 누적': am_final_cumulative,
-                    '오후당직 합계': pm_assigned_this_month,
+                    '오후당직': pm_assigned_this_month,
                     '오후당직 누적': pm_final_cumulative
                 }
                 for slot in st.session_state["time_slots"].keys():
@@ -2879,7 +2879,7 @@ if st.button("🚀 방배정 수행", type="primary", use_container_width=True):
             time_order = ['8:30', '9:00', '9:30', '10:00', '13:30']
 
             # [수정] 컬럼 목록에 '오전당직 누적' 추가
-            sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오전당직 누적', '오후당직 합계', '오후당직 누적']
+            sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직', '오전당직 누적', '오후당직', '오후당직 누적']
             
             time_slots_sorted = sorted(
                 [slot for slot in st.session_state["time_slots"].keys() if not slot.endswith('_당직')],
@@ -3469,9 +3469,9 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
             '인원': person,
             '이른방 합계': total_stats['early'][person],
             '늦은방 합계': total_stats['late'][person],
-            '오전당직 합계': am_assigned_this_month,
+            '오전당직': am_assigned_this_month,
             '오전당직 누적': am_final_cumulative,
-            '오후당직 합계': pm_assigned_this_month,
+            '오후당직': pm_assigned_this_month,
             '오후당직 누적': pm_final_cumulative
         }
         for slot in time_slots.keys():
@@ -3480,7 +3480,7 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
         stats_data.append(stats_entry)
 
     # [수정] '오전당직 누적'을 포함하도록 컬럼 목록 수정
-    sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직 합계', '오전당직 누적', '오후당직 합계', '오후당직 누적']
+    sorted_columns = ['인원', '이른방 합계', '늦은방 합계', '오전당직', '오전당직 누적', '오후당직', '오후당직 누적']
     
     # 시간대별 합계 컬럼 추가
     time_slots_sorted = sorted(
@@ -3542,8 +3542,8 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
     # 사용자가 요청한 정확한 순서
     desired_order = [
         "이른방 합계", "늦은방 합계", 
-        "오전당직 합계", "오전당직 누적", 
-        "오후당직 합계", "오후당직 누적"
+        "오전당직", "오전당직 누적", 
+        "오후당직", "오후당직 누적"
     ]
     # 항목 이름을 정렬 순서(숫자)로 매핑
     # (예: '이른방 합계': 0, '오전당직 누적': 3)
@@ -3564,7 +3564,7 @@ if "assignment_results" in st.session_state and st.session_state["assignment_res
             changed_cells_stats = set(zip(diff_indices[0], diff_indices[1])) 
 
             for row_idx, col_idx in changed_cells_stats:
-                stat_name = edited_stats_df.iloc[row_idx, 0] # '항목' (예: "오전당직 합계")
+                stat_name = edited_stats_df.iloc[row_idx, 0] # '항목' (예: "오전당직")
                 person_name = edited_stats_df.columns[col_idx] # '인원' (예: "강승주")
                 
                 old_value = original_stats_df.iloc[row_idx, col_idx]
