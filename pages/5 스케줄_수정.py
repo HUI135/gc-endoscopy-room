@@ -744,12 +744,10 @@ def create_final_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_
 
 def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, df_special, df_requests, closing_dates, month_str):
     """
-    [관리자 확인용]
-    [★ v3 수정 ★]
-    - '변경된' 셀의 배경색을 'F2DCDB' (연분홍)로 변경합니다.
-    - '변경된' 셀의 색상을 '상태' 색상보다 우선 적용합니다.
-    - (대체보충) 상태이고 (10/6에서 대체됨) 형식의 텍스트가 괄호 안에 있을 경우,
-    - 이를 엑셀 '메모'로 추가하는 로직을 이식합니다.
+    [관리자 확인용] - 최종 버전 다운로드용
+    [★ v4 수정 ★]
+    - 평일 근무일 기준: 오전 13열~, 오후 5열~ 배경색을 B2B2B2(회색)로 강제 지정
+    - 목적: 휴가/휴근 등 근무 불가자를 해당 열로 빼두었을 때 시각적으로 구분하기 위함
     """
     output = io.BytesIO()
     wb = openpyxl.Workbook()
@@ -762,18 +760,21 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
     bold_font = Font(name=font_name, size=9, bold=True)
     duty_font = Font(name=font_name, size=9, bold=True, color="FF69B4")
     header_font = Font(name=font_name, size=9, color='FFFFFF', bold=True)
+    
     color_map = {'휴가': 'DA9694', '학회': 'DA9694', '꼭 근무': 'FABF8F', '보충': 'FFF28F', '대체보충': 'A9D08E', '휴근': 'B1A0C7', '대체휴근': '95B3D7', '특수근무': 'D0E0E3', '기본': 'FFFFFF'}
+    
     header_fill = PatternFill(start_color='000000', fill_type='solid')
     date_col_fill = PatternFill(start_color='808080', fill_type='solid')
     weekday_fill = PatternFill(start_color='FFF2CC', fill_type='solid')
     special_day_fill = PatternFill(start_color='95B3D7', fill_type='solid')
     
-    # --- ▼▼▼ [핵심 수정] 변경된 셀 색상 F2DCDB로 수정 ▼▼▼ ---
-    changed_fill = PatternFill(start_color='F2DCDB', fill_type='solid') # (연분홍)
-    # --- ▲▲▲ [수정 완료] ▲▲▲ ---
-    
+    changed_fill = PatternFill(start_color='F2DCDB', fill_type='solid') # (연분홍 - 변경됨)
     empty_day_fill = PatternFill(start_color='808080', fill_type='solid')
     holiday_blue_fill = PatternFill(start_color="DDEBF7", fill_type='solid')
+    
+    # [신규] 근무 불가 영역 회색 (B2B2B2)
+    gray_area_fill = PatternFill(start_color='B2B2B2', fill_type='solid')
+
     border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     center_align = Alignment(horizontal='center', vertical='center')
 
@@ -804,33 +805,65 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
                 if pd.notna(oncall_val) and oncall_val != "당직 없음": weekend_oncall_worker = str(oncall_val).strip()
 
         for c, col_name in enumerate(checking_columns, 1):
-            raw_value = str(edited_row.get(col_name, '')).strip()
-            worker_name = re.sub(r'\(.+\)', '', raw_value).strip()
             
-            # --- ▼▼▼ [핵심 수정] 파싱 로직 교체 (v2) ▼▼▼ ---
+            # --- [신규] 회색 영역(B2B2B2) 판별 로직 ---
+            is_gray_area = False
+            col_str = str(col_name)
+            
+            # 조건: 평일 근무일(토/휴일X, 빈날X)이면서 -> 특정 열 번호 이상인 경우
+            if not is_special_day and not is_empty_day:
+                # 1. 오전 (숫자로 된 열): 13 이상
+                if col_str.isdigit():
+                    if int(col_str) >= 13:
+                        is_gray_area = True
+                # 2. 오후 ('오후'로 시작하는 열): 5 이상 (오후5, 오후6...)
+                elif col_str.startswith('오후'):
+                    # '오후' 뒤의 숫자를 추출
+                    pm_num_match = re.search(r'오후(\d+)', col_str)
+                    if pm_num_match:
+                        pm_num = int(pm_num_match.group(1))
+                        if pm_num >= 5:
+                            is_gray_area = True
+            # ---------------------------------------
+
+            raw_value = str(edited_row.get(col_name, '')).strip()
+            
+            # [수정] 내용 파싱 시 괄호 내용 지우지 않음 (요청사항 반영)
+            # 엑셀 셀에는 원본 텍스트 그대로 넣습니다.
+            cell_value_text = raw_value 
+            
+            # 다만, 스타일링을 위해 이름과 상태는 분리해서 파악
             status_or_memo = '기본'
             match = re.match(r'.+?\((.+)\)', raw_value)
             if match: status_or_memo = match.group(1).strip()
             
             real_status = '기본'
-            if status_or_memo == '기본':
-                real_status = '기본'
-            elif status_or_memo in color_map: 
-                real_status = status_or_memo
+            if status_or_memo == '기본': real_status = '기본'
+            elif status_or_memo in color_map: real_status = status_or_memo
             elif pd.notna(status_or_memo) and (re.search(r'\d{1,2}/\d{1,2}', status_or_memo) or '대체됨' in status_or_memo or '대체함' in status_or_memo):
                 real_status = '대체보충' 
-            else:
-                real_status = '기본' 
-            # --- ▲▲▲ [파싱 로직 교체 완료] ▲▲▲ ---
+            else: real_status = '기본' 
             
-            cell = ws.cell(row=r, column=c, value=worker_name)
+            # 이름만 추출 (비교 및 당직 폰트 적용용)
+            worker_name = re.sub(r'\(.+\)', '', raw_value).strip()
+
+            cell = ws.cell(row=r, column=c, value=cell_value_text)
             cell.font = default_font; cell.alignment = center_align; cell.border = border
 
             if is_empty_day: cell.fill = empty_day_fill; continue
             if col_name == '날짜': cell.fill = date_col_fill; continue
             if col_name == '요일': cell.fill = special_day_fill if is_special_day else weekday_fill; continue
             
-            if not worker_name: continue
+            # 회색 영역이면 값 여부와 상관없이 회색 칠하기 (우선순위 최상)
+            # (단, 셀에 텍스트가 있다면 그대로 보임)
+            if is_gray_area:
+                cell.fill = gray_area_fill
+                # continue를 하지 않고 아래로 흘려보내 폰트 설정 등은 적용되게 할 수도 있으나,
+                # 배경색 결정은 여기서 끝내는 게 깔끔합니다.
+                # 단, '변경 전' 코멘트는 달아야 하므로 아래 로직 일부는 수행해야 합니다.
+            
+            # 값이 없는데 회색영역도 아니면 스킵
+            if not raw_value and not is_gray_area: continue
             
             if is_special_day:
                 if str(col_name).isdigit():
@@ -839,44 +872,37 @@ def create_checking_schedule_excel(initial_df, edited_df, edited_cumulative_df, 
                 elif '오후' in str(col_name): cell.value = ""
                 continue
             
-            # --- ▼▼▼ [핵심 수정] 색상 적용 로직 (F2DCDB 우선) ▼▼▼ ---
+            # --- [수정] 색상 적용 로직 (B2B2B2 최우선) ---
             
-            # 1. 색상 코드 가져오기
             fill_hex = color_map.get(real_status, 'FFFFFF') 
-
-            # 2. 'cell_changed' 플래그 계산
             initial_raw_value = str(initial_row.get(col_name, '')).strip()
             cell_changed = (raw_value != initial_raw_value)
-            
-            # 3. [수정된 우선순위]로 색상 적용
-            if cell_changed:
-                # 1순위: 변경된 셀은 무조건 F2DCDB
+
+            # 0순위: 회색 영역 (근무 불가 열) - 이미 위에서 is_gray_area 체크함
+            if is_gray_area:
+                cell.fill = gray_area_fill
+            # 1순위: 변경된 셀 (F2DCDB)
+            elif cell_changed:
                 cell.fill = changed_fill
+            # 2순위: 상태 색상
             elif fill_hex and fill_hex != 'FFFFFF':
-                # 2순위: 상태 색상이 '기본'(흰색)이 아니면, 해당 색상 적용
-                cell.fill = PatternFill(start_color=fill_hex, fill_type='solid')
-            else:
-                # 3순위: '기본' 상태이고 변경되지도 않음 (흰색)
-                cell.fill = PatternFill(start_color='FFFFFF', fill_type='solid')
-            # --- ▲▲▲ [색상 로직 수정 완료] ▲▲▲ ---
+                cell.fill = PatternFill(start_color=fill_hex, fill_type='solid') 
+            # 3순위: 기본 (흰색) - 이미 위에서 처리됨 (디폴트)
+            
+            # ---------------------------------------------------
             
             if col_name == '오전당직(온콜)': cell.font = duty_font
             
-            # [수정] cell_changed가 True일 때만 코멘트 추가
             if cell_changed:
                 cell.comment = Comment(f"변경 전: {initial_raw_value or '빈 값'}", "Edit Tracker")
 
-            # --- ▼▼▼ [핵심 수정] 메모 추가 로직 (v2) ▼▼▼ ---
             if real_status == '대체보충' and pd.notna(status_or_memo) and re.search(r'\d{1,2}/\d{1,2}', status_or_memo):
                 try:
-                    # '변경 전' 코멘트가 없을 때만 '대체' 메모를 추가
                     if cell.comment is None: 
                         cell.comment = Comment(status_or_memo, "Schedule Bot")
-                except Exception as e_memo:
-                    pass
-            # --- ▲▲▲ [메모 추가 완료] ▲▲▲ ---
+                except: pass
     
-    # --- ✨ [핵심 수정] 익월 누적 현황을 올바른 형식으로 추가 ---
+    # --- 익월 누적 현황 추가 ---
     if not edited_cumulative_df.empty:
         style_args = {'font': default_font, 'bold_font': bold_font, 'border': border}
         append_summary_table_to_excel(ws, edited_cumulative_df, style_args)
