@@ -331,26 +331,76 @@ except NameError as e:
 
 st.header(f"📅 {user_name} 님의 {month_str} 방배정 변경 요청", divider='rainbow')
 
-if st.button("🔄 새로고침 (R)"):
-    try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()
-            st.rerun()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
+# 새로고침 버튼 로직
+col_text, col_btn = st.columns([3, 1], vertical_alignment="center")
+
+# 새로고침 버튼
+with col_text:
+    st.caption("ℹ️ 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤 진행해주세요.")
+
+with col_btn:
+    # use_container_width=True를 쓰면 버튼이 컬럼 너비에 맞춰 깔끔하게 찹니다.
+    if st.button("🔄 새로고침 (R)", use_container_width=True):
+        try:
+            with st.spinner("데이터를 다시 불러오는 중입니다..."):
+                st.cache_data.clear()
+                st.rerun()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"새로고침 중 오류 발생: {str(e)}")
+            st.stop()
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"새로고침 중 오류 발생: {str(e)}")
+            st.stop()
 
 df_room = load_room_data(month_str)
 df_special = load_special_schedules(month_str)
+
+# --- 데이터 로드 (기존 코드) ---
+df_room = load_room_data(month_str)
+df_special = load_special_schedules(month_str)
+
+# --- ▼▼▼ [추가] 버전 정보 표시 로직 ▼▼▼ ---
+# load_room_data 함수는 현재 DataFrame만 반환하므로, 버전을 알기 위해 별도 로직이 필요합니다.
+# 하지만 사용자가 제공한 '방배정' 페이지 코드에는 loaded_version 변수가 없습니다.
+# 따라서, 가장 확실한 방법은 시트 이름을 직접 확인하는 것입니다.
+
+try:
+    gc_check = get_gspread_client()
+    sheet_check = gc_check.open_by_url(st.secrets["google_sheet"]["url"])
+    all_titles = [ws.title for ws in sheet_check.worksheets()]
+    
+    final_name = f"{month_str} 방배정 최종"
+    # '방배정 verX.X' 패턴을 찾습니다.
+    ver_pattern = re.compile(f"^{re.escape(month_str)} 방배정 ver\d+\.\d+$")
+    ver_sheets = [t for t in all_titles if ver_pattern.match(t)]
+    
+    current_display_version = "기본 버전" # 기본값
+    
+    if final_name in all_titles:
+        current_display_version = "최종"
+        st.info(f"현재 표시되는 방배정 버전은 '**{current_display_version}**'입니다.")
+    elif ver_sheets:
+        # 여러 버전이 있다면 가장 최신 것 (이름순 정렬 시 마지막)
+        latest_ver_sheet = sorted(ver_sheets)[-1]
+        # "2025년 10월 방배정 ver1.0" -> "ver1.0" 추출
+        version_only = latest_ver_sheet.split(' 방배정 ')[-1]
+        st.info(f"ℹ️ 현재 표시되는 방배정 버전은 '**{version_only}**'입니다.")
+    else:
+        st.info(f"ℹ️ 현재 표시되는 방배정 버전은 **기본 버전**입니다.")
+
+except Exception:
+    # 에러 발생 시(권한 문제 등) 조용히 넘어감
+    pass
+# --- ▲▲▲ [추가] 버전 정보 표시 로직 끝 ▲▲▲ ---
+
+if df_room.empty:
+    st.stop()
 
 if df_room.empty:
     st.stop()

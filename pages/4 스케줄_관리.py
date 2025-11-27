@@ -18,9 +18,6 @@ import re # 정규표현식을 사용하기 위해 import 추가
 
 st.set_page_config(page_title="스케줄 관리", page_icon="⚙️", layout="wide")
 
-st.header("⚙️ 스케줄 관리", divider='rainbow')
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
-
 import os
 st.session_state.current_page = os.path.basename(__file__)
 
@@ -419,24 +416,33 @@ today = now.date()
 month_str = (today.replace(day=1) + relativedelta(months=1)).strftime("%Y년 %-m월")
 month_str = '2025년 10월'
 
-if st.button("🔄 새로고침 (R)"):
-    success = False
-    with st.spinner("데이터를 다시 불러오는 중입니다..."):
-        try:
-            success = load_request_data_page4()
-        except Exception as e:
-            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-            st.error(f"새로고침 중 예측하지 못한 오류 발생: {str(e)}")
-            success = False
-    if success:
-            st.session_state["data_loaded"] = True
-            st.success("데이터가 성공적으로 새로고침되었습니다!")
-            
-            # ✅ 새로 불러온 원본 데이터로 편집용 화면 데이터를 덮어씌웁니다.
-            st.session_state.edited_df_holiday = st.session_state.get("df_holiday", pd.DataFrame()).copy()
-            
-            time.sleep(1)
-            st.rerun()
+st.header("⚙️ 스케줄 관리", divider='rainbow')
+
+col_text, col_btn = st.columns([3, 1], vertical_alignment="center")
+
+with col_text:
+    st.caption("ℹ️ 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤 진행해주세요.")
+
+with col_btn:
+    # use_container_width=True를 쓰면 버튼이 컬럼 너비에 맞춰 깔끔하게 찹니다.
+    if st.button("🔄 새로고침 (R)", use_container_width=True):
+        success = False
+        with st.spinner("데이터를 다시 불러오는 중입니다..."):
+            try:
+                success = load_request_data_page4()
+            except Exception as e:
+                st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+                st.error(f"새로고침 중 예측하지 못한 오류 발생: {str(e)}")
+                success = False
+        if success:
+                st.session_state["data_loaded"] = True
+                st.success("데이터가 성공적으로 새로고침되었습니다!")
+                
+                # ✅ 새로 불러온 원본 데이터로 편집용 화면 데이터를 덮어씌웁니다.
+                st.session_state.edited_df_holiday = st.session_state.get("df_holiday", pd.DataFrame()).copy()
+                
+                time.sleep(1)
+                st.rerun()
 
 # ✅✅✅ 위에서 삭제한 자리에 이 코드로 '대체' 하세요 ✅✅✅
 # 앱이 처음 켜졌을 때('data_loaded'가 없을 때) 실행됩니다.

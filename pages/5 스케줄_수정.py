@@ -76,26 +76,40 @@ def update_sheet_with_retry(worksheet, data, retries=3, delay=5):
                 st.error(f"Google Sheets API 오류: {e}"); st.stop()
     return False
 
+# [수정] 캐시 적용(TTL 60초) 및 에러 핸들링 추가
+@st.cache_data(ttl=60, show_spinner=False)
 def find_schedule_versions(month_str): 
     """'ver X.X' 버전과 '최종' 버전을 모두 찾아 정렬된 딕셔너리로 반환합니다."""
     
-    # ✨ [추가] 함수 내부에서 sheet 객체를 가져옵니다.
-    sheet = get_spreadsheet() 
-    
+    # 1. API 호출 시도 및 에러 처리
+    try:
+        # 함수 내부에서 sheet 객체를 가져옵니다.
+        sheet = get_spreadsheet() 
+        
+        # Google Sheets API에서 모든 워크시트 제목을 한 번에 가져옵니다.
+        all_titles = [ws.title for ws in sheet.worksheets()]
+
+    except APIError as e:
+        # 429 에러(Quota exceeded)일 경우 사용자 친화적 메시지 출력
+        if hasattr(e, 'response') and e.response.status_code == 429:
+            st.error("🚨 잦은 요청으로 구글 시트 연결이 일시 지연되고 있습니다.")
+            st.warning("약 1분 뒤에 '새로고침' 버튼을 눌러주세요.")
+            st.stop() # 이후 코드 실행 중단
+        else:
+            # 다른 에러라면 그대로 에러를 발생시킴
+            raise e
+
+    # 2. 버전 파싱 로직 (기존과 동일)
     versions = {}
     base_name = f"{month_str} 스케줄"
     
-    # Google Sheets API에서 모든 워크시트 제목을 한 번에 가져옵니다.
-    all_titles = [ws.title for ws in sheet.worksheets()]
-
     for title in all_titles:
         # 1. "최종" 버전 확인
         if title == f"{base_name} 최종":
             versions[title] = 999.0
             continue
 
-        # 2. "ver X.X" 버전 확인 (핵심 수정: ver와 숫자 사이 공백을 선택사항으로 처리)
-        # \s* : 공백이 없거나, 하나 이상 있을 수 있음을 의미
+        # 2. "ver X.X" 버전 확인
         ver_match = re.match(f"^{re.escape(base_name)}\s*ver\s*(\d+\.\d+)$", title)
         if ver_match:
             version_num = float(ver_match.group(1))
@@ -1089,46 +1103,49 @@ def on_version_change():
     st.session_state.data_loaded = False
 
 # [핵심 추가] 전체 버전 목록을 다시 불러오기 위한 새로고침 버튼
-# [기존 코드] (L843)
-if st.button("🔄 새로고침 (R)", help="Google Sheets에서 시트 목록을 다시 불러옵니다."):
-    # 모든 캐시를 지워 새로운 시트 목록을 가져오도록 합니다.
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    
-    # --- ▼▼▼ [수정] 기존 for 루프 대신 명시적 삭제로 변경 ▼▼▼ ---
-    
-    # 새로고침 시 반드시 삭제해야 하는 핵심 상태 키 목록
-    keys_to_delete = [
-        "data_loaded", 
-        "apply_messages", 
-        "change_log", 
-        "is_final_version",
-        "loaded_sheet_name",        # (필수) 로드된 시트 이름
-        "editor_has_changes",       # (필수) 수정 플래그
-        "save_successful",          # (권장) 저장 상태
-        "last_saved_sheet_name"     # (권장) 저장 이름
-    ]
-    
-    # df_로 시작하는 모든 데이터프레임 키도 삭제 목록에 추가
-    df_keys = [key for key in st.session_state.keys() if key.startswith("df_")]
-    keys_to_delete.extend(df_keys)
+col_text, col_btn = st.columns([3, 1], vertical_alignment="center")
 
-    # 세션 상태에서 해당 키들 삭제
-    for key in keys_to_delete:
-        if key in st.session_state:
-            del st.session_state[key]
-            
-    # --- ▲▲▲ [수정] 코드 교체 완료 ▲▲▲ ---
-    
-    st.rerun()
+with col_text:
+    st.caption("ℹ️ 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤 진행해주세요.")
+
+with col_btn:
+    # use_container_width=True를 쓰면 버튼이 컬럼 너비에 맞춰 깔끔하게 찹니다.
+    if st.button("🔄 새로고침 (R)", use_container_width=True):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # --- ▼▼▼ [수정] 기존 for 루프 대신 명시적 삭제로 변경 ▼▼▼ ---
+        
+        # 새로고침 시 반드시 삭제해야 하는 핵심 상태 키 목록
+        keys_to_delete = [
+            "data_loaded", 
+            "apply_messages", 
+            "change_log", 
+            "is_final_version",
+            "loaded_sheet_name",        # (필수) 로드된 시트 이름
+            "editor_has_changes",       # (필수) 수정 플래그
+            "save_successful",          # (권장) 저장 상태
+            "last_saved_sheet_name"     # (권장) 저장 이름
+        ]
+        
+        # df_로 시작하는 모든 데이터프레임 키도 삭제 목록에 추가
+        df_keys = [key for key in st.session_state.keys() if key.startswith("df_")]
+        keys_to_delete.extend(df_keys)
+
+        # 세션 상태에서 해당 키들 삭제
+        for key in keys_to_delete:
+            if key in st.session_state:
+                del st.session_state[key]
+                
+        # --- ▲▲▲ [수정] 코드 교체 완료 ▲▲▲ ---
+        
+        st.rerun()
 
 if not versions:
     st.warning(f"'{month_str}'에 해당하는 스케줄 시트가 없습니다. 먼저 스케줄을 생성해주세요."); st.stop()
 
 # [★ L884 ~ L886을 이 코드로 교체하세요 ★]
-
 version_list = list(versions.keys())
-st.write(" ")
 
 # --- ▼▼▼ [핵심 버그 수정] ▼▼▼ ---
 # 'index=0'을 사용하는 대신, st.session_state에 저장된 값을 찾아
@@ -1148,39 +1165,28 @@ except ValueError:
     current_index = 0
 # --- ▲▲▲ [수정 완료] ---
 
+st.divider()
+st.subheader("📋 스케줄 버전 선택")
 selected_sheet_name = st.selectbox(
     "- 불러올 스케줄 버전을 선택하세요:", 
     options=version_list, 
-    index=current_index,  # <-- 'index=0' 대신 'current_index' 사용
+    index=current_index, 
     key="selected_sheet_name", 
     on_change=on_version_change
 )
 
-# --- 새로고침 및 삭제 버튼 UI ---
-col_delete, none = st.columns([2, 4])
-
-with col_delete:
-    # 삭제는 위험한 작업이므로 확인 절차를 거칩니다.
-    with st.expander("🗑️ 현재 버전 데이터 완전 삭제"):
-        st.error("이 작업은 되돌릴 수 없습니다!\nGoogle Sheets에서 해당 버전의 스케줄과 누적 시트가 영구적으로 삭제됩니다.")
-        
-        # 최종 삭제 확인 버튼
-        if st.button("네, 삭제합니다.", type="primary", use_container_width=True):
-            delete_schedule_version(month_str, selected_sheet_name)
+# [삭제] 기존 상단 삭제 버튼 UI 코드 블록 제거됨 (col_delete 부분)
 
 needs_load = False
 if not st.session_state.get("data_loaded", False):
     needs_load = True
 elif st.session_state.get("loaded_sheet_name") != selected_sheet_name:
-    # 세션은 로드됐지만(data_loaded=True), 
-    # 현재 선택된 버전(selected_sheet_name)과 세션에 저장된 버전(loaded_sheet_name)이 다름
     needs_load = True
 
-# --- ▼▼▼ [교체] L942 ~ L960의 needs_load 블록 교체 ▼▼▼ ---
+# --- ▼▼▼ 데이터 로드 로직 (기존 유지) ▼▼▼ ---
 if needs_load:
     data = load_data(month_str, selected_sheet_name)
 
-    # (기존)
     st.session_state["df_schedule_original"] = data["schedule"]
     st.session_state["df_cumulative_next_display"] = data["cumulative_display"]
     st.session_state["df_display_initial"] = data["schedule"].copy()
@@ -1188,45 +1194,40 @@ if needs_load:
     st.session_state["df_special"] = data["special"]
     st.session_state["df_requests"] = data["requests"]
     st.session_state["closing_dates"] = data["closing_dates"]
-    st.session_state["is_final_version"] = data["is_final_version"] # ✨ '최종' 여부 저장
+    st.session_state["is_final_version"] = data["is_final_version"]
     
-    # --- ▼▼▼ [신규] 로드를 위한 추가 세션 상태 저장 ▼▼▼ ---
     st.session_state["df_cumulative_base_initial"] = data["base_cumulative"]
     st.session_state["df_schedule_mapping"] = data["schedule_mapping"]
     
-    # (버그 방지) 누적 테이블(결과)이 비어있으면, 베이스 테이블(입력) 기준으로 새로 생성
     if st.session_state.df_cumulative_next_display.empty and not data["base_cumulative"].empty:
         st.info("로드된 익월 누적 테이블이 없어, '당월(전월 누적)' 데이터를 기준으로 새로 생성합니다.")
         all_names_list = data["base_cumulative"].columns[1:].tolist()
         
         st.session_state.df_cumulative_next_display = recalculate_summary_from_schedule(
-            data["schedule"], # 스케줄
-            data["base_cumulative"], # 베이스
-            all_names_list, # 이름
-            data["schedule_mapping"] # 매핑
+            data["schedule"], 
+            data["base_cumulative"], 
+            all_names_list, 
+            data["schedule_mapping"]
         )
 
-    # (버그 방지) df_display_initial(수정 전)과 df_cumulative_next_display(수정 후)를 동일하게 초기화
     st.session_state["df_cumulative_next_initial"] = st.session_state.df_cumulative_next_display.copy()
-    # --- ▲▲▲ [신규] 로드 끝 ---
     
     st.session_state.data_loaded = True
     st.session_state["loaded_sheet_name"] = selected_sheet_name
-# --- ▲▲▲ [교체] needs_load 블록 교체 끝 ▲▲▲ ---
+# --- ▲▲▲ 데이터 로드 끝 ▲▲▲ ---
 
-# [수정] 'is_final_version' 확인 로직은 이 블록 *바깥*에 둡니다.
 is_final_version = st.session_state.get("is_final_version", False)
 
 if is_final_version:
-    st.error("🚨 최종 버전의 수정은 '방배정' 페이지에서 진행 바랍니다. 이 페이지에서는 최종본 내용 확인 및 다운로드만 가능합니다.")
+    st.error("🚨 최종 버전의 초기화 및 수정은 '방배정' 페이지에서 진행 바랍니다. 이 페이지에서는 최종본 내용 확인 및 다운로드만 가능합니다.")
     st.session_state["disable_editing"] = True
 else:
     st.session_state["disable_editing"] = False
 
-# 2. 선택된 버전을 바로 다운로드하는 버튼 생성
-st.write(" ") # 버튼 위에 약간의 여백 추가
 
-# 선택된 시트 이름에서 버전 정보 추출 (예: "ver2.0")
+# 2. 선택된 버전을 바로 다운로드하는 버튼 + 삭제 버튼 통합
+st.write(" ") # 여백
+
 version_part = ""
 schedule_keyword = "스케줄 "
 if schedule_keyword in selected_sheet_name:
@@ -1234,13 +1235,15 @@ if schedule_keyword in selected_sheet_name:
 
 display_version = f" {version_part}" if version_part else ""
 
-# 데이터가 로드되었는지 확인 후 다운로드 버튼 표시
+# 데이터가 로드되었는지 확인
 if "df_display_initial" in st.session_state:
-# [수정] '최종' 버전이 선택되었는지 확인
     is_final_version_selected = "최종" in selected_sheet_name
 
-    if is_final_version_selected:
-        # --- '최종' 버전인 경우: 버튼 1개만 (use_container_width=True) ---
+    # [수정] 버전 상관없이 항상 3컬럼 (메인 다운로드 / 확인용 다운로드 / 삭제) 유지
+    col_down_main, col_down_sub, col_del = st.columns([1, 1, 1])
+
+    # 1. 메인 다운로드 버튼 (공통)
+    with col_down_main:
         st.download_button(
             label=f"📥 스케줄{display_version} 다운로드",
             data=create_final_schedule_excel(
@@ -1253,38 +1256,31 @@ if "df_display_initial" in st.session_state:
             use_container_width=True, type="primary",
             key="download_now_final"
         )
-    else:
-        # --- '최종' 버전이 아닌 경우: 버튼 2개 표시 ---
-        col1, col2 = st.columns(2)
-        with col1:
-            st.download_button(
-                label=f"📥 스케줄{display_version} 다운로드",
-                data=create_final_schedule_excel(
-                    st.session_state.df_display_initial, st.session_state.df_display_initial, 
-                    st.session_state.df_cumulative_next_display, st.session_state.df_special, 
-                    st.session_state.df_requests, st.session_state.get("closing_dates", []), month_str
-                ),
-                file_name=f"{month_str} 스케줄{display_version}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True, type="primary",
-                key="download_now_final"
-            )
-        with col2:
-            st.download_button(
-                label=f"📥 스케줄{display_version} 다운로드 (배정 확인용)",
-                data=create_checking_schedule_excel(
-                    st.session_state.df_display_initial, st.session_state.df_display_initial,
-                    st.session_state.df_cumulative_next_display, st.session_state.df_special, 
-                    st.session_state.df_requests, st.session_state.get("closing_dates", []), month_str
-                ),
-                file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True, type="secondary",
-                key="download_now_checking"
-            )
 
+    # 2. 서브 다운로드 버튼 (이제 최종 버전에서도 표시됨)
+    with col_down_sub:
+        st.download_button(
+            label=f"📥 배정 확인용 다운로드",
+            data=create_checking_schedule_excel(
+                st.session_state.df_display_initial, st.session_state.df_display_initial,
+                st.session_state.df_cumulative_next_display, st.session_state.df_special, 
+                st.session_state.df_requests, st.session_state.get("closing_dates", []), month_str
+            ),
+            file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True, type="secondary",
+            key="download_now_checking"
+        )
 
-# --- ▼▼▼ [교체] L1031 ~ L1194의 기존 UI 코드 전체를 교체 ▼▼▼ ---
+    # 3. 삭제 버튼 (우측 끝 컬럼에 배치)
+    with col_del:
+        # 삭제는 위험한 작업이므로 Expander 안에 배치
+        with st.expander("🗑️ 현재 버전 데이터 삭제"):
+            st.error("이 작업은 되돌릴 수 없습니다!\nGoogle Sheets에서 해당 버전이 영구 삭제됩니다.")
+            
+            # 최종 삭제 확인 버튼
+            if st.button("네, 삭제합니다.", type="primary", use_container_width=True, key="btn_delete_version"):
+                delete_schedule_version(month_str, selected_sheet_name)
 
 st.divider()
 st.subheader("📅 배정 스케줄 수정")
@@ -1616,18 +1612,15 @@ else:
                 key="download_edited_final"
             )
 
-            if not st.session_state.get("disable_editing", False):
-                st.download_button(
-                    label=f"📥 스케줄{display_version} 다운로드 (배정 확인용)",
-                    data=create_checking_schedule_excel(
-                        st.session_state.df_display_initial, edited_df, edited_cumulative_df,
-                        st.session_state.df_special, st.session_state.df_requests,
-                        st.session_state.get("closing_dates", []), month_str
-                    ),
-                    file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True, type="secondary",
-                    key="download_edited_checking"
-                )
-
-# [--- 교체 완료 ---]
+            st.download_button(
+                label=f"📥 스케줄{display_version} 다운로드 (배정 확인용)",
+                data=create_checking_schedule_excel(
+                    st.session_state.df_display_initial, edited_df, edited_cumulative_df,
+                    st.session_state.df_special, st.session_state.df_requests,
+                    st.session_state.get("closing_dates", []), month_str
+                ),
+                file_name=f"{month_str} 스케줄{display_version} (배정 확인용).xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True, type="secondary",
+                key="download_edited_checking"
+            )

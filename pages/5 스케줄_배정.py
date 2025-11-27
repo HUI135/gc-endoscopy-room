@@ -1220,32 +1220,38 @@ def recalculate_summary_from_schedule(edited_schedule_df, df_cumulative_initial,
     return recalculated_summary_df
 
 st.header("🗓️ 스케줄 배정", divider='rainbow')
-st.write("- 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤, 배정을 진행해주세요.")
-if st.button("🔄 새로고침 (R)"):
-    try:
-        st.cache_data.clear()
-        st.cache_resource.clear()
+col_text, col_btn = st.columns([3, 1], vertical_alignment="center")
 
-        # ▼▼▼ [핵심 수정] 페이지에 필요한 데이터만 선택적으로 삭제합니다 ▼▼▼
-        keys_to_clear = [
-            "assigned", "output", "df_cumulative_next", "request_logs", 
-            "swap_logs", "adjustment_logs", "oncall_logs", "assignment_results",
-            "show_confirmation_warning", "latest_existing_version",
-            "data_loaded", "df_master", "df_request", "df_cumulative", 
-            "df_shift", "df_supplement", "edited_df_cumulative"
-        ]
-        
-        for key in keys_to_clear:
-            if key in st.session_state:
-                del st.session_state[key]
-        # --- 수정 끝 ---
-        
-        st.success("데이터가 새로고침되었습니다. 페이지를 다시 로드합니다.")
-        time.sleep(1)
-        st.rerun()
-    except Exception as e:
-        st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
-        st.stop()
+with col_text:
+    st.caption("ℹ️ 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤 진행해주세요.")
+
+with col_btn:
+    # use_container_width=True를 쓰면 버튼이 컬럼 너비에 맞춰 깔끔하게 찹니다.
+    if st.button("🔄 새로고침 (R)", use_container_width=True):
+        try:
+            st.cache_data.clear()
+            st.cache_resource.clear()
+
+            # ▼▼▼ [핵심 수정] 페이지에 필요한 데이터만 선택적으로 삭제합니다 ▼▼▼
+            keys_to_clear = [
+                "assigned", "output", "df_cumulative_next", "request_logs", 
+                "swap_logs", "adjustment_logs", "oncall_logs", "assignment_results",
+                "show_confirmation_warning", "latest_existing_version",
+                "data_loaded", "df_master", "df_request", "df_cumulative", 
+                "df_shift", "df_supplement", "edited_df_cumulative"
+            ]
+            
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            # --- 수정 끝 ---
+            
+            st.success("데이터가 새로고침되었습니다. 페이지를 다시 로드합니다.")
+            time.sleep(1)
+            st.rerun()
+        except Exception as e:
+            st.error(f"새로고침 중 오류 발생: {type(e).__name__} - {e}")
+            st.stop()
 
 try:
     gc = get_gspread_client()

@@ -347,23 +347,32 @@ except NameError as e:
 
 st.header(f"📅 {user_name} 님의 {month_str} 스케줄 변경 요청", divider='rainbow')
 
-if st.button("🔄 새로고침 (R)"):
-    try:
-        with st.spinner("데이터를 다시 불러오는 중입니다..."):
-            st.cache_data.clear()
-            st.rerun()
-    except NameError as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
-    except gspread.exceptions.APIError as e:
-        st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
-        st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
-        st.stop()
-    except Exception as e:
-        st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
-        st.error(f"새로고침 중 오류 발생: {str(e)}")
-        st.stop()
+# 새로고침 버튼 로직
+col_text, col_btn = st.columns([3, 1], vertical_alignment="center")
+
+# 새로고침 버튼
+with col_text:
+    st.caption("ℹ️ 먼저 새로고침 버튼으로 최신 데이터를 불러온 뒤 진행해주세요.")
+
+with col_btn:
+    # use_container_width=True를 쓰면 버튼이 컬럼 너비에 맞춰 깔끔하게 찹니다.
+    if st.button("🔄 새로고침 (R)", use_container_width=True):
+        try:
+            with st.spinner("데이터를 다시 불러오는 중입니다..."):
+                st.cache_data.clear()
+                st.rerun()
+        except NameError as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"새로고침 중 오류 발생: {str(e)}")
+            st.stop()
+        except gspread.exceptions.APIError as e:
+            st.warning("⚠️ 너무 많은 요청이 접속되어 딜레이되고 있습니다. 잠시 후 재시도 해주세요.")
+            st.error(f"Google Sheets API 오류 (새로고침): {str(e)}")
+            st.stop()
+        except Exception as e:
+            st.warning("⚠️ 새로고침 버튼을 눌러 데이터를 다시 로드해주십시오.")
+            st.error(f"새로고침 중 오류 발생: {str(e)}")
+            st.stop()
 
 df_schedule, loaded_version = load_schedule_data(month_str)
 
