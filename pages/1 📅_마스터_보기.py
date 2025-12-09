@@ -674,11 +674,24 @@ st.markdown(html_string, unsafe_allow_html=True)
 
 # 이번 달 토요/휴일 스케줄 필터링 및 스타일 적용하여 출력
 st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
-current_month_schedule_df = df_saturday[
-    (df_saturday['날짜'].dt.year == year) & 
-    (df_saturday['날짜'].dt.month == month)
-].sort_values(by='날짜')
+# [수정됨] 데이터프레임이 비어있는지 먼저 확인하여 오류 방지
+if df_saturday.empty:
+    current_month_schedule_df = pd.DataFrame()
+else:
+    # 혹시 '날짜' 열이 datetime 형식이 아닐 경우를 대비해 변환 (오류 방지 이중 장치)
+    if not pd.api.types.is_datetime64_any_dtype(df_saturday['날짜']):
+        df_saturday['날짜'] = pd.to_datetime(df_saturday['날짜'], errors='coerce')
+    
+    # 변환 후에도 NaT(날짜 아님)가 된 행 제거
+    df_saturday = df_saturday.dropna(subset=['날짜'])
 
+    # 필터링 수행
+    current_month_schedule_df = df_saturday[
+        (df_saturday['날짜'].dt.year == year) & 
+        (df_saturday['날짜'].dt.month == month)
+    ].sort_values(by='날짜')
+
+# 결과 출력 로직 (기존과 동일하지만 current_month_schedule_df가 비어있을 때 처리가 자연스럽게 연결됨)
 if not current_month_schedule_df.empty:
     # 요일 한글 변환 맵
     weekday_map_ko = {0: "월", 1: "화", 2: "수", 3: "목", 4: "금", 5: "토", 6: "일"}

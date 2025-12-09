@@ -1118,7 +1118,6 @@ st.header("✍️ 스케줄 수정", divider='rainbow')
 kst = ZoneInfo("Asia/Seoul")
 month_dt_now = datetime.now(kst).replace(day=1) + relativedelta(months=1)
 month_str = month_dt_now.strftime("%Y년 %-m월")
-month_str = "2025년 10월" # 테스트용 고정
 
 # gc = get_gspread_client()
 # sheet = gc.open_by_url(st.secrets["google_sheet"]["url"])

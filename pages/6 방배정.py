@@ -892,7 +892,6 @@ now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
-month_str = '2025년 10월'
 YEAR_STR = month_str.split('년')[0]
 this_month_start = next_month_date.replace(day=1)
 

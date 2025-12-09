@@ -83,7 +83,6 @@ now = datetime.now(kst)
 today = now.date()
 month_dt = today.replace(day=1) + relativedelta(months=1)
 month_str = month_dt.strftime("%Y년 %-m월")
-month_str = "2025년 10월"
 _, last_day = calendar.monthrange(month_dt.year, month_dt.month)
 month_start = month_dt
 month_end = month_dt.replace(day=last_day)
@@ -1572,8 +1571,13 @@ st.divider()
 st.subheader("📋 요청사항 관리")
 st.write("- 명단 및 마스터에 등록되지 않은 인원 중 스케줄 배정이 필요한 경우, 관리자가 이름을 수기로 입력하여 요청사항을 추가해야 합니다.\n- '꼭 근무'로 요청된 사항은 해당 인원이 마스터가 없거나 모두 '근무없음' 상태더라도 반드시 배정됩니다.")
 
-if df_request["분류"].nunique() == 1 and df_request["분류"].iloc[0] == '요청 없음':
-    st.warning(f"⚠️ 아직까지 {month_str}에 작성된 요청사항이 없습니다.")
+# [수정] 데이터프레임이 비어있지 않고, '분류' 컬럼이 존재하는지 먼저 확인
+if not df_request.empty and "분류" in df_request.columns:
+    if df_request["분류"].nunique() == 1 and df_request["분류"].iloc[0] == '요청 없음':
+        st.warning(f"⚠️ 아직까지 {month_str}에 작성된 요청사항이 없습니다.")
+elif df_request.empty:
+    # 데이터가 아예 없는 경우 (헤더도 없는 경우 등) 처리
+    st.warning(f"⚠️ {month_str} 요청 사항 데이터가 비어있습니다.")
 
 요청분류 = ["휴가", "학회", "보충 어려움(오전)", "보충 어려움(오후)", "보충 불가(오전)", "보충 불가(오후)", "꼭 근무(오전)", "꼭 근무(오후)", "요청 없음"]
 st.dataframe(df_request.reset_index(drop=True), use_container_width=True, hide_index=True, height=300)
@@ -2199,9 +2203,26 @@ if holiday_dates:
 else:
     st.info(f"ℹ️ {month_str}에는 휴관일이 없습니다.")
 
-names_in_master = set(df_master["이름"].unique().tolist())
-names_in_request = set(df_request["이름"].unique().tolist())
-all_names = sorted(list(names_in_master.union(names_in_request)))  
+# ▼▼▼ [수정] 데이터프레임 컬럼 안전장치 및 이름 집계 로직 수정 ▼▼▼
+
+# 1. 마스터 데이터 안전장치
+if not df_master.empty and "이름" in df_master.columns:
+    names_in_master = set(df_master["이름"].unique().tolist())
+else:
+    names_in_master = set()
+
+# 2. 요청 데이터 안전장치 (KeyError: '이름' 해결 핵심)
+if not df_request.empty and "이름" in df_request.columns:
+    names_in_request = set(df_request["이름"].unique().tolist())
+else:
+    # 데이터가 없거나 컬럼이 깨진 경우 빈 집합 처리 및 DF 구조 복구
+    df_request = pd.DataFrame(columns=["이름", "분류", "날짜정보"])
+    names_in_request = set()
+
+# 3. 전체 이름 리스트 통합
+all_names = sorted(list(names_in_master.union(names_in_request)))
+
+# ▲▲▲ [수정 완료] ▲▲▲  
 
 def find_afternoon_swap_possibility(worker_to_check, original_date_str, df_final, active_weekdays, target_count_pm, df_supplement_processed, df_request, initial_master_assignments, day_map, week_numbers):
     shortage_dates = []

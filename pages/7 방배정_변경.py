@@ -114,7 +114,7 @@ def load_data_for_change_page(month_str):
             worksheet_final = sheet.worksheet(ver1_name)
             load_status = "ver1.0"
         else:
-            st.info("방배정이 아직 수행되지 않았습니다. (ver1.0 또는 최종 시트 없음)")
+            st.info(f"{month_str} 방배정이 아직 수행되지 않았습니다.")
             return "STOP", None, None, None
 
         df_final = pd.DataFrame(worksheet_final.get_all_records()).fillna('')
@@ -740,7 +740,6 @@ now = datetime.now(kst)
 today = now.date()
 next_month_date = today.replace(day=1) + relativedelta(months=1)
 month_str = next_month_date.strftime("%Y년 %-m월")
-month_str = "2025년 10월"
 st.header(f"🔄 {month_str} 방배정 변경", divider='rainbow')
 
 def load_and_initialize_data():

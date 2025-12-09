@@ -414,7 +414,6 @@ kst = ZoneInfo("Asia/Seoul")
 now = datetime.datetime.now(kst)
 today = now.date()
 month_str = (today.replace(day=1) + relativedelta(months=1)).strftime("%Y년 %-m월")
-month_str = '2025년 10월'
 
 st.header("⚙️ 스케줄 관리", divider='rainbow')
 

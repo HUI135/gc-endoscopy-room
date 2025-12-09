@@ -613,10 +613,21 @@ st.markdown(html_string, unsafe_allow_html=True)
 
 # 이번 달 토요/휴일 스케줄 필터링 및 출력
 st.write("") # 캘린더와 간격을 주기 위해 빈 줄 추가
-current_month_schedule_df = df_saturday[
-    (df_saturday['날짜'].dt.year == year) & 
-    (df_saturday['날짜'].dt.month == month)
-].sort_values(by='날짜')
+
+# [수정] 데이터프레임이 비어있는지 먼저 확인 (오류 방지)
+if df_saturday.empty:
+    current_month_schedule_df = pd.DataFrame()
+else:
+    # 혹시 '날짜' 열이 datetime 형식이 아닐 경우를 대비해 변환
+    if not pd.api.types.is_datetime64_any_dtype(df_saturday['날짜']):
+        df_saturday['날짜'] = pd.to_datetime(df_saturday['날짜'], errors='coerce')
+    
+    df_saturday = df_saturday.dropna(subset=['날짜'])
+
+    current_month_schedule_df = df_saturday[
+        (df_saturday['날짜'].dt.year == year) & 
+        (df_saturday['날짜'].dt.month == month)
+    ].sort_values(by='날짜')
 
 if not current_month_schedule_df.empty:
     # 요일 한글 변환 맵
